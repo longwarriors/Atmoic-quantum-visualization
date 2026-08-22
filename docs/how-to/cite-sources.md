@@ -47,7 +47,10 @@ uv run --group docs python scripts/render_reference_index.py --check
 
 ## 来源质量要求
 
-1. 物理结论优先教科书、DLMF、论文；
-2. 软件 API 优先官方文档；
-3. 网站和视频用于教学或视觉参考，不替代公式真值；
-4. 对已审查出错误的资料保留引用，但必须在 [已确认纠错](../references/corrections.md) 中记录。
+1. 先写清 claim，再按该 claim 选择来源；不存在对所有声明都通用的总排名；
+2. 物理结论优先教科书、DLMF、论文，软件行为优先官方文档和具体源码 revision；
+3. 网站、视频、博客和社区回答用于教学、视觉参考或待复现想法，不替代公式真值；
+4. 记录验证方式和适用范围，截图相似不能替代数学或数值测试；
+5. 对已审查出错误的资料保留引用，但必须在[已确认纠错](../references/corrections.md)中记录。
+
+完整等级、责任和审计链见[信源与引用政策](../references/source-policy.md)。

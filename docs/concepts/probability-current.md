@@ -5,7 +5,7 @@
 $$
 \rho=|\psi|^2,
 \qquad
-\mathbf j=rac{\hbar}{\mu}\operatorname{Im}(\psi^*\nabla\psi),
+\mathbf j=\frac{\hbar}{\mu}\operatorname{Im}(\psi^*\nabla\psi),
 $$
 
 以及连续性方程：
@@ -16,7 +16,7 @@ $$
 }
 $$
 
-这是 QuViz 将静态“云图”扩展为动态概率输运的核心 [@griffiths2018qm; @probability-current-wikipedia]。
+这是 QuViz 将静态“云图”扩展为动态概率输运的核心。公式依据量子力学教材；Wikipedia 只作为术语入口 [@griffiths2018qm; @probability-current-wikipedia]。
 
 ## 定态不代表概率流必为零
 
@@ -30,7 +30,7 @@ $$
 
 $$
 \boxed{
-\mathbf j=rac{\hbar m}{\mu r\sin\theta}|\psi|^2\mathbf e_\phi
+\mathbf j=\frac{\hbar m}{\mu r\sin\theta}|\psi|^2\mathbf e_\phi
 }
 $$
 
@@ -63,5 +63,5 @@ $$
 - 有矢势时使用协变电流：
 
 $$
-\mathbf j=rac{1}{\mu}\operatorname{Re}\left[\psi^*(-i\hbar\nabla-q\mathbf A)\psi\right].
+\mathbf j=\frac{1}{\mu}\operatorname{Re}\left[\psi^*(-i\hbar\nabla-q\mathbf A)\psi\right].
 $$

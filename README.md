@@ -1,6 +1,6 @@
 # QuViz
 
-**QuViz** 是一个面向量子力学教学、科学计算与浏览器原生三维可视化的单仓库项目。
+**QuViz** 是一个面向量子力学教学、科学计算与浏览器原生三维可视化的早期单仓库原型。
 
 它不把“电子云”“轨道表面”和“波函数”混为同一个对象，而是强制使用下面的计算链：
 
@@ -14,16 +14,11 @@ Quantum state → Observable → Representation → Scene contract → GPU rende
 - MkDocs Material 以教程、原理、操作指南、参考手册和 ADR 组织知识；
 - `references.bib` 是引用的唯一机器可读真值源，文档构建会校验每一个引用键。
 
-## 当前能力
+## 当前状态
 
-- 任意合法 `(n, ℓ, m)` 的氢与类氢解析轨道；
-- 标准复球谐与 chemistry-friendly 实球谐；
-- `|ψ|² d³r` 的径向/角向分离独立采样；
-- 固定包围概率的三维概率密度等值面；
-- 相位着色 GPU 点云与 indexed mesh；
-- 明确的 Dirichlet/Periodic 网格契约；
-- FastAPI 科学数据接口与 QVPC/1 二进制协议；
-- 物理不变量、统计采样、API、引用和文档质量门禁。
+科学内核目前已实现并测试解析氢样轨道、实/复球谐、概率密度、相位、定态概率流和分离逆 CDF 点采样。FastAPI、QVPC/1、三维等值面和 React/Three.js 场景已有原型，但还不是可发布基线：等值面几何、前端曝光/相机/相位图例、端到端 metadata 和完整质量门禁均有阻断项。
+
+请先阅读文档中的[当前状态](docs/project/status.md)；愿景或路线图中的能力不代表今天已经实现。
 
 ## 项目结构
 
@@ -37,7 +32,7 @@ QuViz/
 │   ├── api/           # FastAPI
 │   └── docs/          # MkDocs 引用扩展
 ├── web/               # React + TypeScript + Three.js
-├── docs/              # Diátaxis 风格文档系统
+├── docs/              # 项目、概念、教程、参考与信源审计
 ├── tests/             # 科学与工程测试
 ├── references.bib     # 引用单一真值源
 ├── mkdocs.yml
@@ -81,11 +76,13 @@ uv run --group docs mkdocs serve -a 127.0.0.1:8001
 
 打开 `http://127.0.0.1:8001`。
 
-## 完整质量检查
+## 质量检查
 
 ```bash
 make check
 ```
+
+当前提交的完整门禁尚未全绿；命令用于重现问题，不应把命令存在误读为检查已经通过。已知结果见[当前状态](docs/project/status.md)。
 
 也可分别执行：
 
@@ -112,7 +109,7 @@ cd web && npm run build
 - 相位由颜色承载，几何由密度承载；
 - 概率流线不自动等同于实验电子轨迹。
 
-完整约定和已确认的源材料纠错见 MkDocs 文档。
+完整约定、来源等级和已确认纠错见 MkDocs 文档的“信源与审计”部分。
 
 ## 项目命名
 

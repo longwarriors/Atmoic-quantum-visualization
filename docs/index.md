@@ -9,7 +9,7 @@ React/Three.js 负责点云、等值面、相位和交互。任何图形都必�
 坐标约定、单位、归一化和来源键。
 
 [开始运行](getting-started/installation.md){ .md-button .md-button--primary }
-[理解架构](concepts/architecture.md){ .md-button }
+[查看真实状态](project/status.md){ .md-button }
 
 </div>
 
@@ -31,8 +31,7 @@ $$
 }
 $$
 
-第一阶段提供解析氢与类氢轨道、电子云独立采样、概率密度等值面、实/复球谐基和概率流。
-后续可扩展到一维/二维/三维 TISE、TDSE、杂化轨道、分子轨道、实验前向模型和多电子量子蒙特卡洛。
+当前科学内核已覆盖解析氢样轨道、实/复球谐、概率密度、相位、定态概率流和电子云独立采样。三维等值面与浏览器场景仍是有阻断缺陷的原型。1D/2D/3D TISE/TDSE、完整点群与 SALC、分子轨道、实验前向模型和多电子采样属于路线图，不是现有能力。
 
 ## 三条不可违反的原则
 
@@ -46,13 +45,10 @@ Python 可视化适合研究原型，但持续交互、GPU shader、响应式布
 React Three Fiber 把 Three.js 场景纳入 React 的组件和状态体系，而 Three.js 的 `BufferGeometry`
 可以直接消费 Python 返回的连续 Float32 数据 [@react-three-fiber; @threejs]。
 
-## 当前可运行能力
+## 从哪里开始
 
-- 任意合法 $n,\ell,m$ 的解析氢样轨道；
-- chemistry-friendly 实球谐与标准复球谐；
-- 基于径向/角向分离的独立电子云采样；
-- 固定包围概率的密度等值面；
-- GPU 相位着色点云与网格；
-- FastAPI 科学数据服务；
-- `uv`、`src` 布局、pytest、Ruff、mypy；
-- MkDocs Material 教程、API 文档和 BibTeX 引用索引。
+- [愿景与边界](project/vision.md)：长期问题域与不可混淆的概念；
+- [当前状态](project/status.md)：逐项实现、验证与缺陷账本；
+- [量子可视化模型地图](concepts/model-map.md)：维度、动力学、observable 和 representation；
+- [用户提供资料审计](references/source-audit.md)：逐条材料判定；
+- [开发路线图](project/roadmap.md)：按科学依赖关系排序的里程碑。

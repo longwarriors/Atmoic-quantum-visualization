@@ -7,6 +7,13 @@ renders them as author-year labels.
 
 ## Physics and mathematics
 
+<a id="crank1947"></a>
+### `crank1947` — A Practical Method for Numerical Evaluation of Solutions of Partial Differential Equations of the Heat-Conduction Type
+
+**Crank, John; Nicolson, Phyllis.** 1947. *Mathematical Proceedings of the Cambridge Philosophical Society*.
+
+[DOI](https://doi.org/10.1017/S0305004100023197)
+
 <a id="dlmf-laguerre"></a>
 ### `dlmf-laguerre` — Chapter 18: Orthogonal Polynomials
 
@@ -20,6 +27,13 @@ renders them as author-year labels.
 **NIST Digital Library of Mathematical Functions.** n.d.
 
 [source](https://dlmf.nist.gov/14.30)
+
+<a id="feit1982-spectral"></a>
+### `feit1982-spectral` — Solution of the Schrödinger Equation by a Spectral Method
+
+**Feit, M. D.; Fleck, J. A., Jr.; Steiger, A.** 1982. *Journal of Computational Physics*.
+
+[DOI](https://doi.org/10.1016/0021-9991(82)90091-2)
 
 <a id="griffiths2018qm"></a>
 ### `griffiths2018qm` — Introduction to Quantum Mechanics
@@ -47,9 +61,9 @@ renders them as author-year labels.
 ## Symmetry and chemical interpretation
 
 <a id="jacobs-character-tables"></a>
-### `jacobs-character-tables` — Common Point Groups and Character Tables
+### `jacobs-character-tables` — Character Tables for Chemically Important Point Groups
 
-**Jacobs University Symmetry Resources.** n.d.
+**Gelessus, Achim.** 2007.
 
 [source](http://symmetry.jacobs-university.de/)
 
@@ -72,25 +86,32 @@ renders them as author-year labels.
 <a id="orbitron"></a>
 ### `orbitron` — The Orbitron: A Gallery of Atomic Orbitals and Molecular Orbitals
 
-**Winter, Mark J.** n.d.
+**Winter, Mark J.** 2023.
 
 [source](https://winter.group.shef.ac.uk/orbitron/)
+
+<a id="science-asylum2020-orbitals"></a>
+### `science-asylum2020-orbitals` — Atomic Orbitals, Visualized Dynamically
+
+**The Science Asylum.** 2020.
+
+[source](https://www.youtube.com/watch?v=BPkcDWLBsrI)
 
 <a id="tully2013pointillist"></a>
 ### `tully2013pointillist` — Interactive Web-Based Pointillist Visualization of Hydrogenic Orbitals Using Jmol
 
-**Tully, Stephen P.; Stitt, Thomas M.; Caldwell, Robert D.; Hardock, Brian J.; Hanson, Robert M.; Maslak, Peter.** 2013. *Journal of Chemical Education*.
+**Tully, Shane P.; Stitt, Thomas M.; Caldwell, Robert D.; Hardock, Brian J.; Hanson, Robert M.; Maslak, Przemyslaw.** 2013. *Journal of Chemical Education*.
 
 [DOI](https://doi.org/10.1021/ed300393s)
 
-<a id="youtube-bpkcdwlbsri"></a>
-### `youtube-bpkcdwlbsri` — Source-Audit Video on Atomic-Orbital Visualization (ID: BPkcDWLBsrI)
-
-**Creator metadata not independently resolved.** n.d.
-
-[source](https://www.youtube.com/watch?v=BPkcDWLBsrI)
-
 ## Audited source material
+
+<a id="claude-fable-audit"></a>
+### `claude-fable-audit` — QuViz Project Audit Artifact
+
+**Anthropic Claude Fable.** 2026.
+
+[source](https://claude.ai/code/artifact/e9c58805-458b-446a-9913-b80e9c108bc4)
 
 <a id="evanescence"></a>
 ### `evanescence` — Evanescence: An Exploration in the Visualization of Hydrogenic Orbitals
@@ -99,6 +120,13 @@ renders them as author-year labels.
 
 [source](https://github.com/al2me6/evanescence)
 
+<a id="mocquin2022-fdm"></a>
+### `mocquin2022-fdm` — 300-times Faster Resolution of Finite-Difference Method Using NumPy
+
+**Mocquin, Yoann.** 2022.
+
+[source](https://towardsdatascience.com/300-times-faster-resolution-of-finite-difference-method-using-numpy-de28cdade4e1/)
+
 <a id="qmsolve"></a>
 ### `qmsolve` — QMsolve: Visualizing the Schrödinger Equation
 
@@ -106,19 +134,40 @@ renders them as author-year labels.
 
 [source](https://github.com/quantum-visualizations/qmsolve)
 
+<a id="shirts2007-character-tables"></a>
+### `shirts2007-character-tables` — Correcting Two Long-Standing Errors in Point Group Symmetry Character Tables
+
+**Shirts, Randall B.** 2007. *Journal of Chemical Education*.
+
+[DOI](https://doi.org/10.1021/ed084p1882)
+
 <a id="solara-atomic-orbitals"></a>
 ### `solara-atomic-orbitals` — atomic_orbitals.py: Manim Scenes for Atomic-Orbital Explanation
 
-**Solara570.** n.d.
+**Solara570.** 2023.
 
 [source](https://github.com/Solara570/demo-solara/blob/master/atomic_orbitals.py)
 
 <a id="solara-hydrogen-derivation"></a>
 ### `solara-hydrogen-derivation` — Hydrogen Atom and Hydrogen-like Ion Orbital Wavefunction Derivation
 
-**Solara570.** n.d.
+**Solara570.** 2023.
 
 [source](https://github.com/Solara570/temp/blob/main/hydrogen_ao_derivation.pdf)
+
+<a id="solara-orbital-plot"></a>
+### `solara-orbital-plot` — Hydrogen Atomic-Orbital and Hybrid-Orbital Plotting Tutorial
+
+**Solara570.** 2023.
+
+[source](https://github.com/Solara570/temp/tree/main/orbital_plot)
+
+<a id="zhihu-molecular-orbital"></a>
+### `zhihu-molecular-orbital` — How Can Molecular-Orbital Theory Be Understood Visually?
+
+**Zhihu User.** 2023.
+
+[source](https://www.zhihu.com/question/41148274/answer/3329299461)
 
 ## Software and numerical infrastructure
 
@@ -143,12 +192,26 @@ renders them as author-year labels.
 
 [source](https://mkdocstrings.github.io/)
 
+<a id="numpy-meshgrid"></a>
+### `numpy-meshgrid` — numpy.meshgrid
+
+**NumPy Developers.** n.d.
+
+[source](https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html)
+
 <a id="numpy-rng"></a>
 ### `numpy-rng` — Random Sampling
 
 **NumPy Developers.** n.d.
 
 [source](https://numpy.org/doc/stable/reference/random/)
+
+<a id="numpy-sliding-window"></a>
+### `numpy-sliding-window` — numpy.lib.stride_tricks.sliding_window_view
+
+**NumPy Developers.** n.d.
+
+[source](https://numpy.org/doc/stable/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html)
 
 <a id="react-three-fiber"></a>
 ### `react-three-fiber` — React Three Fiber Documentation

@@ -38,6 +38,10 @@ $$
 
 ## 已确认的资料纠错
 
+!!! important "PDF 正确，动画源码错误"
+
+    推导 PDF 附录中的 $3p$ 与 $4d$ 公式是正确的。下面纠正的是配套 `atomic_orbitals.py` 的硬编码式，不应把错误归因于 PDF 本身。
+
 配套 Manim 源码曾硬编码：
 
 $$
@@ -53,14 +57,14 @@ $$
 
 所以节点应在 $\sigma=6$。
 
-同理，源码中的 $4d$ 示例把节点放在 $\sigma=3$；正确结构：
+同理，动画源码中的 $4d$ 示例把节点放在 $\sigma=3$；正确结构：
 
 $$
 \rho^2L_1^5(\rho)=\rho^2(6-\rho)
 \propto\sigma^2(12-\sigma),
 $$
 
-节点应在 $\sigma=12$。原始推导路线仍有教学价值，但具体轨道必须由总公式生成，禁止手工维护高阶展开式 [@solara-hydrogen-derivation; @solara-atomic-orbitals]。
+节点应在 $\sigma=12$。原始推导路线仍有教学价值，但具体轨道必须由总公式生成，禁止手工维护高阶展开式 [@solara-hydrogen-derivation; @solara-atomic-orbitals]。PDF、Manim 源码和 `orbital_plot` 教程的完整边界见[用户提供资料审计](../references/source-audit.md)。
 
 ## Python 使用
 
