@@ -1,0 +1,132 @@
+site_name: QuViz
+site_description: Physically explicit quantum-state computation and browser-native visualization
+strict: true
+watch:
+  - src/quviz
+  - references.bib
+
+theme:
+  name: material
+  language: zh
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font: false
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths:
+            - src
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            merge_init_into_class: true
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - quviz.docs.citations:
+      bib_file: references.bib
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra_javascript:
+  - assets/javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - 首页: index.md
+  - 入门:
+      - getting-started/index.md
+      - 安装: getting-started/installation.md
+      - 第一个轨道: getting-started/first-orbital.md
+      - 开发工作流: getting-started/development.md
+  - 原理说明:
+      - concepts/index.md
+      - 系统架构: concepts/architecture.md
+      - 可视对象语义: concepts/semantics.md
+      - 物理与数值约定: concepts/conventions.md
+      - 坐标与概率测度: concepts/coordinate-measures.md
+      - 概率流: concepts/probability-current.md
+      - 实验图样与概率密度: concepts/experiment-vs-density.md
+  - 教程:
+      - tutorials/index.md
+      - 氢与类氢轨道: tutorials/hydrogenic-orbitals.md
+      - 实轨道与复轨道: tutorials/real-vs-complex.md
+      - 电子云采样: tutorials/sampling.md
+      - 点群与轨道杂化: tutorials/hybridization.md
+      - 3D 前端渲染: tutorials/frontend-rendering.md
+  - 操作指南:
+      - how-to/index.md
+      - 添加量子态: how-to/add-state.md
+      - 添加表示方法: how-to/add-representation.md
+      - 验证采样器: how-to/validate-sampler.md
+      - 添加和维护引用: how-to/cite-sources.md
+  - 技术参考:
+      - reference/index.md
+      - Scene Contract: reference/scene-contract.md
+      - HTTP API: reference/api.md
+      - Python API: reference/physics-api.md
+      - 质量门禁: reference/quality-gates.md
+      - 开发路线图: reference/roadmap.md
+      - 原始资料审查: reference/source-audit.md
+  - 决策记录:
+      - adr/index.md
+      - ADR-0001 科学内核与渲染分离: adr/0001-core-renderer-boundary.md
+      - ADR-0002 浏览器原生 3D: adr/0002-browser-native-3d.md
+      - ADR-0003 引用单一真值源: adr/0003-reference-index.md
+      - ADR-0004 qmsolve 定位: adr/0004-qmsolve-boundary.md
+  - 引用:
+      - references/index.md
+      - 资料角色映射: references/source-map.md
+      - 已确认纠错: references/corrections.md

@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "QuViz"
+version = "0.1.0"
+description = "QuViz: physically explicit quantum-state computation and browser-native scientific visualization."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+authors = [
+  { name = "Zhang Xiaoxu" },
+]
+keywords = [
+  "quantum-mechanics",
+  "schrodinger-equation",
+  "scientific-visualization",
+  "atomic-orbitals",
+  "threejs",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Typing :: Typed",
+]
+dependencies = [
+  "fastapi>=0.134",
+  "numpy>=2.2",
+  "orjson>=3.10",
+  "pydantic>=2.11",
+  "scikit-image>=0.25",
+  "scipy>=1.17",
+  "typer>=0.15",
+  "uvicorn[standard]>=0.34",
+]
+
+[project.scripts]
+quviz = "quviz.cli:app"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28",
+  "mypy>=1.15",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.11",
+]
+docs = [
+  "mkdocs-material~=9.0",
+  "mkdocstrings[python]>=0.29",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quviz"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["quviz"]
+omit = ["src/quviz/docs/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["quviz"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["quviz"]
+warn_unused_ignores = true
+
+[tool.uv]
+default-groups = ["dev"]

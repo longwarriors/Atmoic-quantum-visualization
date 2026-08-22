@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: QuViz
+type: software
+message: "If you use QuViz in research or teaching, cite this software and the physical sources listed in references.bib."
+authors:
+  - family-names: Zhang
+    given-names: Xiaoxu
+version: 0.1.0
+date-released: 2026-08-22
+license: MIT
+keywords:
+  - quantum mechanics
+  - scientific visualization
+  - atomic orbitals

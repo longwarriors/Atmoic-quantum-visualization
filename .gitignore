@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+site/
+dist/
+build/
+*.egg-info/
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Generated scientific assets
+outputs/
+.cache/
+*.npy
+*.npz
+*.vtk
+*.vti
+*.glb
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
