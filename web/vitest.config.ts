@@ -3,7 +3,10 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}'],
+    // Mirrored by tsconfig.test.json (include) and tsconfig.app.json (exclude)
+    // so a spec/__tests__ file is type-checked with the tests and kept out of
+    // the production build.
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'src/**/__tests__/**/*.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       // Pure logic only. client.ts is the HTTP layer and is exercised by the
