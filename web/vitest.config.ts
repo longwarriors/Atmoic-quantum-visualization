@@ -30,6 +30,10 @@ export default defineConfig({
       //              src/state/, src/components/) -- they need a WebGL/DOM
       //              harness this suite does not provide.
       //
+      // src/guards.test.ts enforces the rest of this contract: no skipped,
+      // todo, focused or conditionally-run tests in any spec, and no coverage
+      // "ignore" pragmas inside the gated modules.
+      //
       // Thresholds apply per file, so one well-covered module cannot mask a
       // neglected one behind an aggregate number.
       include: ['src/api/**/*.ts', 'src/scene/**/*.ts'],
