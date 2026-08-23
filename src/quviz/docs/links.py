@@ -61,7 +61,11 @@ def added_urls(diff_text: str) -> set[str]:
     """URLs that a unified diff of prose (``docs/*.md``) introduces.
 
     ``+`` lines contribute, ``-`` lines subtract, so a link that merely moved
-    is not re-probed. File headers (``+++``/``---``) are ignored.
+    is not re-probed. Only lines inside a hunk (after ``@@``, before the next
+    ``diff`` header) count: the ``---``/``+++`` file header sits outside the
+    hunks, whereas a prose line that itself starts with ``++`` or ``--`` shows
+    up inside one as ``+++ ...`` / ``--- ...`` and used to be thrown away as a
+    header, so a link on it was never probed.
 
     This is only for prose. ``references.bib`` is *not* diffed line by line:
     a BibTeX field can share a line with other fields, sit in a single-line
@@ -72,8 +76,13 @@ def added_urls(diff_text: str) -> set[str]:
 
     added: set[str] = set()
     removed: set[str] = set()
+    in_hunk = False
     for line in diff_text.splitlines():
-        if line.startswith(("+++", "---")):
+        if line.startswith("diff "):
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        if not in_hunk:
             continue
         if line.startswith("+"):
             added |= extract_urls(line[1:])

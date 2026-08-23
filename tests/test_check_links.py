@@ -158,18 +158,31 @@ def test_changed_targets_reads_the_bibliography_with_the_parser(tmp_path: Path) 
     assert check_links._changed_targets("HEAD") == {}
 
 
+HUNK = "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n"
+
+
 def test_added_urls_ignores_diff_headers_that_start_with_plus() -> None:
-    diff = "+++ b/docs/https://not-a-link.example\n+Prose.\n"
+    diff = (
+        "diff --git a/docs/https://not-a-link.example b/docs/https://not-a-link.example\n"
+        "--- a/docs/https://not-a-link.example\n"
+        "+++ b/docs/https://not-a-link.example\n"
+        "@@ -1 +1 @@\n"
+        "+Prose.\n"
+    )
     assert added_urls(diff) == set()
+    # Lines outside any hunk are never content, whatever they start with.
+    assert added_urls("+https://example.org/no-hunk\n") == set()
 
 
 def test_added_urls_treats_a_moved_url_as_unchanged() -> None:
-    diff = "-See <https://example.org/moved>.\n+Moved: <https://example.org/moved>.\n"
+    diff = HUNK + "-See <https://example.org/moved>.\n+Moved: <https://example.org/moved>.\n"
     assert added_urls(diff) == set()
 
 
 def test_added_urls_reads_markdown_links_with_balanced_parentheses() -> None:
-    diff = "+[DOI](https://doi.org/10.1016/0021-9991(82)90091-2) and [x](https://a.example/p).\n"
+    diff = HUNK + (
+        "+[DOI](https://doi.org/10.1016/0021-9991(82)90091-2) and [x](https://a.example/p).\n"
+    )
     assert added_urls(diff) == {
         "https://doi.org/10.1016/0021-9991(82)90091-2",
         "https://a.example/p",
@@ -345,3 +358,36 @@ def test_changed_since_with_no_new_links_exits_zero_without_probing() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "no new links" in result.stdout
+
+
+def test_added_urls_keeps_a_prose_line_that_begins_with_plus_signs() -> None:
+    # A docs line that itself starts with ``++`` shows up in the diff as
+    # ``+++ ...``, and one starting with ``--`` as ``--- ...``. Only the file
+    # header -- the ``---``/``+++`` pair before a file's first ``@@`` hunk --
+    # is a header; inside a hunk those prefixes are content, so a link on such
+    # a line used to be dropped and never probed.
+    diff = (
+        "diff --git a/docs/a.md b/docs/a.md\n"
+        "index ebe83d1..19ce168 100644\n"
+        "--- a/docs/a.md\n"
+        "+++ b/docs/a.md\n"
+        "@@ -1,2 +1,4 @@\n"
+        " # A\n"
+        "+++ 见 https://example.org/plus-plus。\n"
+        "++++ https://example.org/triple-plus\n"
+        "--- https://example.org/moved\n"
+        "+-- https://example.org/moved\n"
+        "diff --git a/docs/new.md b/docs/new.md\n"
+        "new file mode 100644\n"
+        "index 0000000..c85f884\n"
+        "--- /dev/null\n"
+        "+++ b/docs/new.md\n"
+        "@@ -0,0 +1 @@\n"
+        "+++ https://example.org/in-new-file\n"
+        "\\ No newline at end of file\n"
+    )
+    assert added_urls(diff) == {
+        "https://example.org/plus-plus",
+        "https://example.org/triple-plus",
+        "https://example.org/in-new-file",
+    }
