@@ -155,25 +155,35 @@ describe('parsePointCloud rejects malformed payloads', () => {
     expect(() => parsePointCloud(buffer, headers())).toThrow(/magic/i)
   })
 
-  it('rejects non-zero reserved flags', () => {
+  // Several values per field, each asserted to appear in the message, so a
+  // decoder narrowed to a single sentinel (e.g. `flags === 0xffff`) cannot
+  // pass with full branch coverage.
+  it.each([0x0001, 0x8000, 0xffff])('rejects reserved flags %i', (flags) => {
     // The encoder writes flags=0 and the Python contract test asserts it; a
     // decoder that never reads the field would accept a payload it does not
     // understand.
     const buffer = goldenBuffer()
-    new DataView(buffer).setUint16(6, 0xffff, true)
-    expect(() => parsePointCloud(buffer, headers())).toThrow(/reserved.*flags.*0xffff/i)
+    new DataView(buffer).setUint16(6, flags, true)
+    const hex = `0x${flags.toString(16).padStart(4, '0')}`
+    expect(() => parsePointCloud(buffer, headers())).toThrow(
+      new RegExp(`reserved.*flags.*${hex}`, 'i'),
+    )
   })
 
-  it('rejects an unsupported version', () => {
+  it.each([0, 2, 256])('rejects unsupported version %i', (version) => {
     const buffer = goldenBuffer()
-    new DataView(buffer).setUint16(4, 2, true)
-    expect(() => parsePointCloud(buffer, headers())).toThrow(/version=2/)
+    new DataView(buffer).setUint16(4, version, true)
+    expect(() => parsePointCloud(buffer, headers())).toThrow(
+      new RegExp(`version=${version}\\b`),
+    )
   })
 
-  it('rejects an unexpected stride', () => {
+  it.each([0, 4, 6])('rejects unexpected stride %i', (stride) => {
     const buffer = goldenBuffer()
-    new DataView(buffer).setUint32(12, 6, true)
-    expect(() => parsePointCloud(buffer, headers())).toThrow(/stride=6/)
+    new DataView(buffer).setUint32(12, stride, true)
+    expect(() => parsePointCloud(buffer, headers())).toThrow(
+      new RegExp(`stride=${stride}\\b`),
+    )
   })
 
   it('rejects a truncated payload whose count disagrees with its length', () => {
