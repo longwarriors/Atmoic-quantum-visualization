@@ -975,7 +975,8 @@ def test_hex_looking_tag_name_on_an_explicit_tag_path_stays_a_tag(url: str) -> N
         ("https://raw.githubusercontent.com/o/r/refs/heads/main/f.py", ("branch", "main")),
         ("https://raw.githubusercontent.com/o/r/refs/tags/v1.2/f.py", ("tag", "v1.2")),
         (f"https://raw.githubusercontent.com/o/r/{SHA}/f.py", ("sha", SHA)),
-        ("https://github.com/o/r/blob/refs/f.py", ("ref", "refs")),
+        # ``refs/`` followed by anything but heads/tags is a ref namespace.
+        ("https://github.com/o/r/blob/refs/f.py", ("branch", "refs/f.py")),
     ],
 )
 def test_refs_heads_and_refs_tags_paths_name_the_branch_or_tag(
@@ -1150,3 +1151,91 @@ def test_percent_encoded_path_is_decoded_exactly_once() -> None:
     url = "https://github.com/o/r/tree/refs%252Fheads%252Fmaster"
     assert url_ref(url) == ("ref", "refs%2Fheads%2Fmaster")
     assert validate_source_pins([_entry("x", url=url, commit=SHA, version="v1")]) != []
+
+
+# (j) C4 again: a browser removes ``.`` and ``..`` path segments (also spelled
+# ``%2e``) before the request leaves it, so ``/tree/v1.0/../master`` reaches
+# GitHub as ``/tree/master``. The pin gate used to read ``v1.0`` and accept the
+# entry with ``version = {v1.0}``.
+@pytest.mark.parametrize(
+    ("url", "name"),
+    [
+        ("https://github.com/o/r/tree/v1.0/../master", "master"),
+        ("https://github.com/o/r/tree/v1.0/../main/src", "main"),
+        ("https://github.com/o/r/blob/v1.0/../master/f.py", "master"),
+        ("https://github.com/o/r/tree/v1.0/%2e%2e/master", "master"),
+        ("https://github.com/o/r/tree/v1.0/%2E%2E/master", "master"),
+        ("https://github.com/o/r/tree/v1.0/.%2e/master", "master"),
+        ("https://github.com/o/r/tree/./master", "master"),
+        ("https://github.com/o/r/releases/tag/v1.0/../../../tree/master", "master"),
+        ("https://github.com/o/r/tree/x/../../tree/master", "master"),
+        ("https://raw.githubusercontent.com/o/r/v1.0/../master/f.py", "master"),
+        ("https://gitlab.com/o/r/-/tree/v1.0/../develop", "develop"),
+    ],
+)
+def test_dot_segments_are_removed_before_the_ref_is_read(url: str, name: str) -> None:
+    assert url_ref(url) in {("branch", name), ("ref", name)}
+    for version in ("v1.0", "x", name):
+        messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and repr(name) in messages[0]
+
+
+def test_dot_segments_that_climb_out_of_the_repository_name_no_repository() -> None:
+    # ``/o/r/../../o`` is ``/o`` to the server: no repository at all.
+    messages = validate_source_pins([_entry("x", url="https://github.com/o/r/../../o", commit=SHA)])
+    assert len(messages) == 1 and "no repository" in messages[0], messages
+
+
+# (k) ``refs/<namespace>/...`` other than ``heads`` and ``tags`` -- pull-request
+# heads, remote-tracking refs -- is a ref namespace, never a pin. The gate used
+# to read the ref name ``refs`` and accept ``version = {refs}``.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r/tree/refs/pull/1/head",
+        "https://github.com/o/r/tree/refs/pull/1/merge",
+        "https://github.com/o/r/tree/refs/remotes/origin/master",
+        "https://github.com/o/r/blob/refs/notes/commits/f.py",
+        "https://raw.githubusercontent.com/o/r/refs/pull/1/head/f.py",
+        "https://github.com/o/r/tree/refs%2Fpull%2F1%2Fhead",
+    ],
+)
+def test_other_ref_namespaces_are_moving_refs(url: str) -> None:
+    kind, _name = url_ref(url) or (None, None)
+    assert kind == "branch"
+    for version in ("refs", "refs/pull/1/head", "1", "head"):
+        messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and "refs/" in messages[0]
+
+
+# (l) Gitea / Forgejo (codeberg.org) raw and media URLs carry the same
+# ``branch`` / ``tag`` / ``commit`` marker as ``src`` paths. The gate only knew
+# the ``src`` form, read ``branch`` as the ref name for a raw URL and accepted
+# ``version = {branch}``.
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://codeberg.org/o/r/raw/branch/main/f.py", ("branch", "main")),
+        ("https://codeberg.org/o/r/raw/branch/master/f.py", ("branch", "master")),
+        ("https://codeberg.org/o/r/raw/tag/v1.0/f.py", ("tag", "v1.0")),
+        ("https://codeberg.org/o/r/raw/commit/" + SHA + "/f.py", ("sha", SHA)),
+        ("https://codeberg.org/o/r/media/branch/main/f.png", ("branch", "main")),
+        ("https://codeberg.org/o/r/media/tag/v1.0/f.png", ("tag", "v1.0")),
+    ],
+)
+def test_gitea_raw_and_media_paths_carry_the_same_ref_markers_as_src(
+    url: str, expected: tuple[str, str]
+) -> None:
+    assert url_ref(url) == expected
+    kind, name = expected
+    if kind == "branch":
+        for version in ("branch", name):
+            messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+            assert len(messages) == 1 and "branch" in messages[0], messages
+    elif kind == "tag":
+        assert validate_source_pins([_entry("x", url=url, commit=SHA, version=name)]) == []
+        assert validate_source_pins([_entry("x", url=url, commit=SHA, version="tag")]) != []
+    else:
+        assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
