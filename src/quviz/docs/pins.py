@@ -11,12 +11,13 @@ the pin mean something:
   otherwise escape every code-host rule below;
 * the host is normalised the way a browser resolves it before it is compared
   with the code-host list (lowercase, userinfo and port dropped, percent-escapes
-  decoded, trailing dot stripped, IDNA-mapped to ASCII), and the path is
-  percent-decoded once *before* it is split on ``/`` and its ``.``/``..``
-  segments are resolved -- so ``github.com.``, ``GitHub.com``,
-  ``github%2Ecom``, ``tree/refs%2Fheads%2Fmaster`` and
-  ``tree/v1.0/../master`` meet exactly the rules their canonical spellings
-  meet;
+  decoded, IDNA-mapped to ASCII and only *then* trailing dots stripped, so the
+  ideographic and full-width full stops IDNA turns into ``.`` are stripped
+  too), and the path is percent-decoded once *before* it is split on ``/``
+  and its ``.``/``..`` segments are resolved -- so ``github.com.``,
+  ``github.com。``, ``GitHub.com``, ``github%2Ecom``,
+  ``tree/refs%2Fheads%2Fmaster`` and ``tree/v1.0/../master`` meet exactly the
+  rules their canonical spellings meet;
 * an entry whose ``url`` is on a code host must name a repository (at least
   ``/owner/repo``, or ``/group/subgroup/repo`` on GitLab); issue,
   pull-request, discussion and wiki pages are not source and are rejected,
@@ -57,6 +58,7 @@ URL, is the pin in that case.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Iterable
 from typing import Literal
@@ -87,6 +89,14 @@ _PIN_FORMS = (
 )
 
 RefKind = Literal["sha", "tag", "branch", "ref"]
+# Code points the IDNA mapping (RFC 3490 §3.1) treats as the label separator.
+_IDNA_DOTS = str.maketrans(
+    {
+        "\N{IDEOGRAPHIC FULL STOP}": ".",
+        "\N{FULLWIDTH FULL STOP}": ".",
+        "\N{HALFWIDTH IDEOGRAPHIC FULL STOP}": ".",
+    }
+)
 
 
 def _host(url: str) -> str:
@@ -94,18 +104,26 @@ def _host(url: str) -> str:
 
     ``urlsplit().hostname`` already drops userinfo and the port and lowercases.
     On top of that: percent-escapes in the host are decoded (``github%2Ecom``),
-    a trailing dot (the fully-qualified spelling ``github.com.``, which GitHub
-    answers with a redirect to the canonical host) is stripped, and the name is
-    IDNA-mapped to ASCII so ``github.com`` spelled in full-width letters (U+FF47
-    ...) is ``github.com``, while a genuine look-alike such as ``gíthub.com``
-    stays ``xn--gthub-zsa.com``.
+    the name is IDNA-mapped to ASCII so ``github.com`` spelled in full-width
+    letters (U+FF47 ...) is ``github.com``, while a genuine look-alike such as
+    ``gíthub.com`` stays ``xn--gthub-zsa.com``, and *then* trailing dots (the
+    fully-qualified spelling ``github.com.``, which GitHub answers with a
+    redirect to the canonical host) are stripped.
+
+    The order matters: IDNA maps the ideographic full stop U+3002, the
+    full-width full stop U+FF0E and the half-width ideographic full stop
+    U+FF61 to the ASCII label separator, so a browser resolves ``github.com。``
+    as ``github.com.`` and then ``github.com``. Stripping before the mapping
+    left that dot in place, the host came out as ``github.com.`` and matched
+    no code host at all. The three are also folded by hand first, because the
+    IDNA codec refuses an empty label (``github.com。。``) and would leave the
+    original spelling -- with its unstripped non-ASCII dots -- behind.
     """
 
-    host = unquote(urlsplit(url).hostname or "").rstrip(".").lower()
-    try:
-        return host.encode("idna").decode("ascii").lower()
-    except UnicodeError:
-        return host
+    host = unquote(urlsplit(url).hostname or "").lower().translate(_IDNA_DOTS)
+    with contextlib.suppress(UnicodeError):
+        host = host.encode("idna").decode("ascii").lower()
+    return host.rstrip(".")
 
 
 def _host_in(host: str, hosts: Iterable[str]) -> bool:

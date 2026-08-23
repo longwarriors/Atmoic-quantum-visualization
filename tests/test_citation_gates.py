@@ -15,7 +15,7 @@ import markdown
 import pytest
 
 from quviz.docs.bibliography import BibEntry, keywords, parse_bibtex, parse_bibtex_file
-from quviz.docs.pins import _host_in, is_code_host, url_ref, validate_source_pins
+from quviz.docs.pins import _host, _host_in, is_code_host, url_ref, validate_source_pins
 from quviz.docs.scan import cited_keys_in, cited_keys_in_tree, orphan_keys, strip_non_prose
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1189,6 +1189,37 @@ def test_host_spelling_variants_are_still_the_code_host(url: str) -> None:
     messages = validate_source_pins([entry])
     assert len(messages) == 1, messages
     assert "branch" in messages[0] and "'main'" in messages[0]
+
+
+# IDNA maps U+3002, U+FF0E and U+FF61 to the ASCII label separator, so a
+# browser reads ``github.com。`` as ``github.com.`` and resolves it as the
+# canonical host. The gate stripped the trailing dot *before* the IDNA step,
+# so the mapped dot survived, the host was ``github.com.`` and every code-host
+# rule was skipped: a branch URL with no ``commit`` passed on a ``urldate``.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com\N{IDEOGRAPHIC FULL STOP}/o/r/tree/main",
+        "https://github.com\N{FULLWIDTH FULL STOP}/o/r/tree/main",
+        "https://github.com\N{HALFWIDTH IDEOGRAPHIC FULL STOP}/o/r/tree/main",
+        "https://github.com\N{IDEOGRAPHIC FULL STOP}\N{IDEOGRAPHIC FULL STOP}/o/r/tree/main",
+        "https://github.com..\N{IDEOGRAPHIC FULL STOP}/o/r/tree/main",
+        "https://github\N{IDEOGRAPHIC FULL STOP}com\N{FULLWIDTH FULL STOP}/o/r/tree/main",
+        "https://GitHub.COM\N{FULLWIDTH FULL STOP}/o/r/tree/main",
+        "https://github.com../o/r/tree/main",
+        "https://raw.githubusercontent.com\N{IDEOGRAPHIC FULL STOP}/o/r/main/f.py",
+    ],
+)
+def test_idna_dot_equivalents_do_not_hide_the_code_host(url: str) -> None:
+    assert _host(url) in {"github.com", "raw.githubusercontent.com"}
+    assert is_code_host(url)
+    # The reviewer's exploit: no commit at all, only an access date.
+    messages = validate_source_pins([_entry("x", url=url, urldate="2026-08-23")])
+    assert messages, "a branch URL with no commit passed on a urldate alone"
+    assert all("urldate" not in m for m in messages), messages
+    assert any("branch" in m and "'main'" in m for m in messages) or any(
+        "commit" in m for m in messages
+    ), messages
 
 
 @pytest.mark.parametrize(
