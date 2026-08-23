@@ -37,12 +37,15 @@ jobs:
           uv run --group docs mkdocs build --strict
 
   changed-links:
-    # A link being *introduced* has to be shown to resolve; every non-OK
-    # verdict fails except BLOCKED on a known bot-filter host (cite those by
-    # DOI). Rot in links that already exist is the weekly link-check workflow's
-    # job, not the author's. This repository merges by fast-forward push, so
-    # the job runs on push as well as on pull_request: the base is the PR's
-    # base branch, or the commit the push moved the ref away from.
+    # A link being *introduced* has to be shown to resolve: BROKEN and SUSPECT
+    # verdicts fail. BLOCKED -- a 401/403 from a known bot-filter host, or a
+    # 429 rate limit from any host -- says nothing about the link and is
+    # tolerated here exactly as in the weekly sweep (cite bot-filter hosts by
+    # DOI so something is verified). Rot in links that already exist is the
+    # weekly link-check workflow's job, not the author's. This repository
+    # merges by fast-forward push, so the job runs on push as well as on
+    # pull_request: the base is the PR's base branch, or the commit the push
+    # moved the ref away from.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

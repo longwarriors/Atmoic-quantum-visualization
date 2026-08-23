@@ -41,7 +41,8 @@ refs:
 check: lint typecheck test docs web-test web-build
 
 # Network-dependent, so deliberately outside `check`. BROKEN and SUSPECT fail;
-# `--changed-since <ref>` (CI runs it on every push and pull request) fails on
-# anything not OK except BLOCKED on a known bot-filter host (cite those by DOI).
+# BLOCKED (a 401/403 from a known bot-filter host, or a 429 rate limit from any
+# host) is tolerated, here and under `--changed-since <ref>` (CI runs that on
+# every push and pull request) alike. Cite bot-filter hosts by DOI.
 links:
 	uv run --group docs python scripts/check_links.py --include-doi

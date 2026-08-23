@@ -7,8 +7,9 @@ name: Link check
 # ci.yml instead.)
 #
 # BROKEN and SUSPECT verdicts fail this run; a SUSPECT used to exit 0 and was
-# therefore never looked at. BLOCKED (a known bot filter) is tolerated. The
-# per-link verdicts are written to the job summary.
+# therefore never looked at. BLOCKED -- a 401/403 from a known bot-filter host,
+# or a 429 rate limit from any host -- is tolerated, in this run and in the
+# changed-links job alike. The per-link verdicts are written to the job summary.
 
 permissions:
   contents: read
