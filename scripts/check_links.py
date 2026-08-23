@@ -5,9 +5,11 @@ Two modes:
 * the default **broad sweep** probes every ``url`` (and with ``--include-doi``
   every DOI) in ``references.bib``. It needs the network, so it is deliberately
   NOT part of ``make check`` / ``check.ps1`` -- a transient outage must not
-  block local development -- and runs as the weekly ``link-check`` workflow.
-  BROKEN and SUSPECT results fail the run; BLOCKED (a bot filter, see below,
-  or a 429 rate limit) is tolerated.
+  block local development -- and runs as the weekly ``link-check`` workflow,
+  and as the ``changed-links`` job's fallback when there is no base revision
+  to diff against (the first or a force push of ``master`` itself, or no
+  ``origin/master`` at all). BROKEN and SUSPECT results fail the run; BLOCKED
+  (a bot filter, see below, or a 429 rate limit) is tolerated.
 * ``--changed-since <git-ref>`` probes only the URLs and DOIs *added* to
   ``references.bib`` and ``docs/`` since the merge base with ``<git-ref>``
   (the bibliography is compared as two parsed files, the docs as a line diff).
