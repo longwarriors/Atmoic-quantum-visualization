@@ -42,6 +42,29 @@ uv run --group docs python scripts/render_reference_index.py --check
 
 未知键、畸形引用，以及**没有被任何正文引用的条目**（orphan）都会使检查失败。工具链条目用 `keywords = {tooling}` 豁免 orphan 检查。
 
+## 哪些规则由工具强制
+
+下面这些由 `scripts/render_reference_index.py --check`、`uv run --group docs pytest` 和 CI 强制执行，违反即构建失败：
+
+| 检查 | 规则 |
+|---|---|
+| 未知键 / 畸形键 | 正文中每个 `[\@key]` 必须存在于 `references.bib`，key 匹配 `[A-Za-z0-9_:-]+` |
+| 空 locator | `[\@key, ]` 这种逗号后为空的写法是错误 |
+| orphan | 每个非 `tooling` 条目至少在一处**正文**中被引用；围栏代码块、行内代码和 `<!-- -->` 注释里的引用**不算** |
+| 索引同步 | `docs/references/index.md` 必须与生成结果一致 |
+| 源码 commit 锚定 | `source-audit` 且 URL 在代码托管站（GitHub、GitLab、Bitbucket、Codeberg、Gitee）的条目必须有 7–40 位十六进制 `commit`；URL 中若含 SHA，必须与 `commit` 一致；URL 指向 tag/分支时还必须有 `version` 且其出现在 URL 里 |
+| 非源码审计条目 | `source-audit` 但不在代码托管站的条目：有 URL 就必须有 ISO 格式 `urldate`，没有 URL 就必须有 `doi` |
+| 新增链接可达 | pull request 中新增的 URL/DOI 由 `scripts/check_links.py --changed-since` 探测，任何非 OK 结果都失败；每周另有全量扫描 |
+
+pytest 必须带 `--group docs` 运行（`check.ps1`、`make test`、CI 都已如此）；缺少该依赖组时 `tests/test_citation_gates.py` 会直接报错，而不是静默跳过。
+
+下面这些**仍只是政策**，没有工具检查：
+
+- 核心公式必须带 locator（页、节、公式号）——工具只检查 locator 不为空，不检查是否存在、是否可核查；
+- locator 的格式与准确性；
+- 来源等级是否配得上它承担的声明（见[信源与引用政策](../references/source-policy.md)）；
+- 重定向到 200 落地页的链接仍算 OK，链接检查不验证页面内容。
+
 ## 资料分类
 
 在 BibTeX `keywords` 中使用：

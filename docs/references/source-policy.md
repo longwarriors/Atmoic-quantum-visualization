@@ -50,10 +50,18 @@
 - 社区内容不得承担数值常数、算法正确性或实验因果结论；
 - AI 审计输出只作为问题发现与复核清单；其中每项事实仍需回到仓库、测试或原始来源；
 - 发现来源错误时保留引用，并在[纠错账本](corrections.md)记录错误位置、正确结论和验证方法；
-- 网页记录访问日期，源码审计**必须**记录 commit（由 `tests/test_bibliography.py` 强制），论文记录 DOI；
-- 每个 `references.bib` 条目都必须在正文中被引用；纯工具链条目标注 `keywords = {tooling}` 豁免。未被引用的条目无人复核，构建会报 orphan 错误；
+- 网页记录访问日期，源码审计**必须**记录 commit，论文记录 DOI。对 `source-audit` 条目这一条由 `quviz.docs.pins.validate_source_pins` 强制：代码托管站 URL 必须有十六进制 `commit`，且与 URL 中的 SHA 一致，tag/分支 URL 还要有 `version`；非代码托管站的有 URL 条目必须有 ISO `urldate`，无 URL 的必须有 `doi`；
+- 每个 `references.bib` 条目都必须在**正文**中被引用；纯工具链条目标注 `keywords = {tooling}` 豁免。未被引用的条目无人复核，构建会报 orphan 错误。代码块、行内代码和 HTML 注释里的引用不算正文，所以示例语法不会把条目“救活”；
 - 声明“某来源没有某内容”时必须记录访问日期和检查方法，并区分“我没抓到”与“它不存在”；
 - 影响因子、赞同数、star 数不作为单条科学结论的证据。
+
+## 强制与政策的边界
+
+工具强制（违反即构建或测试失败）：未知键与畸形键、空 locator、orphan（排除代码块与注释）、索引同步、`source-audit` 条目的 commit/SHA/URL 一致性与访问日期、pull request 中新增链接的可达性。
+
+仅政策（靠评审执行）：核心公式必须带 locator、locator 的格式与准确性、来源等级与声明的匹配。语法上 `[\@key]` 与 `[\@key, locator]` 都能通过检查，工具无法判断一条核心结论是否本应带 locator。
+
+完整清单见[添加和维护引用](../how-to/cite-sources.md)。
 
 ## 仓库中的引用链
 
