@@ -2,7 +2,7 @@
 # Citation index
 
 `references.bib` is the canonical machine-readable source. Documentation citations use
-Pandoc-like keys such as `[\@stodolna2013stark]`; the MkDocs extension validates and
+Pandoc-like keys such as `[@stodolna2013stark]`; the MkDocs extension validates and
 renders them as author-year labels.
 
 ## Physics and mathematics

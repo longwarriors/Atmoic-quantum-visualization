@@ -5,7 +5,7 @@
 
 ## 决策
 
-`references.bib` 是唯一机器可读来源。MkDocs 正文使用 `[\@key]`，构建时校验；完整索引由脚本生成。
+`references.bib` 是唯一机器可读来源。MkDocs 正文使用 `[@key]`，构建时校验；完整索引由脚本生成。
 
 ## 原因
 
