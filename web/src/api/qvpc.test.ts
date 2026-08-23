@@ -227,9 +227,29 @@ describe('readFiniteHeader', () => {
   })
 })
 
+/** A header-only QVPC/1 payload: magic, version 1, flags 0, `count`, stride 5. */
+function headerOnlyBuffer(count: number): ArrayBuffer {
+  const buffer = new ArrayBuffer(HEADER_BYTES)
+  new Uint8Array(buffer).set(new TextEncoder().encode(EXPECTED_MAGIC), 0)
+  const view = new DataView(buffer)
+  view.setUint16(4, SUPPORTED_VERSION, true)
+  view.setUint16(6, 0, true)
+  view.setUint32(8, count, true)
+  view.setUint32(12, EXPECTED_STRIDE, true)
+  return buffer
+}
+
 describe('parsePointCloud rejects malformed payloads', () => {
-  it('rejects a buffer shorter than the header', () => {
-    expect(() => parsePointCloud(new ArrayBuffer(8), headers())).toThrow(/shorter than/i)
+  // 15 is the boundary: one byte short of a complete header. A check written
+  // as `< 8` or `<= HEADER_BYTES` passes/fails the wrong side of it.
+  it.each([0, 8, 15])('rejects a %i-byte buffer as shorter than the 16-byte header', (size) => {
+    expect(() => parsePointCloud(new ArrayBuffer(size), headers())).toThrow(/shorter than/i)
+  })
+
+  it('does not apply the header-length check to a buffer of exactly 16 bytes', () => {
+    // Exactly one header and nothing else is the count-0 payload below; it
+    // must reach the field checks, not be rejected as truncated.
+    expect(() => parsePointCloud(headerOnlyBuffer(0), headers())).not.toThrow()
   })
 
   it('rejects a wrong magic number', () => {
@@ -273,5 +293,68 @@ describe('parsePointCloud rejects malformed payloads', () => {
     const buffer = goldenBuffer()
     new DataView(buffer).setUint32(8, spec.count + 1, true)
     expect(() => parsePointCloud(buffer, headers())).toThrow(/size mismatch/i)
+  })
+
+  it('rejects a payload one byte shorter than count * stride * 4 declares', () => {
+    // Shorter by a whole record would also fail a lenient `< expected` check;
+    // shorter by a single byte is the case where a Float32Array view would
+    // throw a RangeError of its own, so the decoder must reject it first with
+    // the contract's message and exact byte counts.
+    const golden = goldenBuffer()
+    const expected = HEADER_BYTES + spec.count * EXPECTED_STRIDE * 4
+    expect(golden.byteLength).toBe(expected)
+    const short = golden.slice(0, expected - 1)
+    expect(() => parsePointCloud(short, headers())).toThrow(
+      new RegExp(`size mismatch: expected ${expected}, got ${expected - 1}`, 'i'),
+    )
+  })
+
+  it('rejects a payload one byte longer than count * stride * 4 declares', () => {
+    // The size check is exact equality, not `>=`: trailing bytes mean the
+    // header and the body disagree, and a decoder that tolerates them would
+    // silently accept a count that under-reports the data.
+    const golden = goldenBuffer()
+    const expected = golden.byteLength
+    const long = new ArrayBuffer(expected + 1)
+    new Uint8Array(long).set(new Uint8Array(golden), 0)
+    expect(() => parsePointCloud(long, headers())).toThrow(
+      new RegExp(`size mismatch: expected ${expected}, got ${expected + 1}`, 'i'),
+    )
+  })
+})
+
+describe('parsePointCloud accepts an empty (count 0) payload on purpose', () => {
+  // Decision, recorded here so it is not re-litigated: a header-only payload
+  // with count 0 is a well-formed QVPC/1 stream -- encode_point_cloud in
+  // src/quviz/scene/binary.py emits exactly these 16 bytes for an empty
+  // cloud. The API route never produces one (its `samples` query is validated
+  // to >= 1000 in routes.py), but that is the route's rule, not the wire
+  // format's. The decoder validates the format and returns what the header
+  // declares; refusing count 0 here would conflate "malformed" with
+  // "physically uninteresting" and would break the encoder/decoder symmetry
+  // the golden vector pins. No scene consumer divides by count.
+  it('returns count 0 with zero-length typed arrays and the metadata headers', () => {
+    const result = parsePointCloud(headerOnlyBuffer(0), headers())
+    expect(result.count).toBe(0)
+    expect(result.stride).toBe(EXPECTED_STRIDE)
+    expect(result.positions).toHaveLength(0)
+    expect(result.intensity).toHaveLength(0)
+    expect(result.phase).toHaveLength(0)
+    expect(result.radialMass).toBeCloseTo(0.999999, 9)
+    expect(result.extentBohr).toBeCloseTo(100, 9)
+  })
+
+  it('still enforces the size contract when count is 0 but bytes follow', () => {
+    const buffer = new ArrayBuffer(HEADER_BYTES + 1)
+    new Uint8Array(buffer).set(new Uint8Array(headerOnlyBuffer(0)), 0)
+    expect(() => parsePointCloud(buffer, headers())).toThrow(
+      new RegExp(`size mismatch: expected ${HEADER_BYTES}, got ${HEADER_BYTES + 1}`, 'i'),
+    )
+  })
+
+  it('still validates the metadata headers when count is 0', () => {
+    expect(() => parsePointCloud(headerOnlyBuffer(0), new Headers())).toThrow(
+      /X-QuViz-Radial-Mass.*missing/i,
+    )
   })
 })
