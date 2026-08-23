@@ -113,16 +113,24 @@ def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 def _file_at(revision: str, path: str) -> str:
-    """``path`` as committed at ``revision``; empty when it does not exist there."""
+    """``path`` as committed at ``revision``; empty when it does not exist there.
 
-    result = _git("show", f"{revision}:{path}", check=False)
-    if result.returncode == 0:
-        return result.stdout
-    if "does not exist in" in result.stderr or "exists on disk, but not in" in result.stderr:
+    Existence is decided by ``git cat-file -e``'s exit code, never by the
+    wording of ``git show``'s diagnostic: a localised git translates "does
+    not exist in", and matching the English text raised here instead of
+    returning the empty bibliography the merge base really has. The revision
+    itself is checked first so an unresolvable ref still fails loudly rather
+    than reading as "no file" (which would make every link look new).
+    """
+
+    commit = _git("cat-file", "-e", f"{revision}^{{commit}}", check=False)
+    if commit.returncode != 0:
+        raise subprocess.CalledProcessError(
+            commit.returncode, commit.args, commit.stdout, commit.stderr
+        )
+    if _git("cat-file", "-e", f"{revision}:{path}", check=False).returncode != 0:
         return ""
-    raise subprocess.CalledProcessError(
-        result.returncode, result.args, result.stdout, result.stderr
-    )
+    return _git("show", f"{revision}:{path}").stdout
 
 
 def _changed_targets(git_ref: str) -> dict[str, str]:

@@ -9,8 +9,11 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 from quviz.docs.links import (
     added_bibliography_targets,
@@ -156,6 +159,104 @@ def test_changed_targets_reads_the_bibliography_with_the_parser(tmp_path: Path) 
     }
     # Nothing changed since HEAD itself.
     assert check_links._changed_targets("HEAD") == {}
+
+
+def _localised_git(
+    *, present: bool, stderr: str = "fatal: 路径 'references.bib' 不存在于 'abc'\n"
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], list[tuple[str, ...]]]:
+    """A ``_git`` whose diagnostics are not English and whose exit codes are git's.
+
+    ``git cat-file -e`` answers 0 / 1 for "does the object exist"; ``git show``
+    of an absent path fails with 128 and a translated message.
+    """
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        argv = ["git", *args]
+        if args[:2] == ("cat-file", "-e"):
+            spec = args[2]
+            exists = spec.endswith("^{commit}") or present
+            return subprocess.CompletedProcess(
+                argv, 0 if exists else 1, "", "" if exists else stderr
+            )
+        if args[0] == "show":
+            if present:
+                return subprocess.CompletedProcess(
+                    argv, 0, "@online{k, url={https://x.example}}\n", ""
+                )
+            if check:
+                raise subprocess.CalledProcessError(128, argv, "", stderr)
+            return subprocess.CompletedProcess(argv, 128, "", stderr)
+        raise AssertionError(f"unexpected git call {args}")
+
+    return fake, calls
+
+
+def test_file_at_reports_an_absent_file_by_exit_code_not_by_message_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A localised git (LANG=zh_CN, de_DE ...) translates "does not exist in";
+    # substring-matching the English text raised CalledProcessError instead
+    # of returning the empty bibliography the merge base really has.
+    check_links = _load_script(SCRIPT)
+    fake, calls = _localised_git(present=False)
+    monkeypatch.setattr(check_links, "_git", fake)
+    assert check_links._file_at("abc", "references.bib") == ""
+    assert ("cat-file", "-e", "abc:references.bib") in calls
+    assert not any(call[0] == "show" for call in calls), calls
+
+
+def test_file_at_returns_the_committed_content_when_the_file_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    check_links = _load_script(SCRIPT)
+    fake, _calls = _localised_git(present=True)
+    monkeypatch.setattr(check_links, "_git", fake)
+    assert check_links._file_at("abc", "references.bib").startswith("@online{k,")
+
+
+def test_file_at_still_fails_loudly_on_an_unknown_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only a *missing path* is "empty"; a revision git cannot resolve is an
+    # error, not an empty bibliography that would make every link look new.
+    check_links = _load_script(SCRIPT)
+
+    def fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        argv = ["git", *args]
+        if args[:2] == ("cat-file", "-e"):
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: 无效的对象名 'nope'\n")
+        raise AssertionError(f"unexpected git call {args}")
+
+    monkeypatch.setattr(check_links, "_git", fake)
+    with pytest.raises(subprocess.CalledProcessError):
+        check_links._file_at("nope", "references.bib")
+
+
+def test_file_at_against_real_git_does_not_read_the_message(tmp_path: Path) -> None:
+    # Real git, asked for a path absent at one revision and present at the
+    # next, with its messages forced to a non-English locale where one is
+    # installed (git falls back to English otherwise -- the fake above is
+    # what pins the contract; this shows the exit codes are what git emits).
+    check_links = _load_script(SCRIPT)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "x.txt").write_text("x\n", encoding="utf-8")
+    base = _commit_all(repo, "base")
+    (repo / "references.bib").write_text("@online{k, url={https://x.example}}\n", encoding="utf-8")
+    head = _commit_all(repo, "head")
+    check_links.ROOT = repo
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("LC_ALL", "zh_CN.UTF-8")
+        env.setenv("LANG", "zh_CN.UTF-8")
+        env.setenv("LANGUAGE", "zh_CN")
+        assert check_links._file_at(base, "references.bib") == ""
+        assert check_links._file_at(head, "references.bib").startswith("@online{k,")
+        with pytest.raises(subprocess.CalledProcessError):
+            check_links._file_at("no-such-revision", "references.bib")
 
 
 HUNK = "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n"
