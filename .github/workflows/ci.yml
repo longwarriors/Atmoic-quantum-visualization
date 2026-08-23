@@ -37,30 +37,59 @@ jobs:
           uv run --group docs mkdocs build --strict
 
   changed-links:
-    # Pull requests only: a link being *introduced* has to be shown to resolve,
-    # and every non-OK verdict fails. Rot in links that already exist is the
-    # weekly link-check workflow's job, not the author's.
-    if: github.event_name == 'pull_request'
+    # A link being *introduced* has to be shown to resolve; every non-OK
+    # verdict fails except BLOCKED on a known bot-filter host (cite those by
+    # DOI). Rot in links that already exist is the weekly link-check workflow's
+    # job, not the author's. This repository merges by fast-forward push, so
+    # the job runs on push as well as on pull_request: the base is the PR's
+    # base branch, or the commit the push moved the ref away from.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          # --changed-since diffs against the merge base with the base branch.
+          # --changed-since diffs against the merge base with the base revision.
           fetch-depth: 0
+      - name: Resolve the base revision
+        id: base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="origin/$BASE_REF"
+          else
+            base="$BEFORE"
+          fi
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "no base revision (new branch or tag); skipping the link probe"
+            exit 0
+          fi
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null \
+             || ! git merge-base --is-ancestor "$base" HEAD; then
+            echo "base $base is not an ancestor of HEAD (force push?); skipping the link probe"
+            exit 0
+          fi
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
       - name: Install uv
+        if: steps.base.outputs.ref != ''
         uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           python-version: "3.12"
       - name: Sync
+        if: steps.base.outputs.ref != ''
         run: |
           if [ -f uv.lock ]; then
             uv sync --locked --all-groups
           else
             uv sync --all-groups
           fi
-      - name: Probe links added in this pull request
-        run: uv run --group docs python scripts/check_links.py --changed-since origin/${{ github.base_ref }}
+      - name: Probe links added since the base revision
+        if: steps.base.outputs.ref != ''
+        env:
+          BASE: ${{ steps.base.outputs.ref }}
+        run: uv run --group docs python scripts/check_links.py --changed-since "$BASE"
 
   web:
     runs-on: ubuntu-latest
