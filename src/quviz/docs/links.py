@@ -5,13 +5,16 @@ tested without a socket -- pulling URLs out of a diff, turning a status code
 into a verdict, deciding which results fail a run, rendering a summary --
 lives here so pytest can cover it offline.
 
-Some publishers and community sites (``BOT_HOSTS``) answer 401/403 to every
-automated client. A link there is reported BLOCKED, never BROKEN, and BLOCKED
-is tolerated in both modes for those hosts: the weekly sweep because a bot
-filter is not evidence of rot, the pull-request gate because failing on it
-would only teach people to ignore the gate. The price is that such a link is
-never actually verified, so sources on those hosts should be cited by DOI --
-the DOI is checked against the doi.org handle API, which does answer.
+BLOCKED means the probe was refused for a reason that says nothing about the
+link: some publishers and community sites (``BOT_HOSTS``) answer 401/403 to
+every automated client, and any host may answer 429 when the checker's own
+concurrency trips its rate limit. A BLOCKED link is tolerated in both modes
+-- the weekly sweep because a bot filter or a rate limit is not evidence of
+rot, the pull-request gate because failing on it would only teach people to
+ignore the gate. The price is that such a link is never actually verified, so
+sources on the bot-filter hosts should be cited by DOI -- the DOI is checked
+against the doi.org handle API, which does answer. A 401/403 from any other
+host is SUSPECT and fails either mode.
 """
 
 from __future__ import annotations
@@ -106,7 +109,8 @@ def classify(url: str, status: int | None) -> str:
     if status is not None and 200 <= status < 400:
         return "OK"
     # 429 is rate limiting, never a dead link -- the checker's own concurrency
-    # provokes it against GitHub. Reporting it as a failure would be noise.
+    # provokes it against GitHub. It is BLOCKED on every host, and BLOCKED is
+    # tolerated in both modes (see ``fails_run``): failing on it would be noise.
     if status == 429:
         return "BLOCKED"
     if is_bot_host(url) and status in {401, 403}:
@@ -120,17 +124,17 @@ def fails_run(verdict: str, url: str, *, strict: bool) -> bool:
     """Whether one result makes the run exit non-zero.
 
     BROKEN and SUSPECT always fail (SUSPECT used to be silently reported as
-    success). BLOCKED is tolerated in the weekly sweep; the pull-request mode
-    (``strict``) tolerates it only for ``BOT_HOSTS``, where a 403 is the
-    host's policy rather than evidence about the link -- elsewhere a link
-    being *added* has to be shown to work.
+    success). BLOCKED is tolerated in both modes: it only ever means a bot
+    filter on a ``BOT_HOSTS`` host or a 429 rate limit, neither of which is
+    evidence about the link. The pull-request mode (``strict``) used to fail a
+    429 off the bot-filter hosts, which contradicted ``classify``'s own
+    reasoning; a 403 off those hosts is SUSPECT and still fails. ``url`` and
+    ``strict`` no longer influence the verdict; they stay in the signature for
+    the existing call sites.
     """
 
-    if verdict in {"BROKEN", "SUSPECT"}:
-        return True
-    if verdict == "BLOCKED":
-        return strict and not is_bot_host(url)
-    return False
+    del url, strict
+    return verdict in {"BROKEN", "SUSPECT"}
 
 
 def format_row(row: Row) -> str:
