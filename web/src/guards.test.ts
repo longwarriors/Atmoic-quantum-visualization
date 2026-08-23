@@ -58,8 +58,14 @@ const isGatedSource = (path: string): boolean =>
 // regex built from it.
 const RUNNER_NAMES = ['it', 'test', 'describe', 'suite', 'bench']
 const MODIFIER_NAMES = ['sk' + 'ip', 'on' + 'ly', 'to' + 'do', 'skip' + 'If', 'run' + 'If']
-const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul']
+// `node:coverage` is Node's own test-runner spelling, but the v8-to-istanbul
+// bundled in @vitest/coverage-v8 honours it too (`ignore next [N]` and the
+// `disable` ... `enable` pair); ast-v8-to-istanbul additionally honours its
+// `ignore start|stop|if|else|file`. The verb list is the union of every
+// pragma verb any of those remappers understands.
+const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul', 'node:cov' + 'erage']
 const PRAGMA_VERB = 'ig' + 'nore'
+const PRAGMA_VERBS = [PRAGMA_VERB, 'dis' + 'able', 'en' + 'able']
 
 /**
  * Any runner name (`it`, `describe`, ...) immediately followed by `.` and a
@@ -70,8 +76,11 @@ const PRAGMA_VERB = 'ig' + 'nore'
 const MODIFIER_PATTERN = new RegExp(
   `\\b(${RUNNER_NAMES.join('|')})\\.(${MODIFIER_NAMES.join('|')})\\b`,
 )
-/** `<tool> <verb> next|start|else` for each tool in PRAGMA_TOOLS, any casing. */
-const PRAGMA_PATTERN = new RegExp(`\\b(${PRAGMA_TOOLS.join('|')})\\s+${PRAGMA_VERB}\\b`, 'i')
+/** `<tool> <verb> ...` for each tool in PRAGMA_TOOLS and verb in PRAGMA_VERBS, any casing. */
+const PRAGMA_PATTERN = new RegExp(
+  `\\b(${PRAGMA_TOOLS.join('|')})\\s+(${PRAGMA_VERBS.join('|')})\\b`,
+  'i',
+)
 
 interface Hit {
   file: string
@@ -134,9 +143,28 @@ describe('guard patterns (positive controls)', () => {
     expect(PRAGMA_PATTERN.test(form)).toBe(true)
   })
 
+  // Spelled out independently of PRAGMA_TOOLS / PRAGMA_VERBS so that widening
+  // those lists can never make this control pass by construction. These are
+  // the exact forms the bundled v8-to-istanbul in @vitest/coverage-v8 3.2.7
+  // honours (`_parseIgnore`): `node:coverage ignore next [N]` and the
+  // `node:coverage disable` ... `enable` pair, both of which hid an untested
+  // function in scene/color.ts at "100%" while the old guard stayed green.
+  it.each([
+    [`/* node:cov${'erage'} ig${'nore'} next */`],
+    [`/* node:cov${'erage'} ig${'nore'} next 3 */`],
+    [`/* node:cov${'erage'} ig${'nore'} start */`],
+    [`/* node:cov${'erage'} ig${'nore'} stop */`],
+    [`/* node:cov${'erage'} dis${'able'} */`],
+    [`/* node:cov${'erage'} en${'able'} */`],
+    [`// NODE:COV${'ERAGE'} IG${'NORE'} file`],
+  ])('recognises %s as a coverage pragma (node:coverage family)', (form) => {
+    expect(PRAGMA_PATTERN.test(form)).toBe(true)
+  })
+
   it('does not flag prose that merely mentions the tools', () => {
     expect(PRAGMA_PATTERN.test("provider: 'v8',")).toBe(false)
     expect(PRAGMA_PATTERN.test(`// ${PRAGMA_VERB} the v8 provider here`)).toBe(false)
+    expect(PRAGMA_PATTERN.test('// honours the node:coverage pragma family')).toBe(false)
   })
 })
 
