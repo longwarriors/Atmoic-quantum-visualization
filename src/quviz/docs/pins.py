@@ -10,17 +10,27 @@ the pin mean something:
   scheme -- a scheme-less ``github.com/...`` has no hostname and would
   otherwise escape every code-host rule below;
 * an entry whose ``url`` is on a code host must name a repository (at least
-  ``/owner/repo``); issue, pull-request, discussion and wiki pages are not
-  source and are rejected;
+  ``/owner/repo``, or ``/group/subgroup/repo`` on GitLab); issue,
+  pull-request, discussion and wiki pages are not source and are rejected,
+  and so is any deeper path that is not one of the pin forms this module
+  understands (``blob``/``tree``/``commit``/``raw``/``src`` paths, release
+  tags, ``tags``): ``/releases/latest``, ``/archive/...``, ``/actions`` and
+  the like are moving targets, not auditable revisions;
 * such an entry needs a ``commit`` that is a 7-40 character *lowercase* hex
   SHA, and a SHA written into the URL must be lowercase too -- an upper-case
   SHA is rejected rather than silently read as a tag name;
 * if the URL itself names a SHA (``blob``/``tree``/``commit``/``raw``/``src``
   paths), that SHA and the ``commit`` field must agree (one is a prefix of the
   other);
-* if the URL names a tag or branch instead, a ``version`` field is required
-  and it must equal the ref the URL names, up to one leading ``v`` on either
-  side (``2.0.1`` matches ``v2.0.1``; ``2.0.1`` does not match ``v2.0.10``);
+* if the URL names a branch -- explicitly (``refs/heads/<name>``,
+  ``src/branch/<name>``) or by a conventional branch name such as ``main``,
+  ``master``, ``HEAD``, ``develop`` or ``trunk`` -- it is rejected outright,
+  ``version`` field or not: a branch moves, so nothing in the entry pins what
+  was audited;
+* if the URL names a tag, or a ref that cannot be told from one, a
+  ``version`` field is required and it must equal the ref the URL names, up
+  to one leading ``v`` on either side (``2.0.1`` matches ``v2.0.1``;
+  ``2.0.1`` does not match ``v2.0.10``);
 * a ``source-audit`` entry that is *not* on a code host must record an ISO
   ``urldate`` (access date) when it has a URL, or a ``doi`` when it has none.
 
@@ -29,9 +39,9 @@ blob URLs since 2024) name ``<branch>`` / ``<tag>``. A branch name containing
 ``/`` cannot be told apart from the file path that follows it, so only its
 first segment is compared.
 
-The URL-vs-commit consistency check cannot tell a tag from a branch, and it
-cannot verify that the SHA exists upstream: that is what ``git ls-remote`` is
-for at review time. A code-host URL without any ref (a bare repository link)
+The URL-vs-commit consistency check cannot tell a tag from an unconventionally
+named branch, and it cannot verify that the SHA exists upstream: that is what
+``git ls-remote`` is for at review time. A code-host URL without any ref (a bare repository link)
 is accepted as long as the ``commit`` field is present -- the field, not the
 URL, is the pin in that case.
 """
@@ -56,8 +66,15 @@ NON_SOURCE_PATHS = frozenset(
     {"issues", "pull", "pulls", "pull-requests", "merge_requests", "discussions", "wiki"}
 )
 _REF_MARKERS = frozenset({"blob", "tree", "commit", "commits", "raw", "src"})
+# Conventional names of a repository's moving branch; a URL naming one of these
+# pins nothing, whatever the version field says.
+BRANCH_NAMES = frozenset({"head", "main", "master", "develop", "development", "dev", "trunk"})
+_PIN_FORMS = (
+    "/owner/repo, a blob/tree/commit/commits/raw/src path with a revision, "
+    "releases/tag/<tag>, releases/download/<tag>/..., tags/<tag> (GitLab: -/releases/<tag>)"
+)
 
-RefKind = Literal["sha", "tag", "ref"]
+RefKind = Literal["sha", "tag", "branch", "ref"]
 
 
 def _host(url: str) -> str:
@@ -78,17 +95,56 @@ def is_code_host(url: str) -> bool:
     return _host_in(_host(url), CODE_HOSTS + RAW_HOSTS)
 
 
+def _is_gitlab(url: str) -> bool:
+    return _host_in(_host(url), ("gitlab.com",))
+
+
+def _page_path(url: str) -> list[str]:
+    """The path segments after the repository (after GitLab's ``-`` separator)."""
+
+    segments = _segments(url)
+    if "-" in segments[2:]:  # GitLab separates owner/(sub)groups/repo from the page kind
+        return segments[segments.index("-", 2) + 1 :]
+    rest = segments[2:]
+    known = _REF_MARKERS | {"releases", "tags"} | NON_SOURCE_PATHS
+    if _is_gitlab(url) and not any(part in known for part in rest):
+        return []  # /group/subgroup/repo without a page kind
+    return rest
+
+
+def _is_pin_form(rest: list[str], *, gitlab: bool) -> bool:
+    """Whether the page path names a revision this module can validate."""
+
+    if not rest:
+        return True
+    kind, following = rest[0], rest[1:]
+    if kind in _REF_MARKERS or kind == "tags":
+        return bool(following)
+    if kind == "releases":
+        if gitlab:
+            return bool(following) and following[0] != "permalink"
+        return len(following) >= 2 and following[0] in {"tag", "download"}
+    return False
+
+
 def repository_problem(url: str) -> str | None:
-    """Why a code-host URL is not a repository or something inside one."""
+    """Why a code-host URL is not a repository or a pinned revision inside one."""
 
     segments = _segments(url)
     if len(segments) < 2:
         return "is not source: it names no repository (expected at least /owner/repo)"
-    rest = segments[2:]
-    if rest and rest[0] == "-":  # GitLab separates owner/repo from the page kind
-        rest = rest[1:]
+    if _host_in(_host(url), RAW_HOSTS):
+        if len(segments) < 4:
+            return "is not source: a raw URL is /owner/repo/<revision>/<path>"
+        return None
+    rest = _page_path(url)
     if rest and rest[0] in NON_SOURCE_PATHS:
         return f"is a {rest[0]} page, not source"
+    if not _is_pin_form(rest, gitlab=_is_gitlab(url)):
+        return (
+            f"is not source at a fixed revision: /{'/'.join(rest)} is none of {_PIN_FORMS}; "
+            "a moving target (releases/latest, archive/..., a listing page) cannot be audited"
+        )
     return None
 
 
@@ -96,7 +152,7 @@ def _named_ref(segments: list[str]) -> tuple[RefKind, str]:
     """The ref named by the path segments after a ``blob``/``tree``/raw marker."""
 
     if len(segments) >= 3 and segments[0] == "refs" and segments[1] in {"heads", "tags"}:
-        return ("tag" if segments[1] == "tags" else "ref"), segments[2]
+        return ("tag" if segments[1] == "tags" else "branch"), segments[2]
     return "ref", segments[0]
 
 
@@ -104,7 +160,8 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
     """The revision a code-host URL names, if any.
 
     Returns ``("sha", <hex>)`` (case preserved, so the caller can insist on
-    lowercase), ``("tag", <name>)`` for explicit tag paths, or
+    lowercase), ``("tag", <name>)`` for explicit tag paths, ``("branch",
+    <name>)`` for explicit branch paths (``refs/heads/``, ``src/branch/``), or
     ``("ref", <name>)`` when the path names a tag or branch indistinguishably.
     Only the ambiguous ``ref`` kind is promoted to ``sha`` when the name is
     hex: an explicit tag called ``20240512`` stays a tag.
@@ -131,7 +188,11 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
                 and len(following) >= 2
                 and following[0] in {"commit", "branch", "tag"}
             ):
-                found = ("tag" if following[0] == "tag" else "ref"), following[1]
+                kinds: dict[str, RefKind] = {"commit": "ref", "branch": "branch", "tag": "tag"}
+                found = kinds[following[0]], following[1]
+                break
+            if segment == "releases" and following and _is_gitlab(url):
+                found = "tag", following[0]  # GitLab: /-/releases/<tag>
                 break
             if segment in _REF_MARKERS and following:
                 found = _named_ref(following)
@@ -170,6 +231,12 @@ def _validate_code_host(entry: BibEntry, url: str) -> list[str]:
     if ref is None:
         return messages
     kind, name = ref
+    if kind == "branch" or (kind == "ref" and name.lower() in BRANCH_NAMES):
+        messages.append(
+            f"{key}: URL names the branch {name!r}, which moves; pin a commit SHA or a tag "
+            "in the URL"
+        )
+        return messages
     if kind == "sha":
         if not COMMIT_PATTERN.match(name):
             messages.append(f"{key}: URL SHA {name!r} must be lowercase hex")

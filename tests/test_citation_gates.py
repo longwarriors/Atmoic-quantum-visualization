@@ -537,9 +537,107 @@ def test_tag_url_requires_a_version_field_naming_the_tag() -> None:
     assert validate_source_pins([_entry("x", url=url, commit=SHA, version="2.0.0")]) == []
 
 
-def test_branch_url_is_treated_like_a_tag_and_needs_version() -> None:
-    entry = _entry("x", url="https://github.com/o/r/tree/main", commit=SHA)
+def test_ambiguous_ref_url_is_treated_like_a_tag_and_needs_version() -> None:
+    # ``tree/<name>`` cannot be told from a tag; a version field must name it.
+    entry = _entry("x", url="https://github.com/o/r/tree/release-1.x", commit=SHA)
     assert any("version" in m for m in validate_source_pins([entry]))
+    pinned = _entry(
+        "x", url="https://github.com/o/r/tree/release-1.x", commit=SHA, version="release-1.x"
+    )
+    assert validate_source_pins([pinned]) == []
+
+
+# (g) a branch is a moving target: no version field makes it a pin.
+@pytest.mark.parametrize(
+    ("url", "name"),
+    [
+        ("https://github.com/o/r/tree/main", "main"),
+        ("https://github.com/o/r/tree/master", "master"),
+        ("https://github.com/o/r/blob/HEAD/f.py", "HEAD"),
+        ("https://github.com/o/r/tree/develop", "develop"),
+        ("https://github.com/o/r/tree/trunk", "trunk"),
+        ("https://github.com/o/r/tree/Main", "Main"),
+        ("https://github.com/o/r/blob/refs/heads/feature-x/f.py", "feature-x"),
+        ("https://raw.githubusercontent.com/o/r/refs/heads/main/f.py", "main"),
+        ("https://raw.githubusercontent.com/o/r/main/f.py", "main"),
+        ("https://codeberg.org/o/r/src/branch/main/f.py", "main"),
+        ("https://codeberg.org/o/r/src/branch/feature-x/f.py", "feature-x"),
+        ("https://gitlab.com/o/r/-/blob/main/f.py", "main"),
+        ("https://gitlab.com/o/r/-/tree/develop", "develop"),
+        ("https://bitbucket.org/o/r/src/master/f.py", "master"),
+    ],
+)
+def test_branch_url_is_rejected_even_with_a_matching_version(url: str, name: str) -> None:
+    for entry in (
+        _entry("x", url=url, commit=SHA),
+        _entry("x", url=url, commit=SHA, version=name),
+    ):
+        messages = validate_source_pins([entry])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and repr(name) in messages[0]
+        assert "version" not in messages[0]
+
+
+def test_refs_heads_path_is_a_branch_even_when_the_name_is_hex() -> None:
+    assert url_ref("https://github.com/o/r/blob/refs/heads/20240512/f.py") == ("branch", "20240512")
+
+
+# (h) a code-host path deeper than the repository must be a recognised pin form.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r/releases/latest",
+        "https://github.com/o/r/releases",
+        "https://github.com/o/r/releases/tag",
+        "https://github.com/o/r/archive/refs/heads/main.zip",
+        "https://github.com/o/r/archive/v1.0.tar.gz",
+        "https://github.com/o/r/actions",
+        "https://github.com/o/r/compare/a...b",
+        "https://github.com/o/r/blob",
+        "https://github.com/o/r/tree/",
+        "https://github.com/o/r/commit",
+        "https://github.com/o/r/tags",
+        "https://gitlab.com/o/r/-/releases",
+        "https://gitlab.com/o/r/-/releases/permalink/latest",
+        "https://gitlab.com/o/r/-/archive/main/r-main.zip",
+        "https://gitlab.com/group/subgroup/r/-/pipelines",
+        "https://bitbucket.org/o/r/downloads/",
+        "https://codeberg.org/o/r/releases/latest",
+        "https://raw.githubusercontent.com/o/r",
+        "https://raw.githubusercontent.com/o/r/main",
+    ],
+)
+def test_unpinned_code_host_path_is_rejected_as_a_moving_target(url: str) -> None:
+    messages = validate_source_pins([_entry("x", url=url, commit=SHA, version="v1.0")])
+    assert len(messages) == 1, messages
+    assert "x:" in messages[0] and "source" in messages[0]
+    assert "/owner/repo" in messages[0]
+
+
+@pytest.mark.parametrize(
+    ("url", "version"),
+    [
+        ("https://github.com/o/r/releases/tag/v1.0", "v1.0"),
+        ("https://github.com/o/r/releases/download/v1.0/r-1.0.tar.gz", "1.0"),
+        ("https://gitlab.com/o/r/-/releases/v1.0", "v1.0"),
+        ("https://gitlab.com/group/subgroup/r/-/tags/v1.0", "v1.0"),
+        (f"https://gitlab.com/group/subgroup/r/-/blob/{SHA}/f.py", ""),
+        (f"https://gitlab.com/o/r/blob/{SHA}/f.py", ""),
+        ("https://gitlab.com/group/subgroup/r", ""),
+        (f"https://bitbucket.org/o/r/src/{SHA}/f.py", ""),
+        ("https://bitbucket.org/o/r/src/tag/v1.0/f.py", "v1.0"),
+        (f"https://codeberg.org/o/r/src/commit/{SHA}/f.py", ""),
+        ("https://codeberg.org/o/r/src/tag/v1.0/f.py", "v1.0"),
+        (f"https://github.com/o/r/commit/{SHA}", ""),
+        (f"https://github.com/o/r/commits/{SHA}", ""),
+        (f"https://github.com/o/r/raw/{SHA}/f.py", ""),
+        (f"https://raw.githubusercontent.com/o/r/{SHA}/f.py", ""),
+        ("https://raw.githubusercontent.com/o/r/refs/tags/v1.0/f.py", "v1.0"),
+    ],
+)
+def test_recognised_pin_forms_on_every_code_host_are_accepted(url: str, version: str) -> None:
+    fields = {"commit": SHA, "version": version} if version else {"commit": SHA}
+    assert validate_source_pins([_entry("x", url=url, **fields)]) == []
 
 
 def test_gitlab_tag_and_codeberg_commit_urls_are_understood() -> None:
@@ -670,9 +768,9 @@ def test_hex_looking_tag_name_on_an_explicit_tag_path_stays_a_tag(url: str) -> N
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("https://github.com/o/r/blob/refs/heads/main/f.py", ("ref", "main")),
+        ("https://github.com/o/r/blob/refs/heads/main/f.py", ("branch", "main")),
         ("https://github.com/o/r/tree/refs/tags/v1.2", ("tag", "v1.2")),
-        ("https://raw.githubusercontent.com/o/r/refs/heads/main/f.py", ("ref", "main")),
+        ("https://raw.githubusercontent.com/o/r/refs/heads/main/f.py", ("branch", "main")),
         ("https://raw.githubusercontent.com/o/r/refs/tags/v1.2/f.py", ("tag", "v1.2")),
         (f"https://raw.githubusercontent.com/o/r/{SHA}/f.py", ("sha", SHA)),
         ("https://github.com/o/r/blob/refs/f.py", ("ref", "refs")),
@@ -684,9 +782,8 @@ def test_refs_heads_and_refs_tags_paths_name_the_branch_or_tag(
     assert url_ref(url) == expected
 
 
-def test_refs_heads_branch_url_validates_against_the_branch_name() -> None:
+def test_refs_heads_branch_url_is_reported_by_the_branch_name() -> None:
     url = "https://raw.githubusercontent.com/o/r/refs/heads/main/f.py"
-    assert validate_source_pins([_entry("x", url=url, commit=SHA, version="main")]) == []
     messages = validate_source_pins([_entry("x", url=url, commit=SHA)])
     assert len(messages) == 1 and "'main'" in messages[0] and "'refs'" not in messages[0]
     tagged = "https://github.com/o/r/blob/refs/tags/v1.2/f.py"
