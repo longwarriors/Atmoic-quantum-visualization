@@ -20,6 +20,16 @@ function Invoke-Checked {
 # anchored on $PSScriptRoot) exercised *this* one, and exit 0 certified
 # neither. The root is printed so a log shows which tree was checked.
 # tests/test_check_script.py runs this script from a foreign directory.
+#
+# Without a script root there is no repository to check: the body piped into
+# `pwsh -Command -` runs statement by statement, so a failed Join-Path alone
+# did not stop the run -- it printed the error, ran no gate and exited 0.
+# (Not Write-Error: under $ErrorActionPreference = 'Stop' that terminates the
+# statement before `exit 1` runs, and the exit code is 0 again.)
+if (-not $PSScriptRoot) {
+    [Console]::Error.WriteLine('check.ps1 must be run as a file (pwsh -File scripts/check.ps1); $PSScriptRoot is empty')
+    exit 1
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Write-Host "check.ps1: running every gate in $repoRoot"
 

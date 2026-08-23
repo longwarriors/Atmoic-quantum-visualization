@@ -37,7 +37,12 @@ extension list and checks that the scanner agrees:
   block-level tag nests an element whose content is raw unless it carries
   ``markdown`` itself; after text it is inline HTML and its content is prose.
   The ``markdown`` element's own tags leave the text flow, so its content is
-  parsed as blocks of its own, as ``MarkdownInHtmlProcessor`` does.
+  parsed as blocks of its own, as ``MarkdownInHtmlProcessor`` does -- but
+  only when the element's placeholder *starts* its block: that processor
+  matches it at position 0. A ``markdown`` element opened in the tail of a
+  raw block, after text on its line, or on an indented line shares its
+  block with whatever precedes it and is emitted verbatim, attribute and
+  all, so its content is raw to the build and blanked here.
 * **HTML comments** are removed when they start a line (a block-level
   comment) or follow a closed block in its tail. A comment inside a prose
   line stays in the paragraph, where the citation pattern runs *before* the
@@ -248,6 +253,7 @@ class _HiddenSpanExtractor(HTMLExtractorExtra):
         self._at_eof = False
         self._raw_start: int | None = None
         self._off_start: int | None = None
+        self._element_start: int | None = None
 
     # -- position tracking ----------------------------------------------------
 
@@ -283,6 +289,8 @@ class _HiddenSpanExtractor(HTMLExtractorExtra):
             # leaves the text flow, and an element whose content is not
             # parsed hides everything until it closes.
             self._hide(pos, pos + len(self.get_starttag_text()))
+            if len(self.mdstack) == 1:
+                self._element_start = pos
             if self.mdstate[-1] == "off" and self._off_start is None:
                 self._off_start = pos
 
@@ -300,6 +308,26 @@ class _HiddenSpanExtractor(HTMLExtractorExtra):
             self._off_start = None
         if was_element:
             self._hide(pos, end)
+            if not self.mdstack and self._element_start is not None:
+                if not self._element_starts_its_block():
+                    self._hide(self._element_start, end)
+                self._element_start = None
+
+    def _element_starts_its_block(self) -> bool:
+        """Whether the outermost element just stashed will be parsed at all.
+
+        ``MarkdownInHtmlProcessor.run`` matches the element's placeholder at
+        position 0 of its block, so the element is parsed only when nothing
+        else precedes it since the last blank line of ``cleandoc``. Opened in
+        the tail of a raw block, after text on its line, or on an indented
+        line, the text in front shares its block and the element is emitted
+        verbatim -- ``markdown`` attribute and all -- so its content never
+        reaches the inline patterns. ``cleandoc`` ends with the placeholder
+        and the ``"\\n\\n"`` the extractor appends after it.
+        """
+
+        before = "".join(self.cleandoc[:-2])
+        return not before or before.endswith("\n\n")
 
     def handle_empty_tag(self, data: str, is_block: bool) -> None:
         pos = self._cursor

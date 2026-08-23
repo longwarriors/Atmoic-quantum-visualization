@@ -273,6 +273,51 @@ def test_prose_in_the_tail_of_a_closed_raw_block_is_cited(text: str) -> None:
     assert cited_keys_in(text) == {"k"}
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # ``MarkdownInHtmlProcessor`` parses a stashed ``markdown`` element
+        # only when its placeholder starts its block. Anything in front of it
+        # in the same block -- the tail of a raw block, a comment, an <hr>,
+        # a void tag or another markdown element; text on its line; even the
+        # indentation of the line it starts -- leaves the element raw.
+        '<div>a</div> <div markdown="1">[@k]</div>\n',
+        '<div>a</div> x <div markdown="1">[@k]</div>\n',
+        '<div>a</div> <div markdown="span">[@k]</div>\n',
+        '<div>a</div> <div markdown="block">[@k]</div>\n',
+        '<!-- c --> <div markdown="1">[@k]</div>\n',
+        '<!-- c -->\n <div markdown="1">[@k]</div>\n',
+        '<hr> <div markdown="1">[@k]</div>\n',
+        '<div/> <div markdown="1">[@k]</div>\n',
+        '<div markdown="1">a</div> <div markdown="1">[@k]</div>\n',
+        ' <div markdown="1">[@k]</div>\n',
+        'text\n <div markdown="1">[@k]</div>\n',
+        '<div>a</div> <div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n',
+        '<div>a</div> <div markdown="1">\n[@k]\n',
+    ],
+)
+def test_key_in_a_markdown_element_that_does_not_start_its_block_is_not_cited(text: str) -> None:
+    assert cited_keys_in(text) == set()
+
+
+def test_orphan_check_reports_an_entry_cited_only_in_a_tail_markdown_element(
+    tmp_path: Path,
+) -> None:
+    bibliography = parse_bibtex(
+        "@online{tail-only, title={A}, url={https://example.invalid/a}}\n"
+        "@online{cited-for-real, title={B}, url={https://example.invalid/b}}\n"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text(
+        'Prose cites [@cited-for-real].\n\n<div>a</div> <div markdown="1">[@tail-only]</div>\n',
+        encoding="utf-8",
+    )
+    used = cited_keys_in_tree(docs)
+    assert used == {"cited-for-real"}
+    assert orphan_keys(bibliography, used) == ["tail-only"]
+
+
 def test_orphan_check_reports_an_entry_cited_only_in_a_tail_raw_block(tmp_path: Path) -> None:
     # The bypass end to end: the build never renders this citation, so the
     # entry is an orphan and the gate must say so.
@@ -450,6 +495,47 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ("<div>a</div>\n$$\n[@k]\n$$\n", False),
         ("<div>a</div> `[@k]`\n", False),
         ("<div>a</div> `x</div>` [@k]\n", True),
+        # A ``markdown`` element is parsed only when its stashed placeholder
+        # *starts* its block (MarkdownInHtmlProcessor.run matches it at
+        # position 0). Opened in the tail of a raw block, after any text on
+        # its line, or merely indented at the start of a line, the text in
+        # front of it shares the block and the element is emitted raw, its
+        # content never reaching the inline patterns.
+        ('<div>a</div> <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div><div markdown="1">[@k]</div>\n', True),
+        ('<div>a</div> x <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div> `x` <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div> <div markdown="span">[@k]</div>\n', False),
+        ('<div>a</div> <div markdown="block">[@k]</div>\n', False),
+        ('<p>a</p>  <div markdown="block">[@k]</div>\n', False),
+        ('<!-- c --> <div markdown="span">[@k]</div>\n', False),
+        ('<!-- c -->\n <div markdown="1">[@k]</div>\n', False),
+        ('<!-- c -->\n<div markdown="1">[@k]</div>\n', True),
+        ('<textarea>a</textarea> <div markdown="span">[@k]</div>\n', False),
+        ('<hr> <div markdown="1">[@k]</div>\n', False),
+        ('<hr><div markdown="1">[@k]</div>\n', True),
+        ('<div/> <div markdown="1">[@k]</div>\n', False),
+        ('<div markdown="1">a</div> <div markdown="1">[@k]</div>\n', False),
+        ('<div markdown="1">a</div>\n<div markdown="1">[@k]</div>\n', True),
+        (' <div markdown="1">[@k]</div>\n', False),
+        ('   <div markdown="1">[@k]</div>\n', False),
+        ('text\n<div markdown="1">[@k]</div>\n', True),
+        ('text\n <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div>\n\n<div markdown="1">[@k]</div>\n', True),
+        ('<div>a</div> <div markdown="1">\n[@k]\n</div>\n', False),
+        ('<div>a</div> <div markdown="1">\n\n[@k]\n\n</div>\n', False),
+        ('<div>a</div> <div markdown="1"><p markdown="1">[@k]</p></div>\n', False),
+        ('<div>a</div> <div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n', False),
+        ('<div>a</div> <div markdown="1">\n[@k]\n', False),
+        ('<div>a</div> <div markdown="1">x</div> [@k]\n', True),
+        ('<div>a</div> <div markdown="1">x</div>\n[@k]\n', True),
+        ('<div>a</div> <div markdown="1">[@k]</div> more [@k]\n', True),
+        (
+            '<div markdown="1">\n<div markdown="1">a</div> <div markdown="1">[@k]</div>\n</div>\n',
+            True,
+        ),
+        ('> <div markdown="1">[@k]</div>\n', True),
+        ('- <div markdown="1">[@k]</div>\n', True),
         # pymdownx.arithmatex, generic mode with smart dollars: inline math.
         ("$[@k]$\n", False),
         ("a $x [@k]$ b\n", False),
@@ -975,7 +1061,8 @@ def test_hex_looking_tag_name_on_an_explicit_tag_path_stays_a_tag(url: str) -> N
         ("https://raw.githubusercontent.com/o/r/refs/heads/main/f.py", ("branch", "main")),
         ("https://raw.githubusercontent.com/o/r/refs/tags/v1.2/f.py", ("tag", "v1.2")),
         (f"https://raw.githubusercontent.com/o/r/{SHA}/f.py", ("sha", SHA)),
-        ("https://github.com/o/r/blob/refs/f.py", ("ref", "refs")),
+        # ``refs/`` followed by anything but heads/tags is a ref namespace.
+        ("https://github.com/o/r/blob/refs/f.py", ("branch", "refs/f.py")),
     ],
 )
 def test_refs_heads_and_refs_tags_paths_name_the_branch_or_tag(
@@ -1150,3 +1237,91 @@ def test_percent_encoded_path_is_decoded_exactly_once() -> None:
     url = "https://github.com/o/r/tree/refs%252Fheads%252Fmaster"
     assert url_ref(url) == ("ref", "refs%2Fheads%2Fmaster")
     assert validate_source_pins([_entry("x", url=url, commit=SHA, version="v1")]) != []
+
+
+# (j) C4 again: a browser removes ``.`` and ``..`` path segments (also spelled
+# ``%2e``) before the request leaves it, so ``/tree/v1.0/../master`` reaches
+# GitHub as ``/tree/master``. The pin gate used to read ``v1.0`` and accept the
+# entry with ``version = {v1.0}``.
+@pytest.mark.parametrize(
+    ("url", "name"),
+    [
+        ("https://github.com/o/r/tree/v1.0/../master", "master"),
+        ("https://github.com/o/r/tree/v1.0/../main/src", "main"),
+        ("https://github.com/o/r/blob/v1.0/../master/f.py", "master"),
+        ("https://github.com/o/r/tree/v1.0/%2e%2e/master", "master"),
+        ("https://github.com/o/r/tree/v1.0/%2E%2E/master", "master"),
+        ("https://github.com/o/r/tree/v1.0/.%2e/master", "master"),
+        ("https://github.com/o/r/tree/./master", "master"),
+        ("https://github.com/o/r/releases/tag/v1.0/../../../tree/master", "master"),
+        ("https://github.com/o/r/tree/x/../../tree/master", "master"),
+        ("https://raw.githubusercontent.com/o/r/v1.0/../master/f.py", "master"),
+        ("https://gitlab.com/o/r/-/tree/v1.0/../develop", "develop"),
+    ],
+)
+def test_dot_segments_are_removed_before_the_ref_is_read(url: str, name: str) -> None:
+    assert url_ref(url) in {("branch", name), ("ref", name)}
+    for version in ("v1.0", "x", name):
+        messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and repr(name) in messages[0]
+
+
+def test_dot_segments_that_climb_out_of_the_repository_name_no_repository() -> None:
+    # ``/o/r/../../o`` is ``/o`` to the server: no repository at all.
+    messages = validate_source_pins([_entry("x", url="https://github.com/o/r/../../o", commit=SHA)])
+    assert len(messages) == 1 and "no repository" in messages[0], messages
+
+
+# (k) ``refs/<namespace>/...`` other than ``heads`` and ``tags`` -- pull-request
+# heads, remote-tracking refs -- is a ref namespace, never a pin. The gate used
+# to read the ref name ``refs`` and accept ``version = {refs}``.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r/tree/refs/pull/1/head",
+        "https://github.com/o/r/tree/refs/pull/1/merge",
+        "https://github.com/o/r/tree/refs/remotes/origin/master",
+        "https://github.com/o/r/blob/refs/notes/commits/f.py",
+        "https://raw.githubusercontent.com/o/r/refs/pull/1/head/f.py",
+        "https://github.com/o/r/tree/refs%2Fpull%2F1%2Fhead",
+    ],
+)
+def test_other_ref_namespaces_are_moving_refs(url: str) -> None:
+    kind, _name = url_ref(url) or (None, None)
+    assert kind == "branch"
+    for version in ("refs", "refs/pull/1/head", "1", "head"):
+        messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and "refs/" in messages[0]
+
+
+# (l) Gitea / Forgejo (codeberg.org) raw and media URLs carry the same
+# ``branch`` / ``tag`` / ``commit`` marker as ``src`` paths. The gate only knew
+# the ``src`` form, read ``branch`` as the ref name for a raw URL and accepted
+# ``version = {branch}``.
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://codeberg.org/o/r/raw/branch/main/f.py", ("branch", "main")),
+        ("https://codeberg.org/o/r/raw/branch/master/f.py", ("branch", "master")),
+        ("https://codeberg.org/o/r/raw/tag/v1.0/f.py", ("tag", "v1.0")),
+        ("https://codeberg.org/o/r/raw/commit/" + SHA + "/f.py", ("sha", SHA)),
+        ("https://codeberg.org/o/r/media/branch/main/f.png", ("branch", "main")),
+        ("https://codeberg.org/o/r/media/tag/v1.0/f.png", ("tag", "v1.0")),
+    ],
+)
+def test_gitea_raw_and_media_paths_carry_the_same_ref_markers_as_src(
+    url: str, expected: tuple[str, str]
+) -> None:
+    assert url_ref(url) == expected
+    kind, name = expected
+    if kind == "branch":
+        for version in ("branch", name):
+            messages = validate_source_pins([_entry("x", url=url, commit=SHA, version=version)])
+            assert len(messages) == 1 and "branch" in messages[0], messages
+    elif kind == "tag":
+        assert validate_source_pins([_entry("x", url=url, commit=SHA, version=name)]) == []
+        assert validate_source_pins([_entry("x", url=url, commit=SHA, version="tag")]) != []
+    else:
+        assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []

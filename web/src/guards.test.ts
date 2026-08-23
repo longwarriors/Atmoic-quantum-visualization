@@ -92,7 +92,13 @@ const MODIFIER_NAMES = [SKIP, 'on' + 'ly', TODO, SKIP + 'If', 'run' + 'If']
 // `disable` ... `enable` pair); ast-v8-to-istanbul additionally honours its
 // `ignore start|stop|if|else|file`. The verb list is the union of every
 // pragma verb any of those remappers understands.
+//
+// `|8` is not a tool: v8-to-istanbul spells its start/stop regex `[c|v]8`,
+// a character class in which the `|` is a literal, so `/* |8 ignore start */`
+// is honoured by the remapper like `v8`. It is matched without the `\b` the
+// word-like names get (a `|` has no word boundary after a space).
 const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul', 'node:cov' + 'erage']
+const PRAGMA_TOOL_QUIRKS = ['\\|8']
 const PRAGMA_VERB = 'ig' + 'nore'
 const PRAGMA_VERBS = [PRAGMA_VERB, 'dis' + 'able', 'en' + 'able']
 
@@ -123,9 +129,9 @@ const RUNTIME_SKIP_PATTERN = new RegExp(`\\.${SKIP}\\s*\\(`)
 const FORBIDDEN_TEST_PATTERNS = [MODIFIER_PATTERN, DESTRUCTURE_PATTERN, RUNTIME_SKIP_PATTERN]
 const matchesForbiddenTestForm = (line: string): boolean =>
   FORBIDDEN_TEST_PATTERNS.some((pattern) => pattern.test(line))
-/** `<tool> <verb> ...` for each tool in PRAGMA_TOOLS and verb in PRAGMA_VERBS, any casing. */
+/** `<tool> <verb> ...` for each tool in PRAGMA_TOOLS (+ quirks) and verb in PRAGMA_VERBS, any casing. */
 const PRAGMA_PATTERN = new RegExp(
-  `\\b(${PRAGMA_TOOLS.join('|')})\\s+(${PRAGMA_VERBS.join('|')})\\b`,
+  `(?:\\b(?:${PRAGMA_TOOLS.join('|')})|${PRAGMA_TOOL_QUIRKS.join('|')})\\s+(${PRAGMA_VERBS.join('|')})\\b`,
   'i',
 )
 
@@ -244,10 +250,25 @@ describe('guard patterns (positive controls)', () => {
     expect(PRAGMA_PATTERN.test(form)).toBe(true)
   })
 
+  // The bundled v8-to-istanbul spells its start/stop regex `[c|v]8`, a
+  // character class that also matches a literal `|`: `/* |8 ignore start */`
+  // is honoured by the coverage remapper exactly like `/* v8 ignore start */`,
+  // and it hid an untested function at "100%" while the tool list here only
+  // knew c8 and v8.
+  it.each([
+    [`/* |8 ig${'nore'} start */`],
+    [`/* |8 ig${'nore'} stop */`],
+    [`const x = 1 /* |8 ig${'nore'} start */`],
+  ])('recognises %s as a coverage pragma (the [c|v]8 regex quirk)', (form) => {
+    expect(PRAGMA_PATTERN.test(form)).toBe(true)
+  })
+
   it('does not flag prose that merely mentions the tools', () => {
     expect(PRAGMA_PATTERN.test("provider: 'v8',")).toBe(false)
     expect(PRAGMA_PATTERN.test(`// ${PRAGMA_VERB} the v8 provider here`)).toBe(false)
     expect(PRAGMA_PATTERN.test('// honours the node:coverage pragma family')).toBe(false)
+    expect(PRAGMA_PATTERN.test('const mask = flags | 8')).toBe(false)
+    expect(PRAGMA_PATTERN.test(`if (a || 8) ${PRAGMA_VERB}s(b)`)).toBe(false)
   })
 })
 
@@ -266,6 +287,14 @@ describe('scan scope', () => {
     expect(gatedSources).not.toContain('scene/shaders/orbitalPoints.ts')
     expect(gatedSources).not.toContain('api/qvpc.test.ts')
     expect(gatedSources.some((path) => path.endsWith('.tsx'))).toBe(false)
+  })
+
+  it('keeps the HTTP layer inside the coverage include (no .tsx under api/)', () => {
+    // `coverage.include` is `src/api/**/*.ts`; a `.tsx` module under api/
+    // would carry runtime code outside every per-file threshold. The API
+    // layer has no JSX, so any such file is a scope leak, not a component.
+    const leaked = allFiles.filter((path) => path.startsWith('api/') && path.endsWith('.tsx'))
+    expect(leaked, 'runtime modules outside the coverage include').toEqual([])
   })
 })
 

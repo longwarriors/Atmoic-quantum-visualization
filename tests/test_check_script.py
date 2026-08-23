@@ -14,7 +14,12 @@ of a branch and a non-ancestor after a force push; both cases used to *skip*
 the probe while the docs said the job ran on every push. The remaining tests
 execute that step's actual shell script (read from the workflow, not
 re-implemented) against throwaway repositories and require it to fall back to
-``origin/master`` instead of skipping.
+``origin/master`` instead of skipping. When even that base contains HEAD --
+the first or a force push of ``master`` itself, where ``origin/master`` *is*
+HEAD and a diff against it is empty -- or when there is no ``origin/master``
+at all, the step must not fall silent either: it asks the probe step to
+sweep every cited URL and DOI instead, and the probe step's script is
+executed here with a stub ``uv`` to show it honours that.
 
 Both behavioural tests need an interpreter: ``pwsh`` for the PowerShell script
 and a POSIX ``bash`` for the workflow step. Both are on every GitHub runner
@@ -32,6 +37,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -144,6 +150,39 @@ def test_check_script_runs_every_gate_in_its_own_checkout(tmp_path: Path) -> Non
     assert _same_dir(announced.group(1).strip(), ROOT)
 
 
+def test_check_script_refuses_to_run_without_a_script_root(tmp_path: Path) -> None:
+    """Piped into ``pwsh -Command -`` the script has no ``$PSScriptRoot``.
+
+    In that mode each statement runs on its own, so the failed root
+    resolution did not stop the run: it printed the error, ran no gate, and
+    exited 0 -- certifying nothing. The script must exit non-zero instead.
+    """
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(stubs, "uv", "[stub uv]")
+    _write_stub(stubs, "npm", "[stub npm]")
+    foreign = tmp_path / "other-checkout"
+    foreign.mkdir()
+
+    env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
+    run = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", "-"],
+        cwd=foreign,
+        env=env,
+        input=CHECK_SCRIPT.read_text(encoding="utf-8"),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert run.returncode != 0, run.stdout + run.stderr
+    assert "[stub" not in run.stdout, f"a gate ran without a resolved repo root:\n{run.stdout}"
+
+
 # --- ci.yml changed-links base resolution ----------------------------------
 
 
@@ -199,8 +238,16 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _resolve_base(repo: Path, tmp_path: Path, **event: str) -> tuple[int, str, str | None]:
-    """Run the workflow step; return (exit code, combined output, ``ref`` output)."""
+@dataclass(frozen=True)
+class _Resolution:
+    code: int
+    output: str
+    ref: str | None
+    sweep: str | None
+
+
+def _resolve_base(repo: Path, tmp_path: Path, **event: str) -> _Resolution:
+    """Run the workflow step; return its exit code, combined output and outputs."""
 
     github_output = tmp_path / "github_output"
     github_output.write_text("", encoding="utf-8")
@@ -225,7 +272,9 @@ def _resolve_base(repo: Path, tmp_path: Path, **event: str) -> tuple[int, str, s
         for line in github_output.read_text(encoding="utf-8").splitlines()
         if "=" in line
     )
-    return run.returncode, run.stdout + run.stderr, outputs.get("ref")
+    return _Resolution(
+        run.returncode, run.stdout + run.stderr, outputs.get("ref"), outputs.get("sweep")
+    )
 
 
 def _diff_base(repo: Path, ref: str) -> str:
@@ -233,26 +282,29 @@ def _diff_base(repo: Path, ref: str) -> str:
 
 
 def test_pull_request_resolves_to_the_base_branch(repo: Path, tmp_path: Path) -> None:
-    code, output, ref = _resolve_base(repo, tmp_path, EVENT_NAME="pull_request", BASE_REF="master")
-    assert code == 0, output
-    assert ref == "origin/master"
+    result = _resolve_base(repo, tmp_path, EVENT_NAME="pull_request", BASE_REF="master")
+    assert result.code == 0, result.output
+    assert result.ref == "origin/master"
+    assert result.sweep is None
 
 
 def test_push_resolves_to_the_commit_the_ref_moved_from(repo: Path, tmp_path: Path) -> None:
     before = _git(repo, "rev-parse", "HEAD~1")
-    code, output, ref = _resolve_base(repo, tmp_path, BEFORE=before)
-    assert code == 0, output
-    assert ref == before
+    result = _resolve_base(repo, tmp_path, BEFORE=before)
+    assert result.code == 0, result.output
+    assert result.ref == before
+    assert result.sweep is None
 
 
 def test_first_push_of_a_branch_falls_back_to_master(repo: Path, tmp_path: Path) -> None:
     """``before`` is the zero SHA on a branch's first push: probe against master."""
 
     a = _git(repo, "rev-parse", "HEAD~1")
-    code, output, ref = _resolve_base(repo, tmp_path, BEFORE=ZERO_SHA)
-    assert code == 0, output
-    assert ref, f"the probe was skipped instead of falling back:\n{output}"
-    assert _diff_base(repo, ref) == a
+    result = _resolve_base(repo, tmp_path, BEFORE=ZERO_SHA)
+    assert result.code == 0, result.output
+    assert result.ref, f"the probe was skipped instead of falling back:\n{result.output}"
+    assert _diff_base(repo, result.ref) == a
+    assert result.sweep is None
 
 
 def test_force_push_falls_back_to_master(repo: Path, tmp_path: Path) -> None:
@@ -268,28 +320,141 @@ def test_force_push_falls_back_to_master(repo: Path, tmp_path: Path) -> None:
     orphan = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "-q", "feature")
 
-    code, output, ref = _resolve_base(repo, tmp_path, BEFORE=orphan)
-    assert code == 0, output
-    assert ref, f"the probe was skipped instead of falling back:\n{output}"
-    assert ref != orphan
-    assert _diff_base(repo, ref) == a
+    result = _resolve_base(repo, tmp_path, BEFORE=orphan)
+    assert result.code == 0, result.output
+    assert result.ref, f"the probe was skipped instead of falling back:\n{result.output}"
+    assert result.ref != orphan
+    assert _diff_base(repo, result.ref) == a
+    assert result.sweep is None
 
 
 def test_unknown_before_sha_falls_back_to_master(repo: Path, tmp_path: Path) -> None:
     """A ``before`` the checkout never fetched must not abort or skip the step."""
 
     a = _git(repo, "rev-parse", "HEAD~1")
-    code, output, ref = _resolve_base(repo, tmp_path, BEFORE="f" * 40)
-    assert code == 0, output
-    assert ref, f"the probe was skipped instead of falling back:\n{output}"
-    assert _diff_base(repo, ref) == a
+    result = _resolve_base(repo, tmp_path, BEFORE="f" * 40)
+    assert result.code == 0, result.output
+    assert result.ref, f"the probe was skipped instead of falling back:\n{result.output}"
+    assert _diff_base(repo, result.ref) == a
 
 
-def test_without_any_master_the_step_says_so_and_skips(repo: Path, tmp_path: Path) -> None:
-    """The one remaining skip: nothing to diff against at all."""
+def _push_of_master_itself(repo: Path) -> None:
+    """Turn the fixture into a push of ``master``: HEAD == origin/master, one commit ahead."""
+
+    _git(repo, "checkout", "-q", "master")
+    (repo / "m.txt").write_text("m\n", encoding="utf-8")
+    _git(repo, "add", "m.txt")
+    _git(repo, "commit", "-q", "-m", "M")
+    _git(repo, "update-ref", "refs/remotes/origin/master", "HEAD")
+
+
+def test_first_push_of_master_itself_sweeps_every_link(repo: Path, tmp_path: Path) -> None:
+    """``origin/master`` *is* HEAD: a diff against it is empty, so sweep instead."""
+
+    _push_of_master_itself(repo)
+    result = _resolve_base(repo, tmp_path, BEFORE=ZERO_SHA)
+    assert result.code == 0, result.output
+    assert result.ref is None, f"an empty diff was handed to the probe:\n{result.output}"
+    assert result.sweep == "true", result.output
+    assert "origin/master" in result.output
+
+
+def test_force_push_of_master_itself_sweeps_every_link(repo: Path, tmp_path: Path) -> None:
+    a = _git(repo, "rev-parse", "master")
+    _git(repo, "checkout", "-q", "-b", "old", a)
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    _git(repo, "add", "old.txt")
+    _git(repo, "commit", "-q", "-m", "OLD")
+    old_tip = _git(repo, "rev-parse", "HEAD")
+    _push_of_master_itself(repo)
+
+    result = _resolve_base(repo, tmp_path, BEFORE=old_tip)
+    assert result.code == 0, result.output
+    assert result.ref is None, f"an empty diff was handed to the probe:\n{result.output}"
+    assert result.sweep == "true", result.output
+
+
+def test_without_any_master_the_step_sweeps_every_link(repo: Path, tmp_path: Path) -> None:
+    """Nothing to diff against at all used to be the one remaining skip."""
 
     _git(repo, "update-ref", "-d", "refs/remotes/origin/master")
-    code, output, ref = _resolve_base(repo, tmp_path, BEFORE=ZERO_SHA)
-    assert code == 0, output
-    assert ref is None
-    assert "origin/master" in output
+    result = _resolve_base(repo, tmp_path, BEFORE=ZERO_SHA)
+    assert result.code == 0, result.output
+    assert result.ref is None
+    assert result.sweep == "true", result.output
+    assert "origin/master" in result.output
+
+
+def test_pull_request_against_a_missing_base_branch_fails_the_step(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A base the checkout does not have is an error, never an empty probe."""
+
+    result = _resolve_base(repo, tmp_path, EVENT_NAME="pull_request", BASE_REF="nonexistent")
+    assert result.code != 0, result.output
+    assert result.ref is None and result.sweep is None
+
+
+# --- ci.yml changed-links probe step ----------------------------------------
+
+
+def _changed_links_steps() -> list[dict[str, object]]:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["changed-links"]["steps"]
+    assert isinstance(steps, list)
+    return steps
+
+
+def _probe_script() -> str:
+    (step,) = [s for s in _changed_links_steps() if str(s.get("name", "")).startswith("Probe")]
+    script = step["run"]
+    assert isinstance(script, str)
+    return script
+
+
+def test_no_step_of_the_changed_links_job_can_be_skipped() -> None:
+    # The base step always produces either ``ref`` or ``sweep``; no step may
+    # carry an ``if`` that turns the job into a silent no-op again.
+    for step in _changed_links_steps():
+        assert "if" not in step, step
+
+
+def _run_probe_step(tmp_path: Path, **outputs: str) -> str:
+    """Execute the probe step with a stub ``uv`` that prints its arguments."""
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    stub = stubs / "uv"
+    stub.write_text('#!/bin/sh\necho "[stub uv] $*"\nexit 0\n', encoding="ascii")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    env = dict(
+        os.environ,
+        PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]),
+        BASE=outputs.get("ref", ""),
+        SWEEP=outputs.get("sweep", ""),
+    )
+    run = subprocess.run(
+        [_git_bash(), "-e", "-o", "pipefail", "-c", _probe_script()],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    return run.stdout
+
+
+def test_probe_step_diffs_against_the_resolved_base(tmp_path: Path) -> None:
+    out = _run_probe_step(tmp_path, ref="origin/master")
+    assert re.search(r"^\[stub uv\] .*check_links\.py --changed-since origin/master$", out, re.M), (
+        out
+    )
+    assert "--include-doi" not in out
+
+
+def test_probe_step_sweeps_every_link_when_asked(tmp_path: Path) -> None:
+    out = _run_probe_step(tmp_path, sweep="true")
+    assert re.search(r"^\[stub uv\] .*check_links\.py --include-doi$", out, re.M), out
+    assert "--changed-since" not in out

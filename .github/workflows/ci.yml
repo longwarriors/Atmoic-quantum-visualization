@@ -48,9 +48,14 @@ jobs:
     # moved the ref away from; when that commit is unusable -- the zero SHA on
     # a branch's first push, or no ancestor of HEAD after a force push -- the
     # base falls back to origin/master, so the probe covers everything the
-    # branch adds over master rather than being skipped. The only skip left is
-    # a checkout with no origin/master at all. tests/test_check_script.py
-    # executes this step's script against throwaway repositories.
+    # branch adds over master rather than being skipped. When even that base
+    # already contains HEAD (the first or a force push of master itself:
+    # origin/master *is* HEAD, so a diff against it is empty) or there is no
+    # origin/master at all, there is nothing to diff against and the step asks
+    # for a sweep of every cited URL and DOI instead -- the weekly job's probe,
+    # run now. Nothing in this job is skipped. tests/test_check_script.py
+    # executes the base and probe steps' scripts against throwaway
+    # repositories and a stub uv.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -70,8 +75,15 @@ jobs:
               && git cat-file -e "$1^{commit}" 2>/dev/null \
               && git merge-base --is-ancestor "$1" HEAD
           }
+          sweep() {
+            echo "$1; probing every cited URL and DOI instead"
+            echo "sweep=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
           if [ "$EVENT_NAME" = "pull_request" ]; then
             base="origin/$BASE_REF"
+            git cat-file -e "$base^{commit}" 2>/dev/null \
+              || { echo "base branch $base is not in this checkout"; exit 1; }
           elif usable "$BEFORE"; then
             base="$BEFORE"
           elif git cat-file -e "origin/master^{commit}" 2>/dev/null; then
@@ -79,31 +91,35 @@ jobs:
                  "falling back to the merge base with origin/master"
             base="origin/master"
           else
-            echo "push base '$BEFORE' is unusable and origin/master does not exist;" \
-                 "nothing to diff against, skipping the link probe"
-            exit 0
+            sweep "push base '$BEFORE' is unusable and origin/master does not exist: nothing to diff against"
+          fi
+          if git merge-base --is-ancestor HEAD "$base"; then
+            sweep "base $base already contains HEAD (a first or force push of the base branch itself): nothing to diff against"
           fi
           echo "using base $base ($(git rev-parse --short "$base"))"
           echo "ref=$base" >> "$GITHUB_OUTPUT"
       - name: Install uv
-        if: steps.base.outputs.ref != ''
         uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           python-version: "3.12"
       - name: Sync
-        if: steps.base.outputs.ref != ''
         run: |
           if [ -f uv.lock ]; then
             uv sync --locked --all-groups
           else
             uv sync --all-groups
           fi
-      - name: Probe links added since the base revision
-        if: steps.base.outputs.ref != ''
+      - name: Probe links added since the base revision (or every cited link)
         env:
           BASE: ${{ steps.base.outputs.ref }}
-        run: uv run --group docs python scripts/check_links.py --changed-since "$BASE"
+          SWEEP: ${{ steps.base.outputs.sweep }}
+        run: |
+          if [ "$SWEEP" = "true" ]; then
+            uv run --group docs python scripts/check_links.py --include-doi
+          else
+            uv run --group docs python scripts/check_links.py --changed-since "$BASE"
+          fi
 
   web:
     runs-on: ubuntu-latest

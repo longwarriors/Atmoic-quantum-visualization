@@ -12,9 +12,11 @@ the pin mean something:
 * the host is normalised the way a browser resolves it before it is compared
   with the code-host list (lowercase, userinfo and port dropped, percent-escapes
   decoded, trailing dot stripped, IDNA-mapped to ASCII), and the path is
-  percent-decoded once *before* it is split on ``/`` -- so ``github.com.``,
-  ``GitHub.com``, ``github%2Ecom`` and ``tree/refs%2Fheads%2Fmaster`` meet
-  exactly the rules their canonical spellings meet;
+  percent-decoded once *before* it is split on ``/`` and its ``.``/``..``
+  segments are resolved -- so ``github.com.``, ``GitHub.com``,
+  ``github%2Ecom``, ``tree/refs%2Fheads%2Fmaster`` and
+  ``tree/v1.0/../master`` meet exactly the rules their canonical spellings
+  meet;
 * an entry whose ``url`` is on a code host must name a repository (at least
   ``/owner/repo``, or ``/group/subgroup/repo`` on GitLab); issue,
   pull-request, discussion and wiki pages are not source and are rejected,
@@ -29,10 +31,11 @@ the pin mean something:
   paths), that SHA and the ``commit`` field must agree (one is a prefix of the
   other);
 * if the URL names a branch -- explicitly (``refs/heads/<name>``,
-  ``src/branch/<name>``) or by a conventional branch name such as ``main``,
-  ``master``, ``HEAD``, ``develop`` or ``trunk`` -- it is rejected outright,
-  ``version`` field or not: a branch moves, so nothing in the entry pins what
-  was audited;
+  ``src/branch/<name>``, Gitea's ``raw``/``media`` variants of it), by any
+  other ref namespace (``refs/pull/...``, ``refs/remotes/...``) or by a
+  conventional branch name such as ``main``, ``master``, ``HEAD``,
+  ``develop`` or ``trunk`` -- it is rejected outright, ``version`` field or
+  not: a branch moves, so nothing in the entry pins what was audited;
 * if the URL names a tag, or a ref that cannot be told from one, a
   ``version`` field is required and it must equal the ref the URL names, up
   to one leading ``v`` on either side (``2.0.1`` matches ``v2.0.1``;
@@ -71,12 +74,15 @@ SOURCE_AUDIT_KEYWORD = "source-audit"
 NON_SOURCE_PATHS = frozenset(
     {"issues", "pull", "pulls", "pull-requests", "merge_requests", "discussions", "wiki"}
 )
-_REF_MARKERS = frozenset({"blob", "tree", "commit", "commits", "raw", "src"})
+_REF_MARKERS = frozenset({"blob", "tree", "commit", "commits", "raw", "src", "media"})
+# Gitea / Forgejo page kinds whose next segment says what the ref is
+# (``src/branch/main``, ``raw/tag/v1``, ``media/commit/<sha>``).
+_GITEA_MARKERS = frozenset({"src", "raw", "media"})
 # Conventional names of a repository's moving branch; a URL naming one of these
 # pins nothing, whatever the version field says.
 BRANCH_NAMES = frozenset({"head", "main", "master", "develop", "development", "dev", "trunk"})
 _PIN_FORMS = (
-    "/owner/repo, a blob/tree/commit/commits/raw/src path with a revision, "
+    "/owner/repo, a blob/tree/commit/commits/raw/src/media path with a revision, "
     "releases/tag/<tag>, releases/download/<tag>/..., tags/<tag> (GitLab: -/releases/<tag>)"
 )
 
@@ -109,16 +115,28 @@ def _host_in(host: str, hosts: Iterable[str]) -> bool:
 
 
 def _segments(url: str) -> list[str]:
-    """The path split on ``/`` *after* one round of percent-decoding.
+    """The path split on ``/`` *after* one round of percent-decoding, dot segments removed.
 
     GitHub serves ``/tree/refs%2Fheads%2Fmaster`` as ``/tree/refs/heads/master``,
     so an encoded slash is a separator, not part of a ref name: decoding first
     and splitting afterwards turns it into the same segments the branch rules
     already reject. Decoding happens exactly once, as on the server, so
     ``%252F`` stays the literal ``%2F``.
+
+    A browser removes ``.`` and ``..`` segments (also spelled ``%2e``) before
+    the request leaves it, so ``/tree/v1.0/../master`` reaches GitHub as
+    ``/tree/master``; the gate used to read ``v1.0`` from the unresolved path
+    and accept a ``version = {v1.0}`` pin on what is really the branch.
     """
 
-    return [part for part in unquote(urlsplit(url).path).split("/") if part]
+    resolved: list[str] = []
+    for part in unquote(urlsplit(url).path).split("/"):
+        if part == "..":
+            if resolved:
+                resolved.pop()
+        elif part and part != ".":
+            resolved.append(part)
+    return resolved
 
 
 def is_code_host(url: str) -> bool:
@@ -184,10 +202,19 @@ def repository_problem(url: str) -> str | None:
 
 
 def _named_ref(segments: list[str]) -> tuple[RefKind, str]:
-    """The ref named by the path segments after a ``blob``/``tree``/raw marker."""
+    """The ref named by the path segments after a ``blob``/``tree``/raw marker.
 
-    if len(segments) >= 3 and segments[0] == "refs" and segments[1] in {"heads", "tags"}:
-        return ("tag" if segments[1] == "tags" else "branch"), segments[2]
+    ``refs/heads/<name>`` is a branch and ``refs/tags/<name>`` a tag. Any other
+    ``refs/...`` path is a ref namespace -- ``refs/pull/<n>/head``,
+    ``refs/remotes/...``, ``refs/notes/...`` -- and those move, so they are
+    reported as a branch named after the namespace; the gate used to read the
+    bare word ``refs`` as a tag-like ref and accept ``version = {refs}``.
+    """
+
+    if segments[0] == "refs":
+        if len(segments) >= 3 and segments[1] in {"heads", "tags"}:
+            return ("tag" if segments[1] == "tags" else "branch"), segments[2]
+        return "branch", "/".join(segments[:3])
     return "ref", segments[0]
 
 
@@ -222,10 +249,11 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
                 found = "tag", following[1]
                 break
             if (
-                segment == "src"
+                segment in _GITEA_MARKERS
                 and len(following) >= 2
                 and following[0] in {"commit", "branch", "tag"}
             ):
+                # Gitea / Forgejo: src|raw|media / branch|tag|commit / <name>.
                 kinds: dict[str, RefKind] = {"commit": "ref", "branch": "branch", "tag": "tag"}
                 found = kinds[following[0]], following[1]
                 break

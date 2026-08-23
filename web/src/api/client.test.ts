@@ -66,6 +66,14 @@ const jsonResponse = (body: unknown, status = 200): Response =>
 
 const errorResponse = (text: string, status = 500): Response => new Response(text, { status })
 
+/**
+ * The rejection an HTTP error must surface as: an Error whose message *is* the
+ * response body. Matched by equality, not substring -- V8's `JSON.parse`
+ * error quotes the offending text (`"catalog offline" is not valid JSON`), so
+ * a substring match passed even with the `response.ok` check deleted.
+ */
+const serverError = (body: string): Error => new Error(body)
+
 const pointCloudResponse = (headers: Record<string, string> = {}): Response =>
   new Response(goldenBuffer(), {
     status: 200,
@@ -220,7 +228,9 @@ describe('fetchPointCloud', () => {
       '/api/orbitals/metadata': () => jsonResponse(metadata),
     })
 
-    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow('{"detail":"l must be < n"}')
+    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow(
+      serverError('{"detail":"l must be < n"}'),
+    )
   })
 
   it('rejects with the server error body on an HTTP error from the metadata route', async () => {
@@ -229,7 +239,7 @@ describe('fetchPointCloud', () => {
       '/api/orbitals/metadata': () => errorResponse('metadata unavailable', 503),
     })
 
-    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow('metadata unavailable')
+    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow(serverError('metadata unavailable'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -265,7 +275,7 @@ describe('fetchIsosurface', () => {
 
   it('rejects with the server error body on an HTTP error', async () => {
     routeFetch({ '/api/orbitals/isosurface': () => errorResponse('grid too large', 422) })
-    await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow('grid too large')
+    await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow(serverError('grid too large'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -301,7 +311,7 @@ describe('fetchCurrentField', () => {
     routeFetch({
       '/api/orbitals/current-field': () => errorResponse('real basis has no current', 422),
     })
-    await expect(fetchCurrentField(params, 48)).rejects.toThrow('real basis has no current')
+    await expect(fetchCurrentField(params, 48)).rejects.toThrow(serverError('real basis has no current'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -327,7 +337,7 @@ describe('fetchMetadata', () => {
 
   it('rejects with the server error body on an HTTP error', async () => {
     routeFetch({ '/api/orbitals/metadata': () => errorResponse('not found', 404) })
-    await expect(fetchMetadata(params)).rejects.toThrow('not found')
+    await expect(fetchMetadata(params)).rejects.toThrow(serverError('not found'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -354,7 +364,7 @@ describe('fetchCatalog', () => {
 
   it('rejects with the server error body on an HTTP error', async () => {
     routeFetch({ '/api/orbitals/catalog': () => errorResponse('catalog offline', 500) })
-    await expect(fetchCatalog()).rejects.toThrow('catalog offline')
+    await expect(fetchCatalog()).rejects.toThrow(serverError('catalog offline'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -381,7 +391,7 @@ describe('fetchSuperpositionCatalog', () => {
 
   it('rejects with the server error body on an HTTP error', async () => {
     routeFetch({ '/api/superposition/catalog': () => errorResponse('catalog offline', 500) })
-    await expect(fetchSuperpositionCatalog()).rejects.toThrow('catalog offline')
+    await expect(fetchSuperpositionCatalog()).rejects.toThrow(serverError('catalog offline'))
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -415,7 +425,7 @@ describe('fetchSuperpositionIsosurface', () => {
       '/api/superposition/isosurface': () => errorResponse('terms: unparsable', 422),
     })
     await expect(fetchSuperpositionIsosurface('nonsense', 0, 64)).rejects.toThrow(
-      'terms: unparsable',
+      serverError('terms: unparsable'),
     )
   })
 
