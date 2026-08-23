@@ -14,15 +14,38 @@ export const SUPPORTED_VERSION = 1
 export const EXPECTED_STRIDE = 5
 
 /**
+ * The only syntax the Python side emits: `f"{x:.9f}"` / `f"{x:.6f}"`, i.e. an
+ * optional sign, digits, optional fraction. No exponent, no hex, no leading
+ * `+`, no bare `.5`, no whitespace.
+ */
+const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/
+
+export interface HeaderRange {
+  /** Lower bound; inclusive unless `exclusiveMin` is set. */
+  min: number
+  /** Inclusive upper bound; omit for no upper bound. */
+  max?: number
+  exclusiveMin?: boolean
+}
+
+function describeRange({ min, max, exclusiveMin }: HeaderRange): string {
+  const open = exclusiveMin ? '(' : '['
+  return max === undefined ? `${open}${min}, ∞)` : `${open}${min}, ${max}]`
+}
+
+/**
  * Read a numeric transport header and refuse to guess.
  *
  * `Number(headers.get(name) ?? 'NaN')` looked defensive but was not: a missing
  * header became NaN and an empty one became 0 (`Number('') === 0`), and both
- * flowed silently into the Inspector and the fog scale. A header the server
- * promised but did not deliver is a broken response, so surface it the same
- * way a bad payload is surfaced: by throwing.
+ * flowed silently into the Inspector and the fog scale. `Number()` is also far
+ * looser than the encoder: `'1e-400'` underflows to 0, `'0x10'` is 16, and a
+ * radial mass of `-0.5` or `1.5` is "finite" but physically meaningless. The
+ * server promised a plain decimal inside a known range; anything else is a
+ * broken response, so surface it the same way a bad payload is surfaced: by
+ * throwing, with the header name in the message.
  */
-export function readFiniteHeader(headers: Headers, name: string): number {
+export function readFiniteHeader(headers: Headers, name: string, range: HeaderRange): number {
   const raw = headers.get(name)
   if (raw === null) {
     throw new Error(`Point-cloud response header ${name} is missing.`)
@@ -30,9 +53,19 @@ export function readFiniteHeader(headers: Headers, name: string): number {
   if (raw.trim() === '') {
     throw new Error(`Point-cloud response header ${name} is empty.`)
   }
+  if (!PLAIN_DECIMAL.test(raw)) {
+    throw new Error(`Point-cloud response header ${name} is "${raw}", not a plain decimal.`)
+  }
   const value = Number(raw)
   if (!Number.isFinite(value)) {
     throw new Error(`Point-cloud response header ${name} is "${raw}", not a finite number.`)
+  }
+  const belowMin = range.exclusiveMin ? value <= range.min : value < range.min
+  const aboveMax = range.max !== undefined && value > range.max
+  if (belowMin || aboveMax) {
+    throw new Error(
+      `Point-cloud response header ${name} is "${raw}", outside ${describeRange(range)}.`,
+    )
   }
   return value
 }
@@ -82,15 +115,17 @@ export function parsePointCloud(
     intensity[index] = interleaved[source + 3]
     phase[index] = interleaved[source + 4]
   }
+  // version and flags are validated above but not returned: no consumer
+  // branches on them, and the test suite pins them via the golden header bytes.
   return {
-    version,
-    flags,
     count,
     stride,
     positions,
     intensity,
     phase,
-    radialMass: readFiniteHeader(headers, 'X-QuViz-Radial-Mass'),
-    extentBohr: readFiniteHeader(headers, 'X-QuViz-Extent-Bohr'),
+    // A probability mass is in [0, 1]; a bounding extent is a strictly positive
+    // length. Both ranges are part of the contract with routes.py.
+    radialMass: readFiniteHeader(headers, 'X-QuViz-Radial-Mass', { min: 0, max: 1 }),
+    extentBohr: readFiniteHeader(headers, 'X-QuViz-Extent-Bohr', { min: 0, exclusiveMin: true }),
   }
 }
