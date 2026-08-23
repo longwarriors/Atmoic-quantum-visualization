@@ -16,6 +16,7 @@ build/
 web/node_modules/
 web/dist/
 web/.vite/
+web/coverage/
 
 # Generated scientific assets
 outputs/
@@ -29,5 +30,6 @@ outputs/
 # Editors and OS
 .vscode/
 .idea/
+.claude/
 .DS_Store
 Thumbs.db
