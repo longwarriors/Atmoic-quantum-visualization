@@ -62,8 +62,12 @@ docs = [
 packages = ["src/quviz"]
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+# ``-p pytester`` serves tests/test_conftest_policy.py, which runs the zero-skip
+# policy in tests/conftest.py against throwaway test files.
+addopts = "-ra --strict-config --strict-markers -p pytester"
 testpaths = ["tests"]
+# A marked xfail that unexpectedly passes is a failure, not a silent XPASS.
+xfail_strict = true
 
 [tool.coverage.run]
 branch = true
