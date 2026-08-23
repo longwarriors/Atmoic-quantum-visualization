@@ -9,6 +9,12 @@ the pin mean something:
 * every ``source-audit`` ``url`` must carry an ``http://`` or ``https://``
   scheme -- a scheme-less ``github.com/...`` has no hostname and would
   otherwise escape every code-host rule below;
+* the host is normalised the way a browser resolves it before it is compared
+  with the code-host list (lowercase, userinfo and port dropped, percent-escapes
+  decoded, trailing dot stripped, IDNA-mapped to ASCII), and the path is
+  percent-decoded once *before* it is split on ``/`` -- so ``github.com.``,
+  ``GitHub.com``, ``github%2Ecom`` and ``tree/refs%2Fheads%2Fmaster`` meet
+  exactly the rules their canonical spellings meet;
 * an entry whose ``url`` is on a code host must name a repository (at least
   ``/owner/repo``, or ``/group/subgroup/repo`` on GitLab); issue,
   pull-request, discussion and wiki pages are not source and are rejected,
@@ -78,7 +84,22 @@ RefKind = Literal["sha", "tag", "branch", "ref"]
 
 
 def _host(url: str) -> str:
-    return (urlsplit(url).hostname or "").lower()
+    """The hostname as a browser would resolve it.
+
+    ``urlsplit().hostname`` already drops userinfo and the port and lowercases.
+    On top of that: percent-escapes in the host are decoded (``github%2Ecom``),
+    a trailing dot (the fully-qualified spelling ``github.com.``, which GitHub
+    answers with a redirect to the canonical host) is stripped, and the name is
+    IDNA-mapped to ASCII so ``github.com`` spelled in full-width letters (U+FF47
+    ...) is ``github.com``, while a genuine look-alike such as ``gíthub.com``
+    stays ``xn--gthub-zsa.com``.
+    """
+
+    host = unquote(urlsplit(url).hostname or "").rstrip(".").lower()
+    try:
+        return host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return host
 
 
 def _host_in(host: str, hosts: Iterable[str]) -> bool:
@@ -88,7 +109,16 @@ def _host_in(host: str, hosts: Iterable[str]) -> bool:
 
 
 def _segments(url: str) -> list[str]:
-    return [unquote(part) for part in urlsplit(url).path.split("/") if part]
+    """The path split on ``/`` *after* one round of percent-decoding.
+
+    GitHub serves ``/tree/refs%2Fheads%2Fmaster`` as ``/tree/refs/heads/master``,
+    so an encoded slash is a separator, not part of a ref name: decoding first
+    and splitting afterwards turns it into the same segments the branch rules
+    already reject. Decoding happens exactly once, as on the server, so
+    ``%252F`` stays the literal ``%2F``.
+    """
+
+    return [part for part in unquote(urlsplit(url).path).split("/") if part]
 
 
 def is_code_host(url: str) -> bool:

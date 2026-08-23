@@ -894,3 +894,79 @@ def test_host_suffix_match_is_shared_and_exact() -> None:
     assert not is_code_host("https://notgithub.com/o/r")
     assert not is_code_host("https://github.com.evil.example/o/r")
     assert _host_in("a.b.c", ("b.c",)) and not _host_in("ab.c", ("b.c",))
+
+
+# (i) C4: the host and path are normalised the way a browser normalises them
+# before any rule runs, so a spelling that reaches the same GitHub page cannot
+# reach a different verdict.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com./o/r/tree/main/src",  # trailing dot (301 -> canonical)
+        "https://github.com../o/r/tree/main/src",
+        "https://GitHub.com/o/r/tree/main",
+        "https://user:secret@github.com/o/r/tree/main",
+        "https://github.com:443/o/r/tree/main",
+        "https://github%2Ecom/o/r/tree/main",  # percent-encoded host
+        # full-width "github" (U+FF47 ...): IDNA maps it to github.com, as a browser does
+        "https://\N{FULLWIDTH LATIN SMALL LETTER G}\N{FULLWIDTH LATIN SMALL LETTER I}"
+        "\N{FULLWIDTH LATIN SMALL LETTER T}\N{FULLWIDTH LATIN SMALL LETTER H}"
+        "\N{FULLWIDTH LATIN SMALL LETTER U}\N{FULLWIDTH LATIN SMALL LETTER B}.com"
+        "/o/r/tree/main",
+        "https://raw.githubusercontent.com./o/r/main/f.py",
+    ],
+)
+def test_host_spelling_variants_are_still_the_code_host(url: str) -> None:
+    assert is_code_host(url)
+    entry = _entry("x", url=url, commit=SHA, version="main", urldate="2026-08-23")
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1, messages
+    assert "branch" in messages[0] and "'main'" in messages[0]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://xn--gthub-zsa.com/o/r/tree/main",  # punycode of gíthub.com: a look-alike
+        "https://gíthub.com/o/r/tree/main",
+        "https://github.com.evil.example./o/r/tree/main",
+        "https://github.com@evil.example/o/r/tree/main",  # the host is evil.example
+    ],
+)
+def test_look_alike_hosts_are_not_code_hosts_even_after_normalisation(url: str) -> None:
+    assert not is_code_host(url)
+    entry = _entry("x", url=url, commit=SHA)
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1 and "urldate" in messages[0], messages
+
+
+@pytest.mark.parametrize(
+    ("url", "name"),
+    [
+        ("https://github.com/o/r/tree/refs%2Fheads%2Fmaster/x", "master"),
+        ("https://github.com/o/r/tree/refs%2Fheads%2Fmaster", "master"),
+        ("https://github.com/o/r/blob/refs%2Fheads%2Ffeature-x/f.py", "feature-x"),
+        ("https://github.com/o/r/tree/refs%2fheads%2fmain", "main"),
+        ("https://raw.githubusercontent.com/o/r/refs%2Fheads%2Fmain/f.py", "main"),
+        ("https://codeberg.org/o/r/src%2Fbranch%2Fmain/f.py", "main"),
+        ("https://gitlab.com/o/r/-%2Ftree%2Fdevelop", "develop"),
+    ],
+)
+def test_percent_encoded_slash_in_the_path_is_a_path_separator(url: str, name: str) -> None:
+    assert url_ref(url) in {("branch", name), ("ref", name)}
+    for entry in (
+        _entry("x", url=url, commit=SHA),
+        _entry("x", url=url, commit=SHA, version=name),
+        _entry("x", url=url, commit=SHA, version=f"refs/heads/{name}"),
+        _entry("x", url=url, commit=SHA, version=f"refs%2Fheads%2F{name}"),
+    ):
+        messages = validate_source_pins([entry])
+        assert len(messages) == 1, messages
+        assert "branch" in messages[0] and repr(name) in messages[0]
+
+
+def test_percent_encoded_path_is_decoded_exactly_once() -> None:
+    # ``%252F`` reaches the server as the literal ``%2F``: one decode, not two.
+    url = "https://github.com/o/r/tree/refs%252Fheads%252Fmaster"
+    assert url_ref(url) == ("ref", "refs%2Fheads%2Fmaster")
+    assert validate_source_pins([_entry("x", url=url, commit=SHA, version="v1")]) != []
