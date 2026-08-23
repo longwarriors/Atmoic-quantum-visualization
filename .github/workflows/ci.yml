@@ -44,8 +44,13 @@ jobs:
     # DOI so something is verified). Rot in links that already exist is the
     # weekly link-check workflow's job, not the author's. This repository
     # merges by fast-forward push, so the job runs on push as well as on
-    # pull_request: the base is the PR's base branch, or the commit the push
-    # moved the ref away from.
+    # pull_request. The base is the PR's base branch, or the commit the push
+    # moved the ref away from; when that commit is unusable -- the zero SHA on
+    # a branch's first push, or no ancestor of HEAD after a force push -- the
+    # base falls back to origin/master, so the probe covers everything the
+    # branch adds over master rather than being skipped. The only skip left is
+    # a checkout with no origin/master at all. tests/test_check_script.py
+    # executes this step's script against throwaway repositories.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -59,20 +64,26 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
         run: |
+          usable() {
+            [ -n "$1" ] \
+              && [ "$1" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "$1^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$1" HEAD
+          }
           if [ "$EVENT_NAME" = "pull_request" ]; then
             base="origin/$BASE_REF"
-          else
+          elif usable "$BEFORE"; then
             base="$BEFORE"
-          fi
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            echo "no base revision (new branch or tag); skipping the link probe"
+          elif git cat-file -e "origin/master^{commit}" 2>/dev/null; then
+            echo "push base '$BEFORE' is unusable (first push of the branch, or a force push);" \
+                 "falling back to the merge base with origin/master"
+            base="origin/master"
+          else
+            echo "push base '$BEFORE' is unusable and origin/master does not exist;" \
+                 "nothing to diff against, skipping the link probe"
             exit 0
           fi
-          if ! git cat-file -e "$base^{commit}" 2>/dev/null \
-             || ! git merge-base --is-ancestor "$base" HEAD; then
-            echo "base $base is not an ancestor of HEAD (force push?); skipping the link probe"
-            exit 0
-          fi
+          echo "using base $base ($(git rev-parse --short "$base"))"
           echo "ref=$base" >> "$GITHUB_OUTPUT"
       - name: Install uv
         if: steps.base.outputs.ref != ''

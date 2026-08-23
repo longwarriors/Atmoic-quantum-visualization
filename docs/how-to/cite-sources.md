@@ -44,7 +44,7 @@ uv run --group docs python scripts/render_reference_index.py --check
 
 ## 哪些规则由工具强制 { #enforced-rules }
 
-下面这些由工具强制，但**执行者不同**：`mkdocs build --strict` 只在渲染引用时校验键与 locator 的语法；orphan、索引同步和 `source-audit` 锚定由 `scripts/render_reference_index.py --check` 与 `uv run --group docs pytest` 执行（两者都在本地 `check.ps1` / `make check` 和 CI 内）；链接可达性需要网络，只在 CI 中运行。“执行者”列写明违反时是哪一步失败：
+下面这些由工具强制，但**执行者不同**：`mkdocs build --strict` 只在渲染引用时校验键与 locator 的语法；orphan、索引同步和 `source-audit` 锚定由 `scripts/render_reference_index.py --check` 与 `uv run --group docs pytest` 执行（两者都在本地 `check.ps1` / `make check` 和 CI 内）；链接可达性需要网络，只在 CI 中运行——pull request 与 push 都会触发，push 的比较基准是推送前该 ref 所指的提交，分支首次推送或 force push 使该提交不可用时退回到与 `origin/master` 的合并基，不会因此跳过。“执行者”列写明违反时是哪一步失败：
 
 | 检查 | 规则 | 执行者 |
 |---|---|---|
@@ -54,7 +54,7 @@ uv run --group docs python scripts/render_reference_index.py --check
 | 索引同步 | `docs/references/index.md` 必须与生成结果一致 | `render_reference_index.py --check` 与 pytest——本地 + CI；`mkdocs build` 不检查 |
 | 源码 commit 锚定 | `source-audit` 条目的 URL 必须以 `http://` 或 `https://` 开头；URL 在代码托管站（GitHub、GitLab、Bitbucket、Codeberg、Gitee 及 raw.githubusercontent.com）的条目必须至少指到 `/owner/repo`，issue / pull / discussion / wiki 页面不算源码；必须有 7–40 位**小写**十六进制 `commit`；URL 中若含 SHA，必须同为小写且与 `commit` 一致（一方是另一方的前缀）；URL 指向 tag 或无法与 tag 区分的 ref 时还必须有 `version`，且去掉至多一个前导 `v` 后与该 ref **完全相等**（`2.0.1` 匹配 `v2.0.1`，不匹配 `v2.0.10`）；明确的分支 URL 一律拒绝——`refs/heads/...`、`src/branch/...` 以及 `HEAD`、`main`、`master`、`develop`、`trunk` 这类分支名，带 `version` 也不行；`/releases/latest`、`/archive/...` 等无法识别的深层路径同样拒绝 | `render_reference_index.py --check` 与 pytest（`tests/test_citation_gates.py`）——本地 + CI；`mkdocs build` 不检查 |
 | 非源码审计条目 | `source-audit` 但不在代码托管站的条目：有 URL 就必须有 ISO 格式 `urldate`，没有 URL 就必须有 `doi` | 同上 |
-| 新增链接可达 | 新增的 URL/DOI 由 `scripts/check_links.py --changed-since` 探测，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 与 HTTP 429 外任何非 OK 结果都失败——429 是限流，只说明探测被限速，不是对链接本身的判定；每周另有全量扫描 | **仅 CI，需网络**（`changed-links` 作业）；不在本地 `check.ps1` / `make check` 内 |
+| 新增链接可达 | 新增的 URL/DOI 由 `scripts/check_links.py --changed-since <base>` 探测，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 与 HTTP 429 外任何非 OK 结果都失败——429 是限流，只说明探测被限速，不是对链接本身的判定；每周另有全量扫描 | **仅 CI，需网络**（`changed-links` 作业：pull request 以目标分支为基准，push 以推送前的提交为基准，首次推送或 force push 时退回到与 `origin/master` 的合并基；仅当没有 `origin/master` 时跳过）；不在本地 `check.ps1` / `make check` 内，提交前无法在本地得知新增链接是否可达 |
 
 pytest 必须带 `--group docs` 运行（`check.ps1`、`make test`、CI 都已如此）；缺少该依赖组时 `tests/test_citation_gates.py` 会直接报错，而不是静默跳过。
 
