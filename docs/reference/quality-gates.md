@@ -72,6 +72,7 @@
 - ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
 - ✅ binary parser 单测 — `web/src/api/qvpc.test.ts`，含**跨语言黄金向量**（见下）；
 - ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
+- ✅ `qvpc.ts` 与 `color.ts` 的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1；
 - 🕒 geometry/material 正确 dispose；
 - 🕒 截图视觉回归仅作为辅助；
 - 🧑 UI 不能隐藏关键警告和单位。
@@ -88,8 +89,10 @@
 - ✅ 所有 `[\@key]` 存在 — `tests/test_bibliography.py::test_all_documentation_citation_keys_exist`；
 - ✅ 生成索引与 `references.bib` 同步 — `scripts/render_reference_index.py --check`；
 - ✅ Markdown 不含换页符等意外 C0 控制字符 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown：除 TAB/LF 外的任何 C0 字节（孤立或成对的 CR 也算）、转义损坏留下的孤儿 LaTeX 片段（如行首的 `ho$`、`abla`）、表格行 `$...$` 内未转义的 `|`，三者任一出现即变红；
-- 🕒 外链存活与内容漂移检查（当前**没有**任何门禁发起 HTTP 请求）；
-- 🕒 `references.bib` 中未被正文引用的孤儿键检查（当前只校验 used ⊆ known 单向）；
+- ✅ pull request **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since`，任何非 OK 结果都失败；已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败），不在 `make check` 内；
+- 🕒 引用内容漂移检查（当前没有任何门禁比对页面内容）；
+- ✅ `references.bib` 中未被正文引用的孤儿键 — `tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`；代码块、行内代码与 HTML 注释里的引用不算正文（`tests/test_citation_gates.py`）；
+- ✅ `source-audit` 条目的 `commit` 与 URL 中 SHA 一致、tag/branch URL 带 `version`、非代码托管来源带访问日期 — `test_repository_bibliography_has_coherent_source_pins`；
 - 🧑 Mermaid、数学公式和 API 文档在生成 HTML 中真正渲染，而非只通过构建；
 - 🧑 已知纠错不可被旧教程重新引入；
 - 🧑 引用是否真正支持正文声明；
