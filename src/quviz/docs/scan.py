@@ -46,7 +46,13 @@ extension list and checks that the scanner agrees:
   is recognised only when it is the *whole* blank-line-delimited block, as
   arithmatex anchors its block pattern; trailing text on the closing line
   turns the block back into prose. Blockquote markers, list markers and
-  admonition indentation in front of the block are accepted as prefixes.
+  admonition indentation in front of the block are accepted as prefixes. A
+  block that is not math as a whole is split where python-markdown splits
+  it -- at an ATX heading line first (``HashHeaderProcessor``), else at a
+  thematic break (``HRProcessor``) -- and each side is tried again, so math
+  directly under a heading or a rule, with no blank line between, is still
+  math, while ``$$ ... --- ... $$`` stays one math block (arithmatex runs
+  before both splitters).
 * **Link reference definitions** (``[label]: url "title"``, URL possibly on
   the next line) are consumed by python-markdown's ``ReferenceProcessor``
   wherever they start a line, also inside a paragraph, a blockquote or a list
@@ -65,8 +71,10 @@ opens another raw block there); a fence whose info string superfences would
 reject; a YAML front matter that is not a mapping (mkdocs then leaves it in
 the page as prose, the scanner still removes it); an inline math pair whose
 delimiters sit in different block elements that no blank line separates (a
-heading and the paragraph under it); and a reference definition line that
-setext underlining turns into a heading.
+heading and the paragraph under it); a reference definition line that setext
+underlining turns into a heading; and an indented ``# heading`` continuing a
+paragraph (literal text to the build, a splitter to the scanner because the
+same indentation is an admonition body).
 """
 
 from __future__ import annotations
@@ -151,6 +159,13 @@ _BLOCK_MATH = re.compile(
 _BLOCK_PREFIX = re.compile(r"^(?:[ \t]*(?:>|[*+-][ \t]|\d+\.[ \t]))*[ \t]*")
 _LINE_PREFIX = re.compile(r"^[ \t>]*")
 _BLANK_LINE_SPLIT = re.compile(r"(\n[ \t]*\n)")
+# Lines at which python-markdown splits a block and parses each side on its
+# own: an ATX heading (HashHeaderProcessor, which needs no space after the
+# hashes) first, then a thematic break (HRProcessor), in that priority order.
+_BLOCK_SPLITTERS = (
+    re.compile(r"^#{1,6}"),
+    re.compile(r"^[ ]{0,3}(?:(?:-+[ ]{0,2}){3,}|(?:_+[ ]{0,2}){3,}|(?:\*+[ ]{0,2}){3,})[ ]*$"),
+)
 
 # python-markdown's ReferenceProcessor.RE, verbatim after the ``^`` (pinned by
 # the tests). Blockquote and list markers may precede it on the first line.
@@ -287,13 +302,32 @@ def _is_block_math(block: str) -> bool:
     return _BLOCK_MATH.match("\n".join([head, *rest])) is not None
 
 
+def _blank_block_math(block: str) -> str:
+    """``block`` with its math blanked, in python-markdown's processor order.
+
+    Arithmatex (priority 79.9) tests the whole block first. Only when that
+    fails does a heading (70) or, failing that, a thematic break (50) split
+    the block, and each side is then parsed as a block of its own.
+    """
+
+    if block.strip() and _is_block_math(block):
+        return _blank_lines(block)
+    lines = block.split("\n")
+    for splitter in _BLOCK_SPLITTERS:
+        for index, line in enumerate(lines):
+            if splitter.match(_LINE_PREFIX.sub("", line, count=1)):
+                sides = [lines[:index], lines[index + 1 :]]
+                before, after = (_blank_block_math("\n".join(s)) if s else None for s in sides)
+                return "\n".join(part for part in (before, line, after) if part is not None)
+    return block
+
+
 def _strip_block_math(markdown: str) -> str:
     # ``re.split`` with a capturing group keeps the blank-line separators at
     # the odd indices, so the blocks can be blanked in place.
     parts = _BLANK_LINE_SPLIT.split(markdown)
     for index in range(0, len(parts), 2):
-        if parts[index].strip() and _is_block_math(parts[index]):
-            parts[index] = _blank_lines(parts[index])
+        parts[index] = _blank_block_math(parts[index])
     return "".join(parts)
 
 

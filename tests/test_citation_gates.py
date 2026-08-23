@@ -311,6 +311,24 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ("- $$\n  [@k]\n  $$\n", False),
         ("text\n    $$\n    [@k]\n    $$\n", True),
         ("text $a$\n\n[@k]\n", True),
+        # An ATX heading or a thematic break splits a block (HashHeaderProcessor,
+        # HRProcessor) and each side is parsed as a block of its own -- but only
+        # after arithmatex has failed to match the block as a whole.
+        ("# h\n$$\n[@k]\n$$\n", False),
+        ("#h\n$$\n[@k]\n$$\n", False),
+        ("$$\n[@k]\n$$\n# h\n", False),
+        ("# h\n\\[\n[@k]\n\\]\n", False),
+        ("text\n\n---\n$$\n[@k]\n$$\n", False),
+        ("* * *\n$$\n[@k]\n$$\n", False),
+        ("$$\n[@k]\n$$\n---\n", False),
+        ("text\n---\n$$\n[@k]\n$$\n", False),
+        ("$$\n---\n[@k]\n$$\n", False),
+        ("$$\n# h\n[@k]\n$$\n", False),
+        ("# h\n$$\n[@k]\n$$ tail [@k]\n", True),
+        ("# h $[@k]$\n$$\nx\n$$\n", False),
+        ("> # h\n> $$\n> [@k]\n> $$\n", False),
+        ("!!! note\n\n    # h\n    $$\n    [@k]\n    $$\n", False),
+        ("- # h\n  $$\n  [@k]\n  $$\n", True),
         # Link reference definitions (python-markdown's ReferenceProcessor).
         ("[@k]: https://example.org\n", False),
         ("[@k]: https://example.org 'title'\n", False),
@@ -366,8 +384,12 @@ def test_math_and_reference_rules_preserve_line_count() -> None:
     text = (
         "---\na: b\n---\n$$\nx\ny\n$$\n[@r]: https://x\n  'title'\n"
         "a $b\nc$ d \\(e\nf\\) g\n\\begin{align}\nh\n\\end{align}\n"
+        "\n# h\n$$\nm1\n$$\n---\n\n$$\nm2\n$$\n# k\n\n> # l\n> $$\n> m3\n> $$\n"
     )
-    assert strip_non_prose(text).count("\n") == text.count("\n")
+    stripped = strip_non_prose(text)
+    assert stripped.count("\n") == text.count("\n")
+    assert "# h" in stripped and "# k" in stripped and "> # l" in stripped
+    assert not any(body in stripped for body in ("m1", "m2", "m3"))
 
 
 def test_block_math_pattern_is_the_installed_arithmatex_one() -> None:
