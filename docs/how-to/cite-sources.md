@@ -50,11 +50,11 @@ uv run --group docs python scripts/render_reference_index.py --check
 |---|---|---|
 | 未知键 / 畸形键 | 正文中每个 `[@key]` 必须存在于 `references.bib`，key 匹配 `[A-Za-z0-9_:-]+` | `mkdocs build --strict`（引用扩展抛错）；`render_reference_index.py --check` 与 pytest 复查未知键——本地 + CI |
 | 空 locator | `[@key, ]` 这种逗号后为空的写法是错误 | `mkdocs build --strict`；`render_reference_index.py --check` 与 pytest——本地 + CI |
-| orphan | 每个非 `tooling` 条目至少在一处**正文**中被引用；围栏代码块、行内代码和 `<!-- -->` 注释里的引用**不算** | `render_reference_index.py --check` 与 pytest——本地 + CI；`mkdocs build` 不检查 |
+| orphan | 每个非 `tooling` 条目至少在一处**正文**中被引用；围栏代码块、行内代码和**块级** `<!-- -->` 注释里的引用**不算**（正文行内的注释按 python-markdown 的行为计入） | `render_reference_index.py --check` 与 pytest——本地 + CI；`mkdocs build` 不检查 |
 | 索引同步 | `docs/references/index.md` 必须与生成结果一致 | `render_reference_index.py --check` 与 pytest——本地 + CI；`mkdocs build` 不检查 |
 | 源码 commit 锚定 | `source-audit` 且 URL 在代码托管站（GitHub、GitLab、Bitbucket、Codeberg、Gitee）的条目必须有 7–40 位十六进制 `commit`；URL 中若含 SHA，必须与 `commit` 一致；URL 指向 tag/分支时还必须有 `version` 且其出现在 URL 里 | `render_reference_index.py --check` 与 pytest（`tests/test_citation_gates.py`）——本地 + CI；`mkdocs build` 不检查 |
 | 非源码审计条目 | `source-audit` 但不在代码托管站的条目：有 URL 就必须有 ISO 格式 `urldate`，没有 URL 就必须有 `doi` | 同上 |
-| 新增链接可达 | 新增的 URL/DOI 由 `scripts/check_links.py --changed-since` 探测，任何非 OK 结果都失败；每周另有全量扫描 | **仅 CI，需网络**（`changed-links` 作业）；不在本地 `check.ps1` / `make check` 内 |
+| 新增链接可达 | 新增的 URL/DOI 由 `scripts/check_links.py --changed-since` 探测，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 外任何非 OK 结果都失败；每周另有全量扫描 | **仅 CI，需网络**（`changed-links` 作业）；不在本地 `check.ps1` / `make check` 内 |
 
 pytest 必须带 `--group docs` 运行（`check.ps1`、`make test`、CI 都已如此）；缺少该依赖组时 `tests/test_citation_gates.py` 会直接报错，而不是静默跳过。
 

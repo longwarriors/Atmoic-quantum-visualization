@@ -51,7 +51,7 @@
 - AI 审计输出只作为问题发现与复核清单；其中每项事实仍需回到仓库、测试或原始来源；
 - 发现来源错误时保留引用，并在[纠错账本](corrections.md)记录错误位置、正确结论和验证方法；
 - 网页记录访问日期，源码审计**必须**记录 commit，论文记录 DOI。对 `source-audit` 条目这一条由 `quviz.docs.pins.validate_source_pins` 强制：代码托管站 URL 必须有十六进制 `commit`，且与 URL 中的 SHA 一致，tag/分支 URL 还要有 `version`；非代码托管站的有 URL 条目必须有 ISO `urldate`，无 URL 的必须有 `doi`；
-- 每个 `references.bib` 条目都必须在**正文**中被引用；纯工具链条目标注 `keywords = {tooling}` 豁免。未被引用的条目无人复核，`scripts/render_reference_index.py --check` 与 pytest（`tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`）会报 orphan 错误——`mkdocs build --strict` 本身**不**做这项检查。代码块、行内代码和 HTML 注释里的引用不算正文，所以示例语法不会把条目“救活”；
+- 每个 `references.bib` 条目都必须在**正文**中被引用；纯工具链条目标注 `keywords = {tooling}` 豁免。未被引用的条目无人复核，`scripts/render_reference_index.py --check` 与 pytest（`tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`）会报 orphan 错误——`mkdocs build --strict` 本身**不**做这项检查。代码块、行内代码和块级 HTML 注释里的引用不算正文，所以示例语法不会把条目“救活”；
 - 声明“某来源没有某内容”时必须记录访问日期和检查方法，并区分“我没抓到”与“它不存在”；
 - 影响因子、赞同数、star 数不作为单条科学结论的证据。
 
