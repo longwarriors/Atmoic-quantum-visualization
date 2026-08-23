@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from quviz.docs.bibliography import parse_bibtex, parse_bibtex_file
-from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
+from quviz.docs.scan import cited_keys_in_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,15 +29,9 @@ def test_duplicate_keys_are_rejected() -> None:
 
 
 def _cited_keys() -> set[str]:
-    """Scan docs with the same parser the build uses, so the two cannot drift."""
+    """Scan docs with the same prose-only scanner the index script uses."""
 
-    keys: set[str] = set()
-    for path in (ROOT / "docs").rglob("*.md"):
-        if path == ROOT / "docs" / "references" / "index.md":
-            continue
-        for match in GROUP_PATTERN.finditer(path.read_text(encoding="utf-8")):
-            keys.update(ref.key for ref in parse_citation_group(match.group(1)))
-    return keys
+    return cited_keys_in_tree(ROOT / "docs", exclude=(ROOT / "docs" / "references" / "index.md",))
 
 
 def test_all_documentation_citation_keys_exist() -> None:

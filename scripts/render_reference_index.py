@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from quviz.docs.bibliography import BibEntry, Bibliography, Person, parse_bibtex_file
-from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
+from quviz.docs.scan import cited_keys_in_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 BIB_PATH = ROOT / "references.bib"
@@ -108,19 +108,13 @@ def render(bibliography: Bibliography) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cited_keys() -> set[str]:
-    keys: set[str] = set()
-    for path in (ROOT / "docs").rglob("*.md"):
-        if path == OUTPUT_PATH:
-            continue
-        text = path.read_text(encoding="utf-8")
-        for match in GROUP_PATTERN.finditer(text):
-            try:
-                references = parse_citation_group(match.group(1))
-            except ValueError as exc:
-                raise SystemExit(f"{path.relative_to(ROOT)}: {exc}") from exc
-            keys.update(reference.key for reference in references)
-    return keys
+def cited_keys(docs_dir: Path = ROOT / "docs", output_path: Path = OUTPUT_PATH) -> set[str]:
+    """Keys cited in documentation prose -- code blocks and comments excluded."""
+
+    try:
+        return cited_keys_in_tree(docs_dir, exclude=(output_path,))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
@@ -138,10 +132,15 @@ def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    # Overridable so the gate itself can be tested against a throwaway tree.
+    parser.add_argument("--bib", type=Path, default=BIB_PATH)
+    parser.add_argument("--docs", type=Path, default=ROOT / "docs")
+    parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
     args = parser.parse_args()
+    output_path: Path = args.output
 
-    bibliography = parse_bibtex_file(BIB_PATH)
-    used = cited_keys()
+    bibliography = parse_bibtex_file(args.bib)
+    used = cited_keys(args.docs, output_path)
     missing = used - set(bibliography.entries)
     if missing:
         raise SystemExit(f"unknown documentation citation keys: {sorted(missing)}")
@@ -154,14 +153,14 @@ def main() -> int:
 
     rendered = render(bibliography)
     if args.check:
-        current = OUTPUT_PATH.read_text(encoding="utf-8") if OUTPUT_PATH.exists() else ""
+        current = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
         if current != rendered:
             raise SystemExit("reference index is stale; run scripts/render_reference_index.py")
         return 0
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(rendered, encoding="utf-8")
-    print(OUTPUT_PATH)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(rendered, encoding="utf-8")
+    print(output_path)
     return 0
 
 
