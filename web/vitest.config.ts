@@ -7,6 +7,10 @@ export default defineConfig({
     // so a spec/__tests__ file is type-checked with the tests and kept out of
     // the production build.
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'src/**/__tests__/**/*.{ts,tsx}'],
+    // A committed `.only` silently narrows the suite to one case. Without this
+    // the run still reports "passed" and the only signal is the coverage gate
+    // tripping as a side effect, which a small spec can dodge. Refuse outright.
+    allowOnly: false,
     coverage: {
       provider: 'v8',
       // Coverage scope, stated exactly so the gate cannot quietly shrink:
