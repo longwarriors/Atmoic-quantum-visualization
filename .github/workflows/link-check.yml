@@ -1,0 +1,29 @@
+name: Link check
+
+# Separate from CI on purpose. Citation rot is real -- a cited host was already
+# dead for months while every commit-time gate stayed green -- but it is not
+# caused by the commit under review, so it must not block a pull request.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Weekly, Monday 04:17 UTC. Off the hour to avoid the scheduler stampede.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Sync
+        run: uv sync --locked --all-groups
+      - name: Resolve every cited URL and DOI
+        run: uv run python scripts/check_links.py --include-doi

@@ -12,13 +12,13 @@
 | Evanescence | B（源码）/C（物理权威） | 工程参考优秀；作者明确把绝对精度列为非目标；拒绝采样上界有风险 | Rust/WASM、点云、交互与性能参考 |
 | PRL 110, 213001 | A | 论文有效；用户 URL 的 `IF` 后缀错误 | 实验前向模型与节点映射案例 |
 | Maksić 1986 | A | 书章节/论文元数据有效，系统讨论对称性与杂化 | 化学解释层；系数仍由 QuViz 推导和测试 |
-| Jacobs 点群表 | B（参考数据） | 历史上常用，但当前站点访问不稳定；表格导入必须机器验证 | 点群数据种子，不作不可变真值 |
+| Jacobs 点群表 | B（参考数据） | 原域名已随大学更名退役；资源迁至 constructor.university 并仍在维护；表格导入必须机器验证 | 点群数据种子，不作不可变真值 |
 | `atomic_orbitals.py` | C（动画源码） | 叙事有价值；3p 与 4d 硬编码多项式错误 | 分镜与术语参考，禁止复制公式 |
 | `orbital_plot` | C/B（教程代码） | 通式与基本绘制流程可用；坐标、原点和阈值处理需修正 | 教程对照与反例 |
-| 两段 YouTube 视频 | C | 标题、频道与日期已核；适合视觉/概率流动机 | 视觉语言与概念导入 |
+| 两段 YouTube 视频 | C | 标题、频道与日期已核；两者均有英文字幕（含人工轨） | 视觉语言与概念导入 |
 | Wikipedia probability current | D | 便于查术语，但属于三级来源 | 导航性链接；核心公式引教材 |
 | TDS 有限差分文章 | C | stencil 向量化思路成立；“300 倍”仅是文中环境实测 | 优化候选，不作项目性能承诺 |
-| 知乎分子轨道回答 | D | 当前作者显示为“知乎用户”；强调计算与作图的学习方法 | 项目动机，不作公式信源 |
+| 知乎分子轨道回答 | D | 当前作者显示为“知乎用户”；页面不显示该回答自身日期；强调计算与作图的学习方法 | 项目动机，不作公式信源 |
 | Claude Fable 项目审计 | 审计输入 | 缺陷清单有价值；不能替代仓库复现与原始信源 | 当前状态的复核起点 |
 
 ## 1. 氢原子推导 PDF 与配套代码
@@ -49,16 +49,24 @@ Evanescence 的通式计算、Rust/WASM 架构、点云和补充剖面很值得�
 
 Maksić 的资料确实讨论对称性如何约束杂化与定向成键，但杂化仍是解释模型和基选择。$T_d$ 下 $A_1\oplus T_2$ 的分解可支撑 $sp^3$ 构造；具体矩阵还必须检查正交性、方向夹角和相位/轴约定 [@maksic1986hybridization]。
 
-Jacobs 特征标表可作为数据输入，但不能人工复制后直接信任。至少自动检查群阶、不可约表示维数平方和、行列正交和类顺序；特征标表文献本身也存在过长期传播的表头错误案例 [@jacobs-character-tables; @shirts2007-character-tables]。
+Gelessus 特征标表可作为数据输入，但不能人工复制后直接信任。至少自动检查群阶、不可约表示维数平方和、行列正交和类顺序；特征标表文献本身也存在过长期传播的表头错误案例 [@jacobs-character-tables; @shirts2007-character-tables]。
+
+!!! warning "原引用域名已经失效"
+
+    2026-08-23 复核：`symmetry.jacobs-university.de` 的 http 与 https 两种 scheme 均无法完成 TCP 连接（`curl` 返回状态码 `000`，不是 4xx/5xx），Chrome 直接显示错误页。原因是 Jacobs University Bremen 于 2022/2023 更名为 Constructor University，整个域退役。
+
+    资源本身**没有消失**：它迁到 `https://symmetry.constructor.university/`，仍在维护，且保留了完全相同的 `/cgi-bin/group.cgi?group=NNN&option=N` URL 结构，因此任何导入脚本只需替换主机名。`references.bib` 已改指新域。
+
+    这条同时暴露一个门禁盲区：当时没有任何检查会发起 HTTP 请求，所以链接死了三年而 CI 始终全绿。为此本条另补一个**不可变**的同行评审引用作为档案锚点 [@gelessus1995-character-tables]。
 
 ## 4. 视频、百科、博客与知乎
 
 - minutephysics 的视频发布于 2021-05-19，适合讨论“原子图像如何编码多种量”；
 - The Science Asylum 的视频发布于 2020-11-08，直接以跃迁和概率流守恒为视觉主题；
-- 两者都没有可导出的字幕，因此只承担教学入口，不承担逐式验证 [@minutephysics2021atoms; @science-asylum2020-orbitals]；
+- 两者都只承担教学入口，不承担逐式验证——理由是信源层级（非同行评审的科普媒体），与字幕无关 [@minutephysics2021atoms; @science-asylum2020-orbitals]；
 - Wikipedia 只保留为概率流术语入口，连续性方程与电流公式引用量子力学教材 [@probability-current-wikipedia; @griffiths2018qm]；
 - TDS 文中约 300 倍来自 2D 热方程、切片向量化和作者自己的 `timeit`；NumPy 官方文档还提醒 sliding-window 方法可能比专用算法慢，必须按问题 benchmark [@mocquin2022-fdm; @numpy-sliding-window]；
-- 知乎回答创建于 2023-12-18、更新于 2025-02-27，当前页面作者匿名化。其“通过编程计算和作图加深理解”的建议与项目愿景一致，但不能替代量子化学教材 [@zhihu-molecular-orbital]。
+- 知乎页面显示的 2016-03-08 是**问题**的创建与编辑时间；该回答本身不显示发布或更新日期（同页其他回答显示日期，说明这是该回答的属性而非页面限制），`year = {2023}` 由 answer id 量级推断。当前页面作者匿名化为“知乎用户”。其“通过编程计算和作图加深理解”的建议与项目愿景一致，但不能替代量子化学教材 [@zhihu-molecular-orbital]。
 
 ## 5. Claude 审计 artifact
 

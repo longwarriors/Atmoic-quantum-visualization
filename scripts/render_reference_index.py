@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
 from quviz.docs.bibliography import BibEntry, Bibliography, Person, parse_bibtex_file
+from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
 
 ROOT = Path(__file__).resolve().parents[1]
 BIB_PATH = ROOT / "references.bib"
 OUTPUT_PATH = ROOT / "docs" / "references" / "index.md"
-CITATION_PATTERN = re.compile(r"(?<!\\)\[@([A-Za-z0-9_:\-]+(?:\s*;\s*@?[A-Za-z0-9_:\-]+)*)\]")
+# Entries that document the build toolchain rather than a scientific claim are
+# not expected to appear in prose.
+TOOLING_KEYWORD = "tooling"
 
 
 def person_name(person: Person) -> str:
@@ -112,9 +114,25 @@ def cited_keys() -> set[str]:
         if path == OUTPUT_PATH:
             continue
         text = path.read_text(encoding="utf-8")
-        for match in CITATION_PATTERN.finditer(text):
-            keys.update(value.strip().lstrip("@") for value in match.group(1).split(";"))
+        for match in GROUP_PATTERN.finditer(text):
+            try:
+                references = parse_citation_group(match.group(1))
+            except ValueError as exc:
+                raise SystemExit(f"{path.relative_to(ROOT)}: {exc}") from exc
+            keys.update(reference.key for reference in references)
     return keys
+
+
+def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
+    """Entries nobody cites, and which therefore nobody reviews."""
+
+    return sorted(
+        key
+        for key, entry in bibliography.entries.items()
+        if key not in used
+        and TOOLING_KEYWORD
+        not in {value.strip() for value in entry.fields.get("keywords", "").split(",")}
+    )
 
 
 def main() -> int:
@@ -123,9 +141,16 @@ def main() -> int:
     args = parser.parse_args()
 
     bibliography = parse_bibtex_file(BIB_PATH)
-    missing = cited_keys() - set(bibliography.entries)
+    used = cited_keys()
+    missing = used - set(bibliography.entries)
     if missing:
         raise SystemExit(f"unknown documentation citation keys: {sorted(missing)}")
+    orphans = orphan_keys(bibliography, used)
+    if orphans:
+        raise SystemExit(
+            f"orphan bibliography entries (cited nowhere, tag `keywords = {{tooling}}` "
+            f"if that is intended): {orphans}"
+        )
 
     rendered = render(bibliography)
     if args.check:
