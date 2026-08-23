@@ -90,10 +90,10 @@
 - ✅ 所有 `[@key]` 存在 — `tests/test_bibliography.py::test_all_documentation_citation_keys_exist`；
 - ✅ 生成索引与 `references.bib` 同步 — `scripts/render_reference_index.py --check`；
 - ✅ Markdown 字节级完整性 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown，下列三者任一出现即变红：(1) 除 LF 外的任何 C0 字节——孤立或成对的 CR、TAB、换页符都算，因为它们正是 `\rho`、`\theta` 这类转义被解释后留下的指纹；(2) 转义损坏留下的孤儿 LaTeX 片段（如行首的 `abla`、`ightarrow`）——片段集合不是固定清单，而是在测试时从语料中每个 `\[abfnrtv]...` 命令推导并与静态种子取并集，另有测试断言语料中每个此类命令都被覆盖；行首片段无条件检查，`/ { = ( + - , ^ _ $` 之后的片段（允许隔着空白，因为编辑器会把残留的 TAB 规范化成空格）只在含 `$` 的行和 `$$ ... $$` 块内检查，且 `\text{…}`、`\mathrm{…}`、`\operatorname{…}` 这类文本命令的花括号参数不算；围栏代码块与行内代码一律不扫描，围栏边界同时重置 `$$` 块状态；1–2 字母片段（`\nu`、`\ne`、`\rho` 留下的 `u`、`e`、`ho`）只在紧跟 `$ } _ ^ \` 或数字且仅在行首时才报，其余情形依赖 (1) 的字节检查兜底；(3) 以 `|` 开头的表格行中 `$...$` 内未转义的 `|`——`\(...\)` 数学与不以 `|` 开头的行不扫描；
-- 🌐 **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since`，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 外任何非 OK 结果都失败；已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败）；两者都需要网络，不在 `make check` / `check.ps1` 内；
+- 🌐 **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since`，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 与 HTTP 429 外任何非 OK 结果都失败——429 是限流，只说明探测被限速，不是对链接本身的判定；已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败）；两者都需要网络，不在 `make check` / `check.ps1` 内；
 - 🕒 引用内容漂移检查（当前没有任何门禁比对页面内容）；
 - ✅ `references.bib` 中未被正文引用的孤儿键 — `tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`；代码块、行内代码与块级 HTML 注释里的引用不算正文，正文行内的注释按 python-markdown 的行为计入（`tests/test_citation_gates.py`）；
-- ✅ `source-audit` 条目的 `commit` 与 URL 中 SHA 一致、tag/branch URL 带 `version`、非代码托管来源带访问日期 — `test_repository_bibliography_has_coherent_source_pins`；
+- ✅ `source-audit` 条目的 `commit` 与 URL 中 SHA 一致、tag/branch URL 带与 URL ref 相等的 `version`、非代码托管来源带访问日期（完整规则见[添加和维护引用](../how-to/cite-sources.md#enforced-rules)） — `test_repository_bibliography_has_coherent_source_pins`；
 - 🧑 Mermaid、数学公式和 API 文档在生成 HTML 中真正渲染，而非只通过构建；
 - 🧑 已知纠错不可被旧教程重新引入；
 - 🧑 引用是否真正支持正文声明；
