@@ -82,8 +82,6 @@ fail_under = 85
 target-version = "py312"
 line-length = 100
 src = ["src", "tests", "scripts"]
-# Nested Claude worktrees live under .claude/worktrees and must not be linted.
-extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
