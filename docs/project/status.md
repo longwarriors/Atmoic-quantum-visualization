@@ -72,13 +72,13 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 ### 本树实测结果
 
-在提交 `fea7e4f` 上从干净工作树依次执行；`& .\scripts\check.ps1` 端到端再跑一遍得到相同数字：
+在提交 `235e715` 上从干净工作树依次执行；`& .\scripts\check.ps1` 端到端再跑一遍得到相同数字：
 
 | 检查 | 当前结果 |
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；95 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 471 passed，0 failed，0 skipped，68 warnings；总覆盖率 91.25%（门槛 85%）——该数字在 `web/dist` 存在时测得，干净克隆上为 91.15%，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `uv run --group docs pytest --cov=quviz` | 496 passed，0 failed，0 skipped，68 warnings；总覆盖率 91.28%（门槛 85%）——该数字在 `web/dist` 存在时测得，干净克隆上为 91.18%，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过（2.1 s；仅上游 mkdocs-material 2.0 提示） |
 | `npm run test` | 3 个文件 109 tests passed（`qvpc.test.ts` 65、`guards.test.ts` 40、`color.test.ts` 4）；`qvpc.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
