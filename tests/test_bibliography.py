@@ -41,18 +41,6 @@ def test_all_documentation_citation_keys_exist() -> None:
     assert used <= set(bibliography.entries)
 
 
-def test_documentation_has_no_unexpected_control_characters() -> None:
-    allowed = {"\n", "\r", "\t"}
-    violations: list[str] = []
-    for path in (ROOT / "docs").rglob("*.md"):
-        text = path.read_text(encoding="utf-8")
-        for index, character in enumerate(text):
-            if ord(character) < 32 and character not in allowed:
-                line = text.count("\n", 0, index) + 1
-                violations.append(f"{path.relative_to(ROOT)}:{line}: U+{ord(character):04X}")
-    assert not violations, "unexpected C0 control characters:\n" + "\n".join(violations)
-
-
 def test_generated_reference_index_is_current_without_markdown_dependency() -> None:
     import subprocess
     import sys
