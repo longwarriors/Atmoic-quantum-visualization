@@ -130,6 +130,24 @@ def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
     )
 
 
+def write_index(path: Path, rendered: str) -> None:
+    """Write the index with LF line endings regardless of platform.
+
+    A text-mode write on Windows would turn every LF into CRLF, and the
+    byte-level docs gate (``tests/test_docs_integrity.py``) rejects any CR.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(rendered)
+
+
+def index_is_current(path: Path, rendered: str) -> bool:
+    """Byte-for-byte comparison, so a CRLF copy of the right text is stale."""
+
+    return path.exists() and path.read_bytes() == rendered.encode("utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -158,13 +176,11 @@ def main() -> int:
 
     rendered = render(bibliography)
     if args.check:
-        current = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
-        if current != rendered:
+        if not index_is_current(output_path, rendered):
             raise SystemExit("reference index is stale; run scripts/render_reference_index.py")
         return 0
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rendered, encoding="utf-8")
+    write_index(output_path, rendered)
     print(output_path)
     return 0
 

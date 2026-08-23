@@ -8,9 +8,11 @@ one.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import markdown  # the docs dependency group; deliberately not importorskip
 import pytest
@@ -21,6 +23,17 @@ from quviz.docs.scan import cited_keys_in, strip_non_prose
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "render_reference_index.py"
+
+
+def _load_script(path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+render_reference_index = _load_script(SCRIPT)
 
 
 def test_docs_dependency_group_is_installed() -> None:
@@ -130,6 +143,32 @@ def test_orphan_check_reports_an_entry_cited_only_inside_a_code_block(tmp_path: 
     assert "orphan" in result.stderr
     assert "only-fenced" in result.stderr
     assert "cited-for-real" not in result.stderr
+
+
+# --- the generated index must be LF on every platform, and --check must see CRLF ---
+
+
+def test_index_is_written_with_lf_line_endings_on_every_platform(tmp_path: Path) -> None:
+    # On Windows a text-mode write turns every LF into CRLF, and the byte-level
+    # docs gate (tests/test_docs_integrity.py) then rejects the generated file.
+    rendered = render_reference_index.render(parse_bibtex_file(ROOT / "references.bib"))
+    path = tmp_path / "references" / "index.md"
+    render_reference_index.write_index(path, rendered)
+    data = path.read_bytes()
+    assert b"\r" not in data
+    assert data == rendered.encode("utf-8")
+
+
+def test_check_reports_a_crlf_copy_of_the_current_index_as_stale(tmp_path: Path) -> None:
+    # Universal-newline reading would make a CRLF index compare equal and pass
+    # --check while the docs gate fails on the same bytes.
+    rendered = render_reference_index.render(parse_bibtex_file(ROOT / "references.bib"))
+    path = tmp_path / "index.md"
+    path.write_bytes(rendered.replace("\n", "\r\n").encode("utf-8"))
+    assert not render_reference_index.index_is_current(path, rendered)
+    path.write_bytes(rendered.encode("utf-8"))
+    assert render_reference_index.index_is_current(path, rendered)
+    assert not render_reference_index.index_is_current(tmp_path / "missing.md", rendered)
 
 
 # --- C2: source-audit entries must be pinned, and the pin must be coherent ---
