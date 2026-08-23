@@ -5,7 +5,7 @@ sync:
 	cd web && npm install
 
 test:
-	uv run pytest --cov=quviz --cov-report=term-missing
+	uv run --group docs pytest --cov=quviz --cov-report=term-missing
 
 lint:
 	uv run ruff check .
