@@ -6,15 +6,28 @@ the revision it audited. The previous gate only asked for a non-empty
 or a commit that contradicted the SHA in the URL passed. This module makes
 the pin mean something:
 
-* an entry tagged ``source-audit`` whose ``url`` is on a code host needs a
-  ``commit`` that is a 7-40 character lowercase hex SHA;
+* every ``source-audit`` ``url`` must carry an ``http://`` or ``https://``
+  scheme -- a scheme-less ``github.com/...`` has no hostname and would
+  otherwise escape every code-host rule below;
+* an entry whose ``url`` is on a code host must name a repository (at least
+  ``/owner/repo``); issue, pull-request, discussion and wiki pages are not
+  source and are rejected;
+* such an entry needs a ``commit`` that is a 7-40 character *lowercase* hex
+  SHA, and a SHA written into the URL must be lowercase too -- an upper-case
+  SHA is rejected rather than silently read as a tag name;
 * if the URL itself names a SHA (``blob``/``tree``/``commit``/``raw``/``src``
   paths), that SHA and the ``commit`` field must agree (one is a prefix of the
   other);
 * if the URL names a tag or branch instead, a ``version`` field is required
-  and it must appear in the ref the URL names;
+  and it must equal the ref the URL names, up to one leading ``v`` on either
+  side (``2.0.1`` matches ``v2.0.1``; ``2.0.1`` does not match ``v2.0.10``);
 * a ``source-audit`` entry that is *not* on a code host must record an ISO
   ``urldate`` (access date) when it has a URL, or a ``doi`` when it has none.
+
+``refs/heads/<branch>`` and ``refs/tags/<tag>`` path forms (GitHub raw and
+blob URLs since 2024) name ``<branch>`` / ``<tag>``. A branch name containing
+``/`` cannot be told apart from the file path that follows it, so only its
+first segment is compared.
 
 The URL-vs-commit consistency check cannot tell a tag from a branch, and it
 cannot verify that the SHA exists upstream: that is what ``git ls-remote`` is
@@ -35,8 +48,14 @@ from quviz.docs.bibliography import BibEntry, keywords
 CODE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "gitee.com")
 RAW_HOSTS = ("githubusercontent.com",)
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,40}$")
+_HEX_ANY_CASE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 URLDATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SOURCE_AUDIT_KEYWORD = "source-audit"
+# Top-level repository paths that are discussion about the code, not the code.
+NON_SOURCE_PATHS = frozenset(
+    {"issues", "pull", "pulls", "pull-requests", "merge_requests", "discussions", "wiki"}
+)
+_REF_MARKERS = frozenset({"blob", "tree", "commit", "commits", "raw", "src"})
 
 RefKind = Literal["sha", "tag", "ref"]
 
@@ -45,26 +64,58 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+def _host_in(host: str, hosts: Iterable[str]) -> bool:
+    """``host`` is one of ``hosts`` or a subdomain of one (never a look-alike)."""
+
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def _segments(url: str) -> list[str]:
+    return [unquote(part) for part in urlsplit(url).path.split("/") if part]
+
+
 def is_code_host(url: str) -> bool:
-    host = _host(url)
-    return any(host == h or host.endswith("." + h) for h in CODE_HOSTS + RAW_HOSTS)
+    return _host_in(_host(url), CODE_HOSTS + RAW_HOSTS)
+
+
+def repository_problem(url: str) -> str | None:
+    """Why a code-host URL is not a repository or something inside one."""
+
+    segments = _segments(url)
+    if len(segments) < 2:
+        return "is not source: it names no repository (expected at least /owner/repo)"
+    rest = segments[2:]
+    if rest and rest[0] == "-":  # GitLab separates owner/repo from the page kind
+        rest = rest[1:]
+    if rest and rest[0] in NON_SOURCE_PATHS:
+        return f"is a {rest[0]} page, not source"
+    return None
+
+
+def _named_ref(segments: list[str]) -> tuple[RefKind, str]:
+    """The ref named by the path segments after a ``blob``/``tree``/raw marker."""
+
+    if len(segments) >= 3 and segments[0] == "refs" and segments[1] in {"heads", "tags"}:
+        return ("tag" if segments[1] == "tags" else "ref"), segments[2]
+    return "ref", segments[0]
 
 
 def url_ref(url: str) -> tuple[RefKind, str] | None:
     """The revision a code-host URL names, if any.
 
-    Returns ``("sha", <hex>)``, ``("tag", <name>)`` for explicit tag paths, or
+    Returns ``("sha", <hex>)`` (case preserved, so the caller can insist on
+    lowercase), ``("tag", <name>)`` for explicit tag paths, or
     ``("ref", <name>)`` when the path names a tag or branch indistinguishably.
+    Only the ambiguous ``ref`` kind is promoted to ``sha`` when the name is
+    hex: an explicit tag called ``20240512`` stays a tag.
     """
 
-    split = urlsplit(url)
-    segments = [unquote(part) for part in split.path.split("/") if part]
-    host = (split.hostname or "").lower()
-    ref: str | None = None
-    kind: RefKind = "ref"
-    if any(host == h or host.endswith("." + h) for h in RAW_HOSTS):
+    segments = _segments(url)
+    found: tuple[RefKind, str] | None = None
+    if _host_in(_host(url), RAW_HOSTS):
         # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
-        ref = segments[2] if len(segments) > 2 else None
+        if len(segments) > 2:
+            found = _named_ref(segments[2:])
     else:
         for index, segment in enumerate(segments):
             following = segments[index + 1 :]
@@ -73,35 +124,42 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
                 and len(following) >= 2
                 and following[0] in {"tag", "download"}
             ):
-                ref, kind = following[1], "tag"
+                found = "tag", following[1]
                 break
             if (
                 segment == "src"
                 and len(following) >= 2
                 and following[0] in {"commit", "branch", "tag"}
             ):
-                ref = following[1]
-                kind = "tag" if following[0] == "tag" else "ref"
+                found = ("tag" if following[0] == "tag" else "ref"), following[1]
                 break
-            if segment in {"blob", "tree", "commit", "commits", "raw", "src"} and following:
-                ref = following[0]
+            if segment in _REF_MARKERS and following:
+                found = _named_ref(following)
                 break
             if segment == "tags" and following:
-                ref, kind = following[0], "tag"
+                found = "tag", following[0]
                 break
-    if ref is None:
+    if found is None:
         return None
-    if COMMIT_PATTERN.match(ref):
-        return "sha", ref
-    return kind, ref
+    kind, name = found
+    if kind == "ref" and _HEX_ANY_CASE.match(name):
+        return "sha", name
+    return kind, name
 
 
 def _sha_consistent(url_sha: str, commit: str) -> bool:
     return url_sha.startswith(commit) or commit.startswith(url_sha)
 
 
+def _normalise_version(value: str) -> str:
+    return value[1:] if value.startswith("v") else value
+
+
 def _validate_code_host(entry: BibEntry, url: str) -> list[str]:
     key = entry.key
+    problem = repository_problem(url)
+    if problem:
+        return [f"{key}: URL {url} {problem}"]
     messages: list[str] = []
     commit = entry.fields.get("commit", "").strip()
     if not commit:
@@ -113,7 +171,9 @@ def _validate_code_host(entry: BibEntry, url: str) -> list[str]:
         return messages
     kind, name = ref
     if kind == "sha":
-        if commit and COMMIT_PATTERN.match(commit) and not _sha_consistent(name, commit):
+        if not COMMIT_PATTERN.match(name):
+            messages.append(f"{key}: URL SHA {name!r} must be lowercase hex")
+        elif commit and COMMIT_PATTERN.match(commit) and not _sha_consistent(name, commit):
             messages.append(f"{key}: URL pins {name} but the commit field says {commit}")
         return messages
     version = entry.fields.get("version", "").strip()
@@ -122,8 +182,8 @@ def _validate_code_host(entry: BibEntry, url: str) -> list[str]:
             f"{key}: URL names the {kind} {name!r} rather than a SHA; a version field "
             "is required alongside commit"
         )
-    elif version not in name:
-        messages.append(f"{key}: version {version!r} does not appear in the URL ref {name!r}")
+    elif _normalise_version(version) != _normalise_version(name):
+        messages.append(f"{key}: version {version!r} does not match the URL {kind} {name!r}")
     return messages
 
 
@@ -152,7 +212,9 @@ def validate_source_pins(entries: Iterable[BibEntry]) -> list[str]:
         if SOURCE_AUDIT_KEYWORD not in keywords(entry):
             continue
         url = entry.fields.get("url", "").strip()
-        if url and is_code_host(url):
+        if url and urlsplit(url).scheme not in {"http", "https"}:
+            messages.append(f"{entry.key}: url {url!r} must start with http:// or https://")
+        elif url and is_code_host(url):
             messages.extend(_validate_code_host(entry, url))
         else:
             messages.extend(_validate_other(entry, url))
