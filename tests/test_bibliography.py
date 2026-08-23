@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from quviz.docs.bibliography import parse_bibtex, parse_bibtex_file
-from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
+from quviz.docs.scan import cited_keys_in_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,15 +29,9 @@ def test_duplicate_keys_are_rejected() -> None:
 
 
 def _cited_keys() -> set[str]:
-    """Scan docs with the same parser the build uses, so the two cannot drift."""
+    """Scan docs with the same prose-only scanner the index script uses."""
 
-    keys: set[str] = set()
-    for path in (ROOT / "docs").rglob("*.md"):
-        if path == ROOT / "docs" / "references" / "index.md":
-            continue
-        for match in GROUP_PATTERN.finditer(path.read_text(encoding="utf-8")):
-            keys.update(ref.key for ref in parse_citation_group(match.group(1)))
-    return keys
+    return cited_keys_in_tree(ROOT / "docs", exclude=(ROOT / "docs" / "references" / "index.md",))
 
 
 def test_all_documentation_citation_keys_exist() -> None:
@@ -89,15 +83,7 @@ def test_every_bibliography_entry_is_cited_or_marked_tooling() -> None:
     assert not orphans, f"bibliography entries nobody cites: {orphans}"
 
 
-def test_audited_source_code_entries_are_pinned_to_a_revision() -> None:
-    # source-policy.md requires source-code audits to record a commit. Without
-    # a pin the audited bytes and the cited URL can silently diverge.
-    bibliography = parse_bibtex_file(ROOT / "references.bib")
-    unpinned = [
-        key
-        for key, entry in bibliography.entries.items()
-        if "source-audit" in {v.strip() for v in entry.fields.get("keywords", "").split(",")}
-        and "github.com" in entry.fields.get("url", "")
-        and not (entry.fields.get("commit") or entry.fields.get("version"))
-    ]
-    assert not unpinned, f"audited GitHub sources without a commit/version pin: {unpinned}"
+# Commit-pin coherence for source-audit entries lives in
+# tests/test_citation_gates.py (quviz.docs.pins.validate_source_pins); the
+# github-only "non-empty commit or version" check that used to sit here let
+# ``commit = {latest}`` through.

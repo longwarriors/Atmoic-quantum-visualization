@@ -5,7 +5,7 @@ sync:
 	cd web && npm install
 
 test:
-	uv run pytest --cov=quviz --cov-report=term-missing
+	uv run --group docs pytest --cov=quviz --cov-report=term-missing
 
 lint:
 	uv run ruff check .
@@ -37,6 +37,7 @@ refs:
 
 check: lint typecheck test docs web-test web-build
 
-# Network-dependent, so deliberately outside `check`.
+# Network-dependent, so deliberately outside `check`. BROKEN and SUSPECT fail;
+# `--changed-since <ref>` (used by CI on pull requests) fails on anything not OK.
 links:
-	uv run python scripts/check_links.py --include-doi
+	uv run --group docs python scripts/check_links.py --include-doi

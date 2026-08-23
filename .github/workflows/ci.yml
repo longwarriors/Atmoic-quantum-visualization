@@ -30,11 +30,37 @@ jobs:
           uv run ruff format --check .
           uv run mypy
       - name: Test
-        run: uv run pytest --cov=quviz --cov-report=term-missing
+        run: uv run --group docs pytest --cov=quviz --cov-report=term-missing
       - name: Build documentation
         run: |
           uv run --group docs python scripts/render_reference_index.py --check
           uv run --group docs mkdocs build --strict
+
+  changed-links:
+    # Pull requests only: a link being *introduced* has to be shown to resolve,
+    # and every non-OK verdict fails. Rot in links that already exist is the
+    # weekly link-check workflow's job, not the author's.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # --changed-since diffs against the merge base with the base branch.
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Sync
+        run: |
+          if [ -f uv.lock ]; then
+            uv sync --locked --all-groups
+          else
+            uv sync --all-groups
+          fi
+      - name: Probe links added in this pull request
+        run: uv run --group docs python scripts/check_links.py --changed-since origin/${{ github.base_ref }}
 
   web:
     runs-on: ubuntu-latest
