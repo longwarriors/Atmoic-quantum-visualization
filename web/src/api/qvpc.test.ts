@@ -8,6 +8,7 @@ import {
   HEADER_BYTES,
   SUPPORTED_VERSION,
   parsePointCloud,
+  readFiniteHeader,
 } from './qvpc'
 
 const goldenUrl = new URL('../../../tests/fixtures/qvpc_golden.bin', import.meta.url)
@@ -99,11 +100,47 @@ describe('parsePointCloud, against the Python-generated golden vector', () => {
     expect(result.extentBohr).toBeCloseTo(100, 9)
   })
 
-  it('reports NaN rather than throwing when the headers are absent', () => {
-    const bare = new Headers()
-    const result = parsePointCloud(goldenBuffer(), bare)
-    expect(Number.isNaN(result.radialMass)).toBe(true)
-    expect(Number.isNaN(result.extentBohr)).toBe(true)
+  it('throws rather than reporting NaN when the metadata headers are absent', () => {
+    // Number(undefined ?? 'NaN') used to flow NaN into the Inspector and the
+    // fog scale; a missing header is a broken response, not a value.
+    expect(() => parsePointCloud(goldenBuffer(), new Headers())).toThrow(
+      /X-QuViz-Radial-Mass.*missing/i,
+    )
+  })
+
+  it('throws rather than reporting 0 when a metadata header is empty', () => {
+    // Number('') === 0 would silently report a 0% radial mass.
+    expect(() =>
+      parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Extent-Bohr': '' })),
+    ).toThrow(/X-QuViz-Extent-Bohr.*empty/i)
+  })
+})
+
+describe('readFiniteHeader', () => {
+  it('parses a finite decimal header', () => {
+    const given = new Headers({ 'X-QuViz-Radial-Mass': '0.93' })
+    expect(readFiniteHeader(given, 'X-QuViz-Radial-Mass')).toBe(0.93)
+  })
+
+  it('throws a descriptive error when the header is missing', () => {
+    expect(() => readFiniteHeader(new Headers(), 'X-QuViz-Radial-Mass')).toThrow(
+      /X-QuViz-Radial-Mass.*missing/i,
+    )
+  })
+
+  it('throws when the header is empty instead of coercing it to 0', () => {
+    expect(() =>
+      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': '' }), 'X-QuViz-Radial-Mass'),
+    ).toThrow(/X-QuViz-Radial-Mass.*empty/i)
+  })
+
+  it('throws when the header is not a finite number', () => {
+    expect(() =>
+      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': 'abc' }), 'X-QuViz-Radial-Mass'),
+    ).toThrow(/X-QuViz-Radial-Mass.*"abc".*not a finite number/i)
+    expect(() =>
+      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': 'Infinity' }), 'X-QuViz-Radial-Mass'),
+    ).toThrow(/not a finite number/i)
   })
 })
 
