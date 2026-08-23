@@ -4,6 +4,9 @@ sync:
 	uv sync --all-groups
 	cd web && npm install
 
+# --group docs is load-bearing: the citation gates import python-markdown
+# plainly and error without it. tests/conftest.py fails the session on any
+# skipped test (QUVIZ_ALLOW_SKIPS=1 overrides), so no gate can drop silently.
 test:
 	uv run --group docs pytest --cov=quviz --cov-report=term-missing
 
@@ -38,6 +41,7 @@ refs:
 check: lint typecheck test docs web-test web-build
 
 # Network-dependent, so deliberately outside `check`. BROKEN and SUSPECT fail;
-# `--changed-since <ref>` (used by CI on pull requests) fails on anything not OK.
+# `--changed-since <ref>` (CI runs it on every push and pull request) fails on
+# anything not OK except BLOCKED on a known bot-filter host (cite those by DOI).
 links:
 	uv run --group docs python scripts/check_links.py --include-doi

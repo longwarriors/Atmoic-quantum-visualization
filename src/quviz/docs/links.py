@@ -2,21 +2,31 @@
 
 ``scripts/check_links.py`` does the HTTP work; everything that can be unit
 tested without a socket -- pulling URLs out of a diff, turning a status code
-into a verdict, deciding which verdicts fail a run, rendering a summary --
+into a verdict, deciding which results fail a run, rendering a summary --
 lives here so pytest can cover it offline.
+
+Some publishers and community sites (``BOT_HOSTS``) answer 401/403 to every
+automated client. A link there is reported BLOCKED, never BROKEN, and BLOCKED
+is tolerated in both modes for those hosts: the weekly sweep because a bot
+filter is not evidence of rot, the pull-request gate because failing on it
+would only teach people to ignore the gate. The price is that such a link is
+never actually verified, so sources on those hosts should be cited by DOI --
+the DOI is checked against the doi.org handle API, which does answer.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping, Sequence
 
-# A URL ends at whitespace or a Markdown/BibTeX delimiter; one level of
-# balanced parentheses is allowed because DOIs such as
-# ``10.1016/0021-9991(82)90091-2`` contain them.
-_URL_PATTERN = re.compile(r"""https?://(?:[^\s<>"'()\[\]{}`]|\([^\s()]*\))+""")
+# A URL ends at whitespace, a non-ASCII character (in Chinese prose the
+# ideographic full stop U+3002 or comma U+FF0C directly follows a bare URL) or
+# a Markdown/BibTeX delimiter; one level of balanced parentheses is allowed
+# because DOIs such as ``10.1016/0021-9991(82)90091-2`` contain them.
+_URL_PATTERN = re.compile(r"""https?://(?:(?![<>"'()\[\]{}`])[!-~]|\([^\s()]*\))+""")
 _DOI_FIELD = re.compile(r"""^\s*doi\s*=\s*["{]\s*([^"}]+?)\s*["}]\s*,?\s*$""", re.IGNORECASE)
-_TRAILING_PUNCTUATION = ".,;:!?"
+# Sentence punctuation and emphasis markers that end up glued to a bare URL.
+_TRAILING_PUNCTUATION = ".,;:!?*_"
 
 # Hosts known to reject automated clients. A 403 from these is not a dead link.
 BOT_HOSTS = (
@@ -32,9 +42,12 @@ BOT_HOSTS = (
 BROKEN_STATUSES = {404, 410}
 VERDICTS = ("BROKEN", "SUSPECT", "BLOCKED", "OK")
 
+# One probed link: (bibliography key or "docs", what the probe returned, URL).
+Row = tuple[str, str, str]
+
 
 def extract_urls(text: str) -> set[str]:
-    """Every ``http(s)`` URL in ``text``, trailing sentence punctuation removed."""
+    """Every ``http(s)`` URL in ``text``, trailing punctuation/emphasis removed."""
 
     return {match.group(0).rstrip(_TRAILING_PUNCTUATION) for match in _URL_PATTERN.finditer(text)}
 
@@ -83,52 +96,65 @@ def probe_target(url: str) -> str:
     return url
 
 
-def classify(url: str, status: int | None, detail: str) -> str:
+def is_bot_host(url: str) -> bool:
+    return any(host in url for host in BOT_HOSTS)
+
+
+def classify(url: str, status: int | None) -> str:
     """Map a probe result to ``OK`` / ``BLOCKED`` / ``SUSPECT`` / ``BROKEN``."""
 
-    del detail
     if status is not None and 200 <= status < 400:
         return "OK"
     # 429 is rate limiting, never a dead link -- the checker's own concurrency
     # provokes it against GitHub. Reporting it as a failure would be noise.
     if status == 429:
         return "BLOCKED"
-    if any(host in url for host in BOT_HOSTS) and status in {401, 403}:
+    if is_bot_host(url) and status in {401, 403}:
         return "BLOCKED"
     if status is None or status in BROKEN_STATUSES or status >= 500:
         return "BROKEN"
     return "SUSPECT"
 
 
-def failing_verdicts(*, strict: bool) -> frozenset[str]:
-    """Which verdicts make the run exit non-zero.
+def fails_run(verdict: str, url: str, *, strict: bool) -> bool:
+    """Whether one result makes the run exit non-zero.
 
-    The weekly sweep tolerates BLOCKED (a bot filter is not evidence of rot)
-    but fails on SUSPECT, which used to be silently reported as success. The
-    pull-request mode is strict: a link being *added* has to be shown to work.
+    BROKEN and SUSPECT always fail (SUSPECT used to be silently reported as
+    success). BLOCKED is tolerated in the weekly sweep; the pull-request mode
+    (``strict``) tolerates it only for ``BOT_HOSTS``, where a 403 is the
+    host's policy rather than evidence about the link -- elsewhere a link
+    being *added* has to be shown to work.
     """
 
-    if strict:
-        return frozenset({"BROKEN", "SUSPECT", "BLOCKED"})
-    return frozenset({"BROKEN", "SUSPECT"})
+    if verdict in {"BROKEN", "SUSPECT"}:
+        return True
+    if verdict == "BLOCKED":
+        return strict and not is_bot_host(url)
+    return False
 
 
-def step_summary(buckets: Mapping[str, list[str]], *, failing: Collection[str]) -> str:
-    """Markdown for ``$GITHUB_STEP_SUMMARY``: counts, then every failing row."""
+def format_row(row: Row) -> str:
+    key, shown, url = row
+    return f"[{key}] {shown} {url}"
+
+
+def step_summary(buckets: Mapping[str, Sequence[Row]], *, strict: bool) -> str:
+    """Markdown for ``$GITHUB_STEP_SUMMARY``: counts, then every non-OK row."""
 
     lines = [
         "## Citation link check",
         "",
-        f"{len(buckets.get('OK', []))} ok, {len(buckets.get('BLOCKED', []))} blocked-by-bot-filter, "
-        f"{len(buckets.get('SUSPECT', []))} suspect, {len(buckets.get('BROKEN', []))} broken",
+        f"{len(buckets.get('OK', ()))} ok, {len(buckets.get('BLOCKED', ()))} blocked-by-bot-filter, "
+        f"{len(buckets.get('SUSPECT', ()))} suspect, {len(buckets.get('BROKEN', ()))} broken",
         "",
     ]
     for verdict in VERDICTS:
-        rows = buckets.get(verdict, [])
+        rows = buckets.get(verdict, ())
         if verdict == "OK" or not rows:
             continue
-        marker = "fails the run" if verdict in failing else "tolerated"
-        lines.extend([f"### {verdict} ({len(rows)}, {marker})", ""])
-        lines.extend(f"- `{row.strip()}`" for row in rows)
+        lines.extend([f"### {verdict} ({len(rows)})", ""])
+        for row in rows:
+            marker = "fails the run" if fails_run(verdict, row[2], strict=strict) else "tolerated"
+            lines.append(f"- `{format_row(row)}` -- {marker}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

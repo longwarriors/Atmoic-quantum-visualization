@@ -1,13 +1,19 @@
+"""The MkDocs citation extension renders known keys and rejects unknown ones.
+
+``markdown`` is imported plainly, not via ``importorskip``: the docs dependency
+group is mandatory on every runner, and ``tests/conftest.py`` fails the
+session on any skip, so a missing group errors loudly here instead of
+silently dropping the gate.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+from markdown import Markdown
 
-markdown_module = pytest.importorskip("markdown", reason="install the docs dependency group")
-Markdown = markdown_module.Markdown
-
-from quviz.docs.citations import CitationExtension  # noqa: E402
+from quviz.docs.citations import CitationExtension
 
 ROOT = Path(__file__).resolve().parents[1]
 

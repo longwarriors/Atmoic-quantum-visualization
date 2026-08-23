@@ -17,8 +17,10 @@ function Invoke-Checked {
 Invoke-Checked uv run ruff check .
 Invoke-Checked uv run ruff format --check .
 Invoke-Checked uv run mypy
-# --group docs is load-bearing: without it tests/test_references.py skips itself
-# wholesale and the citation gate silently stops running.
+# --group docs is load-bearing: the citation gates import python-markdown
+# plainly, so without it they error. tests/conftest.py additionally fails the
+# session on any skipped test (QUVIZ_ALLOW_SKIPS=1 overrides), so a gate can
+# never be dropped silently.
 Invoke-Checked uv run --group docs pytest --cov=quviz --cov-report=term-missing
 Invoke-Checked uv run --group docs python scripts/render_reference_index.py --check
 Invoke-Checked uv run --group docs mkdocs build --strict

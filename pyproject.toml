@@ -68,7 +68,6 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 source = ["quviz"]
-omit = ["src/quviz/docs/*"]
 
 [tool.coverage.report]
 show_missing = true
