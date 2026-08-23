@@ -18,6 +18,14 @@ cd web && npm run build
 make check
 ```
 
+前端测试可单独运行：
+
+```bash
+cd web && npm run test
+```
+
+它会先用 `tsconfig.test.json` 对测试代码做类型检查，再执行 vitest。
+
 Windows PowerShell：
 
 ```powershell

@@ -1,4 +1,4 @@
-.PHONY: sync test lint typecheck docs web web-build api dev refs check
+.PHONY: sync test lint typecheck docs web web-test web-build api dev refs check links
 
 sync:
 	uv sync --all-groups
@@ -14,12 +14,17 @@ lint:
 typecheck:
 	uv run mypy
 
+# --check, not a bare run: `make check` must not rewrite a tracked file as a
+# side effect. Use `make refs` to regenerate.
 docs:
-	uv run --group docs python scripts/render_reference_index.py
+	uv run --group docs python scripts/render_reference_index.py --check
 	uv run --group docs mkdocs build --strict
 
 web:
 	cd web && npm run dev
+
+web-test:
+	cd web && npm run test
 
 web-build:
 	cd web && npm run build
@@ -30,4 +35,8 @@ api:
 refs:
 	uv run --group docs python scripts/render_reference_index.py
 
-check: lint typecheck test docs web-build
+check: lint typecheck test docs web-test web-build
+
+# Network-dependent, so deliberately outside `check`.
+links:
+	uv run python scripts/check_links.py --include-doi

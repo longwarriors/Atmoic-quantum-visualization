@@ -171,3 +171,26 @@ def test_isosurface_normals_point_away_from_higher_density(
 
     outward = density_at(vertices + step * normals) < density_at(vertices - step * normals)
     assert float(np.mean(outward)) > 0.99
+
+
+def test_encoder_reproduces_the_committed_qvpc_golden_bytes() -> None:
+    # Half of a cross-language contract: web/src/api/client.test.ts decodes the
+    # same file. Changing POINT_CLOUD_STRIDE or the header layout on one side
+    # alone must break both, so the wire format cannot drift silently.
+    import json
+    from pathlib import Path
+
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    spec = json.loads((fixtures / "qvpc_golden.json").read_text(encoding="utf-8"))
+    cloud = OrbitalPointCloud(
+        positions=np.asarray(spec["positions"], dtype=np.float32),
+        intensity=np.asarray(spec["intensity"], dtype=np.float32),
+        phase=np.asarray(spec["phase"], dtype=np.float32),
+        radial_mass_captured=1.0,
+        extent_bohr=100.0,
+    )
+
+    assert encode_point_cloud(cloud) == (fixtures / "qvpc_golden.bin").read_bytes()
+    assert spec["stride"] == POINT_CLOUD_STRIDE
+    assert spec["version"] == POINT_CLOUD_VERSION
+    assert spec["magic"].encode() == POINT_CLOUD_MAGIC

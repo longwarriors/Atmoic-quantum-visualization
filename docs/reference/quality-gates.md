@@ -69,12 +69,18 @@
 
 ## 前端
 
-- ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；
-- 🕒 binary parser 单测；
+- ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
+- ✅ binary parser 单测 — `web/src/api/client.test.ts`，含**跨语言黄金向量**（见下）；
+- ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
 - 🕒 geometry/material 正确 dispose；
-- 🕒 相位色轮周期连续；
 - 🕒 截图视觉回归仅作为辅助；
 - 🧑 UI 不能隐藏关键警告和单位。
+
+!!! info "QVPC/1 的跨语言黄金向量"
+
+    `tests/fixtures/qvpc_golden.bin` 是同一份字节流的**双向契约**：Python 侧断言编码器逐字节复现它，TypeScript 侧断言解析器能解出 `qvpc_golden.json` 里的值。
+
+    单方面修改 wire format 会同时打破两侧——已验证：把 `POINT_CLOUD_STRIDE` 从 5 改成 6，Python 立刻 2 个测试变红；即使有人重新生成黄金字节把 Python 弄绿，TypeScript 仍有 5 个测试变红。
 
 ## 文档与引用
 
