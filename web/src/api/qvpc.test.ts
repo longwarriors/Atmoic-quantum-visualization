@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EXPECTED_MAGIC,
   EXPECTED_STRIDE,
+  type HeaderRange,
   HEADER_BYTES,
   SUPPORTED_VERSION,
   parsePointCloud,
@@ -114,33 +115,101 @@ describe('parsePointCloud, against the Python-generated golden vector', () => {
       parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Extent-Bohr': '' })),
     ).toThrow(/X-QuViz-Extent-Bohr.*empty/i)
   })
+
+  // The Python side emits f"{radial_mass:.9f}" and f"{extent:.6f}"; anything
+  // Number() would accept beyond that is a broken response, not a value.
+  it.each(['1e-400', '0x10', '-0.5', '1.5'])(
+    'rejects X-QuViz-Radial-Mass %j, which is not a plain decimal in [0, 1]',
+    (raw) => {
+      expect(() =>
+        parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Radial-Mass': raw })),
+      ).toThrow(/X-QuViz-Radial-Mass/)
+    },
+  )
+
+  it.each(['1e-400', '0x10', '0', '-0.5', '0.000000'])(
+    'rejects X-QuViz-Extent-Bohr %j, which is not a plain decimal > 0',
+    (raw) => {
+      expect(() =>
+        parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Extent-Bohr': raw })),
+      ).toThrow(/X-QuViz-Extent-Bohr/)
+    },
+  )
+
+  it('accepts the closed radial-mass boundaries 0 and 1', () => {
+    expect(
+      parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Radial-Mass': '0.000000000' })).radialMass,
+    ).toBe(0)
+    expect(
+      parsePointCloud(goldenBuffer(), headers({ 'X-QuViz-Radial-Mass': '1.000000000' })).radialMass,
+    ).toBe(1)
+  })
 })
 
 describe('readFiniteHeader', () => {
-  it('parses a finite decimal header', () => {
-    const given = new Headers({ 'X-QuViz-Radial-Mass': '0.93' })
-    expect(readFiniteHeader(given, 'X-QuViz-Radial-Mass')).toBe(0.93)
+  const NAME = 'X-QuViz-Radial-Mass'
+  const unitInterval: HeaderRange = { min: 0, max: 1 }
+  const positive: HeaderRange = { min: 0, exclusiveMin: true }
+  const read = (raw: string, range: HeaderRange = unitInterval) =>
+    readFiniteHeader(new Headers({ [NAME]: raw }), NAME, range)
+
+  it.each([
+    ['0.93', 0.93],
+    ['0.999999000', 0.999999],
+    ['0', 0],
+    ['1', 1],
+  ])('parses the plain decimal %s the Python side emits', (raw, expected) => {
+    expect(read(raw)).toBe(expected)
+  })
+
+  it('accepts a negative plain decimal when the range allows it', () => {
+    expect(read('-2.5', { min: -10, max: 10 })).toBe(-2.5)
   })
 
   it('throws a descriptive error when the header is missing', () => {
-    expect(() => readFiniteHeader(new Headers(), 'X-QuViz-Radial-Mass')).toThrow(
+    expect(() => readFiniteHeader(new Headers(), NAME, unitInterval)).toThrow(
       /X-QuViz-Radial-Mass.*missing/i,
     )
   })
 
   it('throws when the header is empty instead of coercing it to 0', () => {
-    expect(() =>
-      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': '' }), 'X-QuViz-Radial-Mass'),
-    ).toThrow(/X-QuViz-Radial-Mass.*empty/i)
+    expect(() => read('')).toThrow(/X-QuViz-Radial-Mass.*empty/i)
   })
 
-  it('throws when the header is not a finite number', () => {
-    expect(() =>
-      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': 'abc' }), 'X-QuViz-Radial-Mass'),
-    ).toThrow(/X-QuViz-Radial-Mass.*"abc".*not a finite number/i)
-    expect(() =>
-      readFiniteHeader(new Headers({ 'X-QuViz-Radial-Mass': 'Infinity' }), 'X-QuViz-Radial-Mass'),
-    ).toThrow(/not a finite number/i)
+  // Number() is far more permissive than f"{x:.9f}": '1e-400' underflows to
+  // 0, '0x10' is 16, '+0.5' and '.5' both coerce. (Headers itself strips
+  // leading/trailing whitespace, so that case never reaches us.) None of these can
+  // come from the Python encoder, so any of them means a broken response.
+  it.each(['1e-400', '1e3', '0x10', 'abc', 'Infinity', 'NaN', '1 0', '+0.5', '.5', '5.'])(
+    'rejects the non-plain-decimal syntax %j, naming the header',
+    (raw) => {
+      expect(() => read(raw)).toThrow(
+        new RegExp(`X-QuViz-Radial-Mass.*"${raw.replace(/[.+]/g, '\\$&')}".*plain decimal`, 'i'),
+      )
+    },
+  )
+
+  it('throws when a syntactically valid decimal overflows to Infinity', () => {
+    const huge = `1${'0'.repeat(400)}`
+    expect(() => read(huge, positive)).toThrow(/X-QuViz-Radial-Mass.*not a finite number/i)
+  })
+
+  it.each(['-0.5', '1.5', '-0.000000001', '1.000000001'])(
+    'rejects %s as outside the closed range [0, 1], naming the header',
+    (raw) => {
+      expect(() => read(raw)).toThrow(/X-QuViz-Radial-Mass.*outside \[0, 1\]/i)
+    },
+  )
+
+  it('treats a closed range as inclusive at both ends', () => {
+    expect(read('0')).toBe(0)
+    expect(read('1')).toBe(1)
+  })
+
+  it('rejects the lower bound itself when exclusiveMin is set', () => {
+    expect(() => read('0', positive)).toThrow(/X-QuViz-Radial-Mass.*outside \(0, ∞\)/i)
+    expect(() => read('-1', positive)).toThrow(/outside \(0, ∞\)/i)
+    expect(read('0.000001', positive)).toBe(0.000001)
   })
 })
 
