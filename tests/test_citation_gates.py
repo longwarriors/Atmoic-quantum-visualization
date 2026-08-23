@@ -58,9 +58,26 @@ def test_key_only_inside_tilde_fence_is_not_cited() -> None:
     assert cited_keys_in(text) == set()
 
 
-def test_key_only_inside_html_comment_is_not_cited() -> None:
-    text = "Prose <!-- TODO cite [@commented-out] --> continues.\n<!--\n[@multi-line]\n-->\n"
+def test_key_only_inside_a_block_html_comment_is_not_cited() -> None:
+    # A comment that starts a line (up to three spaces in) is a raw HTML block
+    # to python-markdown: stashed before inline patterns run, never a citation.
+    text = (
+        "<!-- TODO cite [@commented-out] -->\n<!--\n[@multi-line]\n-->\n   <!-- [@indented] -->\n"
+    )
     assert cited_keys_in(text) == set()
+
+
+def test_key_inside_an_inline_html_comment_is_cited_because_the_build_sees_it() -> None:
+    # Only *block-level* comments are removed at build time. A comment inside a
+    # prose line stays in the paragraph and the citation pattern (which runs
+    # before the inline-HTML pattern) processes it -- so the scanner must too,
+    # or an unknown key there would fail mkdocs while the scan stays green.
+    text = "Prose <!-- TODO cite [@commented-out] --> continues.\n"
+    assert cited_keys_in(text) == {"commented-out"}
+    tail = "<!-- block --> tail [@after-comment]\n"
+    assert cited_keys_in(tail) == {"after-comment"}
+    unclosed = "<!-- never closed [@literal]\nmore\n"
+    assert cited_keys_in(unclosed) == {"literal"}
 
 
 def test_key_only_inside_inline_code_is_not_cited() -> None:
@@ -76,7 +93,9 @@ def test_key_in_prose_is_cited() -> None:
 def test_prose_citation_survives_surrounding_non_prose() -> None:
     text = (
         "```\n[@fenced]\n```\n"
-        "Real claim [@real] here. <!-- [@hidden] --> And `[@code]`.\n"
+        "<!-- [@hidden] -->\n"
+        "Real claim [@real] here. And `[@code]`.\n"
+        "<pre>\n[@raw]\n</pre>\n"
         "~~~python\n[@fenced2]\n~~~\n"
     )
     assert cited_keys_in(text) == {"real"}
@@ -97,14 +116,164 @@ def test_fence_indented_inside_an_admonition_is_stripped() -> None:
     assert cited_keys_in(text) == {"kept"}
 
 
-def test_unclosed_fence_swallows_the_rest_of_the_document() -> None:
+def test_unclosed_fence_is_not_a_fence_so_its_lines_stay_prose() -> None:
+    # superfences only stores a fence once it sees the closing run; without
+    # one the opener is ordinary paragraph text and every later citation is
+    # processed at build time. The scanner used to swallow the document here.
     text = "Prose [@before].\n```\n[@inside]\nstill inside [@still]\n"
-    assert cited_keys_in(text) == {"before"}
+    assert cited_keys_in(text) == {"before", "inside", "still"}
+
+
+def test_fence_follows_superfences_closing_and_indentation_rules() -> None:
+    # The closer is the same run as the opener: a longer run does not close.
+    assert cited_keys_in("```\n[@a]\n````\n[@b]\n```\nafter [@c]\n") == {"c"}
+    # A non-blank line indented less than the opener abandons the fence.
+    assert cited_keys_in("  ```\n[@a]\n  ```\nlater [@b]\n") == {"b"}
+    assert cited_keys_in("  ```\n    [@a]\n  ```\nlater [@b]\n") == {"b"}
+    # The abandoning line is consumed, not re-read as an opener.
+    assert cited_keys_in("  ```\n  x\n```\n[@a]\n```\n[@b]\n") == {"a", "b"}
+    # Blockquote markers count as prefix, and tildes never close backticks.
+    assert cited_keys_in("> ```\n> [@a]\n> ```\nlater [@b]\n") == {"b"}
+    assert cited_keys_in("~~~\n[@a]\n```\nlater [@b]\n") == {"a", "b"}
 
 
 def test_strip_non_prose_preserves_line_count() -> None:
-    text = "a\n```\nb\nc\n```\nd <!-- x\ny --> e `f`\n"
+    text = "a\n```\nb\nc\n```\n<!-- x\ny -->\nd <!-- x\ny --> e `f`\n<div>\n<p>z</p>\n</div> t\n"
     assert strip_non_prose(text).count("\n") == text.count("\n")
+
+
+# --- (a) raw HTML blocks never reach the inline patterns at build time --------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<pre>\n[@k]\n</pre>\n",
+        "<pre>[@k]</pre>\n",
+        "<script>\nvar a = '[@k]';\n</script>\n",
+        "<style>\n/* [@k] */\n</style>\n",
+        "<div>\n[@k]\n</div>\n",
+        '<div markdown="0">\n[@k]\n</div>\n',
+        "<details>\n<summary>x</summary>\n[@k]\n</details>\n",
+        "<p>\n[@k]\n</p>\n",
+        "   <div>\n[@k]\n</div>\n",
+        "<DIV>\n[@k]\n</DIV>\n",
+        '<div\n  class="x">\n[@k]\n</div>\n',
+        "<div>\n<div>\n</div>\n[@k]\n</div>\n",
+        "<pre>\n</div>\n[@k]\n</pre>\n",
+        "<table><tr><td>[@k]</td></tr></table>\n",
+        "para\n<pre>\n[@k]\n</pre>\n",
+        "<div>\n[@k]\n\nmore\n",
+    ],
+)
+def test_key_inside_a_block_level_html_element_is_not_cited(text: str) -> None:
+    assert cited_keys_in(text) == set()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<div markdown="1">\n[@k]\n</div>\n',
+        "<div markdown>\n[@k]\n</div>\n",
+        '<div markdown="block">\n[@k]\n</div>\n',
+        "<span>[@k]</span>\n",
+        "text <div>[@k]</div>\n",
+        "<div>x</div> tail [@k]\n",
+        "<div>x</div>\n\n[@k]\n",
+        "<div/>\n[@k]\n",
+        "<hr>\n[@k]\n",
+        "```\n<div>\n```\n[@k]\n",
+        "- <div>\n  [@k]\n  </div>\n",
+    ],
+)
+def test_key_outside_or_inside_a_markdown_enabled_html_element_is_cited(text: str) -> None:
+    assert cited_keys_in(text) == {"k"}
+
+
+def test_block_level_tag_list_matches_the_installed_python_markdown() -> None:
+    from markdown.util import BLOCK_LEVEL_ELEMENTS
+
+    from quviz.docs.scan import BLOCK_TAGS
+
+    # ``hr`` is void: it cannot contain a citation, so the scanner skips it.
+    assert BLOCK_TAGS | {"hr"} == set(BLOCK_LEVEL_ELEMENTS)
+
+
+# --- (b) a backtick run on a list-marker line is a code span, not a fence ---
+
+
+def test_backticks_on_a_list_marker_line_behave_as_a_code_span_like_the_build() -> None:
+    # superfences only opens a fence after whitespace / blockquote markers, so
+    # ``- ``` `` is paragraph text; python-markdown then pairs the backtick
+    # runs into one multi-line code span. Same outcome as a fence when closed...
+    assert cited_keys_in("- ```\n  [@inside]\n  ```\nlater [@later]\n") == {"later"}
+    assert cited_keys_in("1. ```python\n   [@inside]\n   ```\n") == set()
+    # ...but tildes never pair, and an unclosed run is literal text.
+    assert cited_keys_in("- ~~~\n  [@tilde]\n  ~~~\n") == {"tilde"}
+    assert cited_keys_in("- ```\n  [@inside]\n\nlater [@later]\n") == {"inside", "later"}
+
+
+# --- (c) a code span never crosses a blank line ----------------------------
+
+
+def test_code_span_cannot_swallow_citations_across_a_blank_line() -> None:
+    # python-markdown splits blocks on blank lines before inline patterns run,
+    # so a stray backtick cannot pair with one paragraphs away.
+    text = "A stray ` here.\n\nReal claim [@real].\n\nAnother stray ` there.\n"
+    assert cited_keys_in(text) == {"real"}
+    assert cited_keys_in("a `b\n\nc [@k] d` e\n") == {"k"}
+    assert cited_keys_in("a `b\nc [@k] d` e\n") == set()
+
+
+# --- the scanner agrees with python-markdown + the citation extension --------
+
+
+def _build(text: str, bib_path: Path) -> str:
+    from quviz.docs.citations import CitationExtension
+
+    md = markdown.Markdown(
+        extensions=[
+            "md_in_html",
+            "admonition",
+            "pymdownx.superfences",
+            CitationExtension(bib_file=str(bib_path)),
+        ]
+    )
+    return md.convert(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "cited"),
+    [
+        ("Prose <!-- [@k] --> continues.\n", True),
+        ("<!-- [@k] -->\n", False),
+        ("<pre>\n[@k]\n</pre>\n", False),
+        ('<div markdown="1">\n[@k]\n</div>\n', True),
+        ("<details>\n[@k]\n</details>\n", False),
+        ("a `b\n\nc [@k] d` e\n", True),
+        ("a `b\nc [@k] d` e\n", False),
+        ("- ```\n  [@k]\n  ```\n", False),
+        ("- ~~~\n  [@k]\n  ~~~\n", True),
+        ("- ```\n  x\n\n[@k]\n", True),
+        ("```\nx\n[@k]\n", True),
+        ("```\nx\n````\n[@k]\n", True),
+        ("```\nx\n````\n[@k]\n```\n", False),
+        ("  ```\nx\n  ```\n[@k]\n", True),
+        ("  ```\n    [@k]\n  ```\n", False),
+        ("> ```\n> [@k]\n> ```\n", False),
+        ("!!! note\n\n    ```\n    [@k]\n    ```\n", False),
+        ("<div>x</div> tail [@k]\n", True),
+        ("<div/>\n[@k]\n", True),
+        ("<!-- x --> tail [@k]\n", True),
+        ("<!-- unclosed [@k]\n", True),
+    ],
+)
+def test_scanner_matches_the_markdown_build(tmp_path: Path, text: str, cited: bool) -> None:
+    bib = tmp_path / "b.bib"
+    bib.write_text("@online{k, title={T}, author={A B}, year={2020}}\n", encoding="utf-8")
+    html = _build(text, bib)
+    assert ("quviz-citation" in html) is cited, html
+    assert (cited_keys_in(text) == {"k"}) is cited
 
 
 def test_malformed_citation_in_prose_still_raises() -> None:
