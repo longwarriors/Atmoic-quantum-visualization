@@ -1,7 +1,7 @@
 """Network-free parts of the citation link checker.
 
 ``scripts/check_links.py`` does the HTTP work; everything that can be unit
-tested without a socket -- pulling URLs out of a diff, turning a status code
+tested without a socket -- pulling URLs out of a diff or a bibliography, turning a status code
 into a verdict, deciding which results fail a run, rendering a summary --
 lives here so pytest can cover it offline.
 
@@ -20,14 +20,16 @@ host is SUSPECT and fails either mode.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from collections.abc import Mapping, Sequence
+
+from quviz.docs.bibliography import parse_bibtex
 
 # A URL ends at whitespace, a non-ASCII character (in Chinese prose the
 # ideographic full stop U+3002 or comma U+FF0C directly follows a bare URL) or
 # a Markdown/BibTeX delimiter; one level of balanced parentheses is allowed
 # because DOIs such as ``10.1016/0021-9991(82)90091-2`` contain them.
 _URL_PATTERN = re.compile(r"""https?://(?:(?![<>"'()\[\]{}`])[!-~]|\([^\s()]*\))+""")
-_DOI_FIELD = re.compile(r"""^\s*doi\s*=\s*["{]\s*([^"}]+?)\s*["}]\s*,?\s*$""", re.IGNORECASE)
 # Sentence punctuation and emphasis markers that end up glued to a bare URL.
 _TRAILING_PUNCTUATION = ".,;:!?*_"
 
@@ -56,11 +58,16 @@ def extract_urls(text: str) -> set[str]:
 
 
 def added_urls(diff_text: str) -> set[str]:
-    """URLs and DOIs that a unified diff introduces.
+    """URLs that a unified diff of prose (``docs/*.md``) introduces.
 
     ``+`` lines contribute, ``-`` lines subtract, so a link that merely moved
-    is not re-probed. A BibTeX ``doi = {...}`` field becomes its ``doi.org``
-    resolver URL. File headers (``+++``/``---``) are ignored.
+    is not re-probed. File headers (``+++``/``---``) are ignored.
+
+    This is only for prose. ``references.bib`` is *not* diffed line by line:
+    a BibTeX field can share a line with other fields, sit in a single-line
+    entry or wrap its value onto the next line, so a line regex for
+    ``doi = {...}`` missed DOIs and the gate never probed them. The
+    bibliography goes through ``added_bibliography_targets`` instead.
     """
 
     added: set[str] = set()
@@ -69,16 +76,40 @@ def added_urls(diff_text: str) -> set[str]:
         if line.startswith(("+++", "---")):
             continue
         if line.startswith("+"):
-            bucket = added
+            added |= extract_urls(line[1:])
         elif line.startswith("-"):
-            bucket = removed
-        else:
-            continue
-        body = line[1:]
-        bucket |= extract_urls(body)
-        if doi := _DOI_FIELD.match(body):
-            bucket.add(f"https://doi.org/{doi.group(1)}")
+            removed |= extract_urls(line[1:])
     return added - removed
+
+
+def bibliography_targets(text: str, *, include_doi: bool = True) -> dict[str, str]:
+    """Every URL (and DOI, as its ``doi.org`` resolver URL) cited in BibTeX ``text``.
+
+    Maps each target to the first key citing it. ``text`` is parsed with the
+    project's BibTeX reader, so field layout is irrelevant. Empty text -- the
+    file does not exist at that revision -- has no targets.
+    """
+
+    if not text.strip():
+        return {}
+    targets: dict[str, str] = {}
+    for key, entry in parse_bibtex(text).entries.items():
+        if url := entry.fields.get("url"):
+            targets.setdefault(url, key)
+        if include_doi and (doi := entry.fields.get("doi")):
+            targets.setdefault(f"https://doi.org/{doi}", key)
+    return targets
+
+
+def added_bibliography_targets(base_text: str, head_text: str) -> dict[str, str]:
+    """Targets ``head_text`` cites that ``base_text`` does not, keyed by bib key.
+
+    A target that merely moved between entries, or whose field was reformatted,
+    is not new; a changed DOI or URL value is.
+    """
+
+    base = bibliography_targets(base_text)
+    return {url: key for url, key in bibliography_targets(head_text).items() if url not in base}
 
 
 _DOI_RESOLVER = re.compile(r"^https?://(?:dx\.)?doi\.org/(?!api/handles/)(?P<doi>10\.\S+)$")
@@ -99,8 +130,28 @@ def probe_target(url: str) -> str:
     return url
 
 
+def _hostname(url: str) -> str | None:
+    """The normalised hostname of ``url``: lowercase, no trailing dot, no port/userinfo."""
+
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+    except ValueError:
+        return None
+    return host.rstrip(".").lower() if host else None
+
+
 def is_bot_host(url: str) -> bool:
-    return any(host in url for host in BOT_HOSTS)
+    """Whether ``url`` is served by a host in ``BOT_HOSTS`` or one of its subdomains.
+
+    Only the hostname counts. This used to be a substring test over the whole
+    URL, so a 403 from ``https://evil.example/x?u=doi.org`` or
+    ``https://doi.org.evil.example/`` was BLOCKED and tolerated by the gate.
+    """
+
+    host = _hostname(url)
+    if host is None:
+        return False
+    return any(host == bot or host.endswith("." + bot) for bot in BOT_HOSTS)
 
 
 def classify(url: str, status: int | None) -> str:
