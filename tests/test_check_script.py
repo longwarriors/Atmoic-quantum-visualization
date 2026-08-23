@@ -150,6 +150,39 @@ def test_check_script_runs_every_gate_in_its_own_checkout(tmp_path: Path) -> Non
     assert _same_dir(announced.group(1).strip(), ROOT)
 
 
+def test_check_script_refuses_to_run_without_a_script_root(tmp_path: Path) -> None:
+    """Piped into ``pwsh -Command -`` the script has no ``$PSScriptRoot``.
+
+    In that mode each statement runs on its own, so the failed root
+    resolution did not stop the run: it printed the error, ran no gate, and
+    exited 0 -- certifying nothing. The script must exit non-zero instead.
+    """
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(stubs, "uv", "[stub uv]")
+    _write_stub(stubs, "npm", "[stub npm]")
+    foreign = tmp_path / "other-checkout"
+    foreign.mkdir()
+
+    env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
+    run = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", "-"],
+        cwd=foreign,
+        env=env,
+        input=CHECK_SCRIPT.read_text(encoding="utf-8"),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert run.returncode != 0, run.stdout + run.stderr
+    assert "[stub" not in run.stdout, f"a gate ran without a resolved repo root:\n{run.stdout}"
+
+
 # --- ci.yml changed-links base resolution ----------------------------------
 
 
