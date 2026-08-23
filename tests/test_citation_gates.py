@@ -221,18 +221,29 @@ def test_code_span_cannot_swallow_citations_across_a_blank_line() -> None:
 # --- the scanner agrees with python-markdown + the citation extension --------
 
 
-def _build(text: str, bib_path: Path) -> str:
-    from quviz.docs.citations import CitationExtension
+@pytest.fixture(scope="module")
+def site_markdown() -> tuple[list[str], dict[str, dict[str, object]]]:
+    """The extension list and configs ``mkdocs build`` hands to python-markdown.
 
-    md = markdown.Markdown(
-        extensions=[
-            "md_in_html",
-            "admonition",
-            "pymdownx.superfences",
-            CitationExtension(bib_file=str(bib_path)),
-        ]
-    )
-    return md.convert(text)
+    Read from ``mkdocs.yml`` through mkdocs itself, so the matrix below is
+    judged by the real toolchain (arithmatex, superfences, md_in_html, ...)
+    rather than by a hand-picked subset that could drift from the site.
+    """
+
+    from mkdocs.config import load_config
+
+    config = load_config(str(ROOT / "mkdocs.yml"))
+    return list(config["markdown_extensions"]), dict(config["mdx_configs"] or {})
+
+
+def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str, object]]]) -> str:
+    # mkdocs strips front matter / MultiMarkdown meta before Markdown runs.
+    from mkdocs.utils import meta
+
+    extensions, configs = site
+    configs = {**configs, "quviz.docs.citations": {"bib_file": str(bib_path)}}
+    body, _ = meta.get_data(text)
+    return markdown.Markdown(extensions=extensions, extension_configs=configs).convert(body)
 
 
 @pytest.mark.parametrize(
@@ -259,14 +270,164 @@ def _build(text: str, bib_path: Path) -> str:
         ("<div/>\n[@k]\n", True),
         ("<!-- x --> tail [@k]\n", True),
         ("<!-- unclosed [@k]\n", True),
+        # pymdownx.arithmatex, generic mode with smart dollars: inline math.
+        ("$[@k]$\n", False),
+        ("a $x [@k]$ b\n", False),
+        ("**$[@k]$**\n", False),
+        ("- $[@k]$\n", False),
+        ("# $[@k]$\n", False),
+        ("$ [@k] $\n", True),
+        ("$[@k] $\n", True),
+        ("$x$ [@k] $y$\n", True),
+        ("$x$$y$ [@k]\n", True),
+        ("$x$$[@k]$\n", False),
+        ("$$x$$ $[@k]$\n", False),
+        ("$a\\\\$ [@k]$\n", True),
+        ("$a\\\\\n[@k]$\n", False),
+        ("$x\\$ [@k]$\n", False),
+        ("\\$[@k]$\n", True),
+        ("\\\\$[@k]$\n", False),
+        ("\\\\\\$[@k]$\n", True),
+        ("$a\nb [@k]$\n", False),
+        ("$a\n\nb [@k]$\n", True),
+        ("$a `x` [@k]$\n", True),
+        ("`$` [@k] `$`\n", True),
+        ("\\([@k]\\)\n", False),
+        ("\\(a\\)\\([@k]\\)\n", False),
+        ("\\\\\\([@k]\\)\n", False),
+        ("\\\\([@k]\\)\n", True),
+        ("\\(a\\\\) [@k]\\)\n", False),
+        ("\\(a [@k]\n\n\\)\n", True),
+        # ... and block math, which must be the whole blank-line-delimited block.
+        ("$$\n[@k]\n$$\n", False),
+        ("x\n$$[@k]$$\n", False),
+        ("$$[@k]$$ tail [@k]\n", True),
+        ("$$\n[@k]\n$$ tail [@k]\n", True),
+        ("\\[\n[@k]\n\\]\n", False),
+        ("\\begin{align}\n[@k]\n\\end{align}\n", False),
+        ("\\begin{align}\n[@k]\n\\end{align} tail [@k]\n", True),
+        ("!!! note\n\n    $$\n    [@k]\n    $$\n", False),
+        ("> $$\n> [@k]\n> $$\n", False),
+        ("- $$\n  [@k]\n  $$\n", False),
+        ("text\n    $$\n    [@k]\n    $$\n", True),
+        ("text $a$\n\n[@k]\n", True),
+        # Link reference definitions (python-markdown's ReferenceProcessor).
+        ("[@k]: https://example.org\n", False),
+        ("[@k]: https://example.org 'title'\n", False),
+        ("[@k]:\n  https://example.org\n", False),
+        ("text\n[@k]: https://example.org\nmore\n", False),
+        ("> [@k]: https://example.org\n", False),
+        ("- [@k]: https://example.org\n", False),
+        ("[@k]: see the paper\n", True),
+        ("text\n    [@k]: https://example.org\n", True),
+        # Front matter and MultiMarkdown meta, removed by mkdocs before Markdown.
+        ("---\ntitle: x\nnote: see [@k]\n---\nbody\n", False),
+        ("---\ntitle: x\n---\n[@k]\n", True),
+        ("Title: see [@k]\n\nbody\n", False),
+        ("Title: x\n    more [@k]\n\nbody\n", False),
+        ("Title: x\nbody [@k]\n", True),
     ],
 )
-def test_scanner_matches_the_markdown_build(tmp_path: Path, text: str, cited: bool) -> None:
+def test_scanner_matches_the_markdown_build(
+    tmp_path: Path,
+    site_markdown: tuple[list[str], dict[str, dict[str, object]]],
+    text: str,
+    cited: bool,
+) -> None:
     bib = tmp_path / "b.bib"
     bib.write_text("@online{k, title={T}, author={A B}, year={2020}}\n", encoding="utf-8")
-    html = _build(text, bib)
+    html = _build(text, bib, site_markdown)
     assert ("quviz-citation" in html) is cited, html
     assert (cited_keys_in(text) == {"k"}) is cited
+
+
+# --- (d) math, reference definitions and front matter are not prose ----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Energy $E = [@k]$ here.\n",
+        "Energy \\(E = [@k]\\) here.\n",
+        "$$\nE = [@k]\n$$\n",
+        "\\[\nE = [@k]\n\\]\n",
+        "\\begin{equation}\nE = [@k]\n\\end{equation}\n",
+        "[@k]: https://example.org\n",
+        "---\ntitle: see [@k]\n---\n",
+    ],
+)
+def test_key_only_inside_math_a_reference_definition_or_front_matter_is_not_cited(
+    text: str,
+) -> None:
+    assert cited_keys_in(text) == set()
+
+
+def test_math_and_reference_rules_preserve_line_count() -> None:
+    text = (
+        "---\na: b\n---\n$$\nx\ny\n$$\n[@r]: https://x\n  'title'\n"
+        "a $b\nc$ d \\(e\nf\\) g\n\\begin{align}\nh\n\\end{align}\n"
+    )
+    assert strip_non_prose(text).count("\n") == text.count("\n")
+
+
+def test_block_math_pattern_is_the_installed_arithmatex_one() -> None:
+    from pymdownx.arithmatex import RE_BRACKET_BLOCK, RE_DOLLAR_BLOCK, RE_TEX_BLOCK
+
+    from quviz.docs.scan import _BLOCK_MATH
+
+    alternatives = "|".join([RE_DOLLAR_BLOCK, RE_BRACKET_BLOCK, RE_TEX_BLOCK])
+    assert _BLOCK_MATH.pattern == f"(?s)^(?:{alternatives})[ ]*$"
+
+
+def test_reference_definition_pattern_is_the_installed_python_markdown_one() -> None:
+    from markdown.blockprocessors import ReferenceProcessor
+
+    from quviz.docs.scan import _REFERENCE_DEFINITION_BODY
+
+    assert ReferenceProcessor.RE.pattern == "^" + _REFERENCE_DEFINITION_BODY
+
+
+def test_front_matter_rules_match_mkdocs_meta(tmp_path: Path) -> None:
+    from mkdocs.utils import meta
+
+    from quviz.docs.scan import _strip_front_matter
+
+    for text in (
+        "---\ntitle: x\n---\nbody [@k]\n",
+        "---\ntitle: x\n...\nbody [@k]\n",
+        "---\ntitle: x\n--- \n\nbody [@k]\n",
+        "Title: x\nNote: y\n    more\n\nbody [@k]\n",
+        "Title: x\nbody [@k]\n",
+        "body [@k]\n---\ntitle: x\n---\n",
+        "\n---\ntitle: x\n---\nbody [@k]\n",
+    ):
+        body, _ = meta.get_data(text)
+        assert _strip_front_matter(text).lstrip("\n") == body, text
+
+
+def test_cited_keys_in_tree_walks_what_mkdocs_builds(tmp_path: Path) -> None:
+    from mkdocs.utils import markdown_extensions
+
+    from quviz.docs.scan import MARKDOWN_SUFFIXES
+
+    assert tuple(markdown_extensions) == MARKDOWN_SUFFIXES
+    docs = tmp_path / "docs"
+    files = {
+        "page.md": "[@md]",
+        "page.markdown": "[@markdown]",
+        "deep/page.mkd": "[@mkd]",
+        "page.txt": "[@txt]",
+        ".hidden.md": "[@dotfile]",
+        ".cache/page.md": "[@dotdir]",
+        "deep/.notes/page.md": "[@nested-dotdir]",
+        "templates/page.md": "[@templates]",
+        "deep/templates/page.md": "[@deep-templates]",
+    }
+    for name, text in files.items():
+        path = docs / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
+    assert cited_keys_in_tree(docs) == {"md", "markdown", "mkd", "deep-templates"}
 
 
 def test_malformed_citation_in_prose_still_raises() -> None:

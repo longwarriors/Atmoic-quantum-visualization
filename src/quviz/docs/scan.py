@@ -8,10 +8,11 @@ cites then stayed invisible. This module strips those regions first and is the
 single scanner shared by ``scripts/render_reference_index.py`` and the tests,
 so the two cannot drift.
 
-The yardstick is what python-markdown (with ``pymdownx.superfences`` and
-``md_in_html``, as ``mkdocs.yml`` configures) hands to the inline patterns at
-build time. ``tests/test_citation_gates.py`` builds each case below and checks
-that the scanner agrees:
+The yardstick is what python-markdown, with the extensions ``mkdocs.yml``
+configures (``pymdownx.superfences``, ``md_in_html``, ``pymdownx.arithmatex``
+...), hands to the citation inline pattern at build time.
+``tests/test_citation_gates.py`` builds each case below with that very
+extension list and checks that the scanner agrees:
 
 * **Fenced code** follows superfences, not CommonMark: the closing fence must
   be the same run as the opener (`````` ``` `````` is not closed by
@@ -33,13 +34,39 @@ that the scanner agrees:
   it is validated at build time and must be counted here too.
 * **Code spans** never cross a blank line, because python-markdown splits the
   document into blocks before inline patterns run.
+* **Math** (``pymdownx.arithmatex``, generic mode, smart dollars): inline
+  ``$...$`` and ``\\(...\\)`` are stashed at priority 189.9, before the
+  citation pattern (175) runs, so ``$[@key]$`` is never a citation. The
+  scanner uses arithmatex's own delimiter rules -- a ``$`` opener may not be
+  followed by whitespace nor the closer preceded by it, ``\\$`` is literal, an
+  even run of backslashes before a delimiter is literal backslashes, and the
+  body may contain ``\\.`` escapes but no bare ``$`` -- and, like the build,
+  never lets a pair cross a code span (already stashed at 190) or a blank
+  line. Block math (``$$...$$``, ``\\[...\\]``, ``\\begin{env}...\\end{env}``)
+  is recognised only when it is the *whole* blank-line-delimited block, as
+  arithmatex anchors its block pattern; trailing text on the closing line
+  turns the block back into prose. Blockquote markers, list markers and
+  admonition indentation in front of the block are accepted as prefixes.
+* **Link reference definitions** (``[label]: url "title"``, URL possibly on
+  the next line) are consumed by python-markdown's ``ReferenceProcessor``
+  wherever they start a line, also inside a paragraph, a blockquote or a list
+  item. ``[@key]: https://...`` therefore defines a reference, it does not
+  cite. A line that merely *looks* like one (``[@key]: see the paper``) is
+  prose, exactly as the build treats it.
+* **Front matter** is removed by mkdocs (``mkdocs.utils.meta``) before
+  Markdown ever runs: a leading ``---``/``...``-delimited YAML block, or
+  MultiMarkdown-style ``Key: value`` lines up to the first blank line.
 
 What is *not* stripped, deliberately: four-space indented blocks. In
 mkdocs-material they are admonition bodies far more often than indented code,
 and a citation inside an admonition is real prose. Known, rare divergences:
 a block-level tag later on the line a block just closed on (python-markdown
-opens another raw block there), and a fence whose info string superfences
-would reject.
+opens another raw block there); a fence whose info string superfences would
+reject; a YAML front matter that is not a mapping (mkdocs then leaves it in
+the page as prose, the scanner still removes it); an inline math pair whose
+delimiters sit in different block elements that no blank line separates (a
+heading and the paragraph under it); and a reference definition line that
+setext underlining turns into a heading.
 """
 
 from __future__ import annotations
@@ -88,6 +115,61 @@ _MARKDOWN_ATTR = re.compile(
 # A code span is delimited by backtick runs of equal length (CommonMark 6.1)
 # and, in python-markdown, never spans a blank line.
 _CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n).)+?)(?<!`)\1(?!`)", re.DOTALL)
+# python-markdown replaces a stashed span with an STX...ETX placeholder, and
+# arithmatex's inline bodies exclude those two characters. The scanner leaves
+# the same STX behind where a code span was, so math cannot cross one either.
+_STASH = "\x02"
+
+# pymdownx.arithmatex inline math, generic mode with smart dollars (the
+# mkdocs.yml configuration). Rebuilt from RE_SMART_DOLLAR_INLINE and
+# RE_BRACKET_INLINE: the build first consumes an even run of backslashes in
+# front of a delimiter as literal backslashes, then opens on the delimiter;
+# ``(?<!\\)(?:\\\\)*`` folds those two steps into one match. A body never
+# crosses a blank line because inline patterns run per block element.
+_NOT_BLANK_LINE = r"(?!\n[ \t]*\n)"
+_INLINE_MATH = re.compile(
+    r"(?<!\\)(?:\\\\)*(?:"
+    r"\$(?!\s)(?:\\.|" + _NOT_BLANK_LINE + r"[^\\$\x02\x03])+?(?<!\s)\$"
+    r"|"
+    r"\\\((?:\\[^)]|" + _NOT_BLANK_LINE + r"[^\\\x02\x03])+?\\\)"
+    r")",
+    re.DOTALL,
+)
+# arithmatex's block pattern, verbatim (tests/test_citation_gates.py pins it to
+# the installed pymdownx): it must match the whole block.
+_BLOCK_MATH = re.compile(
+    r"(?s)^(?:"
+    r"(?P<dollar>[$]{2})(?P<math>((?:\\.|[^\\])+?))(?P=dollar)"
+    r"|"
+    r"\\\[(?P<math3>(?:\\[^\]]|[^\\])+?)\\\]"
+    r"|"
+    r"(?P<math2>\\begin\{(?P<env>[a-z]+\*?)\}(?:\\.|[^\\])+?\\end\{(?P=env)\})"
+    r")[ ]*$"
+)
+# What may stand in front of a block before its content is parsed again:
+# blockquote markers, a list marker, admonition / list-continuation indent.
+_BLOCK_PREFIX = re.compile(r"^(?:[ \t]*(?:>|[*+-][ \t]|\d+\.[ \t]))*[ \t]*")
+_LINE_PREFIX = re.compile(r"^[ \t>]*")
+_BLANK_LINE_SPLIT = re.compile(r"(\n[ \t]*\n)")
+
+# python-markdown's ReferenceProcessor.RE, verbatim after the ``^`` (pinned by
+# the tests). Blockquote and list markers may precede it on the first line.
+_REFERENCE_DEFINITION_BODY = (
+    r'[ ]{0,3}\[([^\[\]]*)\]:[ ]*\n?[ ]*([^\s]+)[ ]*(?:\n[ ]*)?((["\'])(.*)\4[ ]*|\((.*)\)[ ]*)?$'
+)
+_REFERENCE_DEFINITION = re.compile(
+    r"^(?:[ ]{0,3}(?:>[ ]?|[*+-][ ]+|\d+\.[ ]+))*" + _REFERENCE_DEFINITION_BODY, re.MULTILINE
+)
+
+# mkdocs.utils.meta: YAML front matter, else MultiMarkdown ``Key: value`` lines.
+_YAML_FRONT_MATTER = re.compile(r"^-{3}[ \t]*\n(.*?\n)(?:\.{3}|-{3})[ \t]*\n", re.DOTALL)
+_META_LINE = re.compile(r"^[ ]{0,3}(?P<key>[A-Za-z0-9_-]+):\s*(?P<value>.*)")
+_META_MORE = re.compile(r"^([ ]{4}|\t)(\s*)(?P<value>.*)")
+
+# The file suffixes mkdocs renders as Markdown (mkdocs.utils.markdown_extensions)
+# and the paths its default ``exclude_docs`` leaves out of the site.
+MARKDOWN_SUFFIXES = (".markdown", ".mdown", ".mkdn", ".mkd", ".md")
+EXCLUDED_ROOT_DIRS = frozenset({"templates"})
 
 
 def _blank_lines(text: str) -> str:
@@ -181,15 +263,57 @@ def _strip_html_blocks(markdown: str) -> str:
     return "".join(out)
 
 
-def strip_non_prose(markdown: str) -> str:
-    """Blank out fenced code, raw HTML blocks, block comments and code spans.
+def _strip_front_matter(markdown: str) -> str:
+    """Blank what ``mkdocs.utils.meta.get_data`` removes before Markdown runs."""
 
-    Newline count is preserved so callers can still report line numbers.
+    match = _YAML_FRONT_MATTER.match(markdown)
+    if match is not None:
+        return _blank_lines(match.group(0)) + markdown[match.end() :]
+    lines = markdown.split("\n")
+    consumed = 0
+    for line in lines:
+        if not line.strip():
+            break
+        if _META_LINE.match(line) is None and not (consumed and _META_MORE.match(line)):
+            break
+        consumed += 1
+    return "\n".join([""] * consumed + lines[consumed:])
+
+
+def _is_block_math(block: str) -> bool:
+    lines = block.strip("\n").split("\n")
+    head = _BLOCK_PREFIX.sub("", lines[0], count=1)
+    rest = [_LINE_PREFIX.sub("", line, count=1) for line in lines[1:]]
+    return _BLOCK_MATH.match("\n".join([head, *rest])) is not None
+
+
+def _strip_block_math(markdown: str) -> str:
+    # ``re.split`` with a capturing group keeps the blank-line separators at
+    # the odd indices, so the blocks can be blanked in place.
+    parts = _BLANK_LINE_SPLIT.split(markdown)
+    for index in range(0, len(parts), 2):
+        if parts[index].strip() and _is_block_math(parts[index]):
+            parts[index] = _blank_lines(parts[index])
+    return "".join(parts)
+
+
+def strip_non_prose(markdown: str) -> str:
+    """Blank out everything the build never hands to the citation pattern.
+
+    Front matter, fenced code, raw HTML blocks and block comments, block and
+    inline math, link reference definitions and code spans -- in the order
+    the toolchain removes them. Newline count is preserved so callers can
+    still report line numbers.
     """
 
-    text = _strip_fences(markdown)
+    text = _strip_front_matter(markdown)
+    text = _strip_fences(text)
     text = _strip_html_blocks(text)
-    return _CODE_SPAN.sub(lambda m: _blank_lines(m.group(0)), text)
+    text = _strip_block_math(text)
+    text = _REFERENCE_DEFINITION.sub(lambda m: _blank_lines(m.group(0)), text)
+    text = _CODE_SPAN.sub(lambda m: _STASH + _blank_lines(m.group(0)), text)
+    text = _INLINE_MATH.sub(lambda m: _blank_lines(m.group(0)), text)
+    return text.replace(_STASH, "")
 
 
 def cited_keys_in(markdown: str) -> set[str]:
@@ -206,14 +330,26 @@ def cited_keys_in(markdown: str) -> set[str]:
 
 
 def cited_keys_in_tree(docs_dir: Path, *, exclude: Collection[Path] = ()) -> set[str]:
-    """Union of :func:`cited_keys_in` over every ``*.md`` under ``docs_dir``.
+    """Union of :func:`cited_keys_in` over every page mkdocs would build.
 
-    A malformed citation is re-raised with the offending path prefixed.
+    Walks the Markdown suffixes mkdocs renders and applies its default
+    ``exclude_docs`` (dot-files and dot-directories anywhere, ``templates/``
+    at the docs root) so a page the site never shows cannot keep an entry
+    looking cited. A malformed citation is re-raised with the offending path
+    prefixed.
     """
 
+    root = Path(docs_dir)
     excluded = {Path(path).resolve() for path in exclude}
     keys: set[str] = set()
-    for path in sorted(Path(docs_dir).rglob("*.md")):
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in MARKDOWN_SUFFIXES:
+            continue
+        parts = path.relative_to(root).parts
+        if any(part.startswith(".") for part in parts):
+            continue
+        if len(parts) > 1 and parts[0] in EXCLUDED_ROOT_DIRS:
+            continue
         if path.resolve() in excluded:
             continue
         try:
