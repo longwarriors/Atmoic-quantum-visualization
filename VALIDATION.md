@@ -1,6 +1,17 @@
 # QuViz validation record
 
-Validation date: 2026-08-22
+> **SUPERSEDED — do not cite these numbers.**
+>
+> This file is a frozen snapshot of the 2026-08-22 delivery environment, which
+> had no package registry. Its counts are stale: it reports 40 tests, 25
+> BibTeX entries and 18 cited keys, whereas the repository now has materially
+> more of each. The live, verified numbers live in
+> [`docs/project/status.md`](docs/project/status.md), which is regenerated from
+> an actual `check.ps1` run.
+>
+> Retained only as a record of what could and could not be checked offline.
+
+Validation date: 2026-08-22 (historical)
 
 ## Checks completed in the delivery environment
 

@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
+from quviz.physics.hydrogenic import cartesian_to_spherical, hydrogenic_wavefunction
+from quviz.physics.observables import probability_density
 from quviz.sampling.point_cloud import OrbitalPointCloud
 from quviz.scene.binary import (
     POINT_CLOUD_MAGIC,
@@ -118,7 +120,9 @@ def test_pz_isosurface_preserves_nodal_plane_and_winding() -> None:
     )
     mean_vertex_normals = np.mean(normals[faces], axis=1)
     alignment = np.einsum("ij,ij->i", face_normals, mean_vertex_normals)
-    assert float(np.mean(alignment)) > 0.0
+    # Fraction, not mean: the unnormalized dot products are area-weighted, so a
+    # positive mean can hide a large minority of inconsistently wound faces.
+    assert float(np.mean(alignment > 0.0)) > 0.99
 
 
 def test_isosurface_rejects_even_or_underresolved_grids() -> None:
@@ -146,3 +150,24 @@ def test_complex_surface_carries_full_phase_cycle() -> None:
     vertex_phase = np.asarray(payload.phase)
     assert float(np.ptp(vertex_phase)) > 5.5
     assert any("color carries wavefunction phase" in item for item in payload.metadata.warnings)
+
+
+@pytest.mark.parametrize(("n", "l", "m", "resolution"), [(1, 0, 0, 49), (2, 1, 0, 49)])
+def test_isosurface_normals_point_away_from_higher_density(
+    n: int, l: int, m: int, resolution: int
+) -> None:
+    # A density superlevel set must expose outward normals, otherwise the mesh
+    # renders back-facing under the front-side material the frontend uses.
+    payload = build_isosurface(n, l, m, resolution=resolution, probability_mass=0.9)
+    vertices = np.asarray(payload.vertices)
+    normals = np.asarray(payload.normals)
+    step = 1e-3
+
+    def density_at(points: np.ndarray) -> np.ndarray:
+        radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
+        return probability_density(
+            hydrogenic_wavefunction(n, l, m, radius, polar, azimuth, basis=BasisKind.REAL)
+        )
+
+    outward = density_at(vertices + step * normals) < density_at(vertices - step * normals)
+    assert float(np.mean(outward)) > 0.99
