@@ -20,19 +20,37 @@ export default defineConfig({
       //              untested module fails the gate instead of being invisible
       //              to it). A single-level glob (`src/api/*.ts`) would let a
       //              nested `src/api/v2/x.ts` slip past unmeasured.
+      //              This includes src/api/client.ts, the HTTP layer: it is
+      //              covered by src/api/client.test.ts with `fetch` stubbed
+      //              (request path and query per call, signal and header
+      //              passthrough, HTTP and network error mapping). The Python
+      //              API tests drive the routes with Starlette's TestClient
+      //              and never execute TypeScript, so they cannot stand in
+      //              for this -- a broken path in client.ts left `npm test`
+      //              green until this file gained its own spec.
       //   Excluded:  src/scene/shaders/** (GLSL string modules: no branches,
       //              verified by the WebGL compiler, not by a statement
-      //              counter); test files themselves; src/api/client.ts (the
-      //              HTTP layer, exercised end-to-end by the Python API tests
-      //              rather than by mocking fetch here); src/api/types.ts
+      //              counter); test files themselves; src/api/types.ts
       //              (type-only, no runtime statements).
       //   Not covered on purpose: React/three components (src/**/*.tsx,
       //              src/state/, src/components/) -- they need a WebGL/DOM
-      //              harness this suite does not provide.
+      //              harness this suite does not provide. Those, together
+      //              with QVPC body validation (NaN / Inf / negative
+      //              intensity samples inside the payload, as opposed to the
+      //              header checks qvpc.ts already makes), are PR-8 items and
+      //              deliberately outside this gate until then.
       //
-      // src/guards.test.ts enforces the rest of this contract: no skipped,
-      // todo, focused or conditionally-run tests in any spec, and no coverage
-      // "ignore" pragmas inside the gated modules.
+      // The rest of the contract is enforced in two places:
+      //   - scripts/assert-no-skips.mjs, run by `npm test` after vitest over
+      //     the JSON report written to coverage/vitest-results.json: fails on
+      //     any test not reported "passed", any spec file missing from the
+      //     report, or any non-zero pending/todo/failed counter. This is the
+      //     authoritative skip gate because it sees what the runner did, not
+      //     how the spec was spelled.
+      //   - src/guards.test.ts: source scan for skip/todo/focus/conditional
+      //     modifiers in any spelling it knows (plain, chained, bracketed,
+      //     destructured, runtime context) and for coverage pragmas of the
+      //     v8 / c8 / istanbul / node:coverage families inside gated modules.
       //
       // Thresholds apply per file, so one well-covered module cannot mask a
       // neglected one behind an aggregate number.
@@ -41,7 +59,6 @@ export default defineConfig({
         'src/scene/shaders/**',
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',
-        'src/api/client.ts',
         'src/api/types.ts',
       ],
       thresholds: { perFile: true, statements: 90, branches: 85, functions: 90, lines: 90 },

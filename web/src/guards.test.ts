@@ -73,9 +73,9 @@ const isTestFile = (path: string): boolean => TEST_FILE.test(path)
  * Mirrors `coverage.include` / `coverage.exclude` in vitest.config.ts: the
  * .ts modules under src/api/ and src/scene/ at any depth, minus the GLSL
  * string modules in src/scene/shaders/ and minus the tests themselves.
- * client.ts and types.ts are excluded from the coverage *thresholds* there but
- * are still scanned here: a pragma in either would be pointless, and pointless
- * pragmas are the kind that get copy-pasted into a gated file next.
+ * types.ts is excluded from the coverage *thresholds* there but is still
+ * scanned here: a pragma in it would be pointless, and pointless pragmas are
+ * the kind that get copy-pasted into a gated file next.
  */
 const isGatedSource = (path: string): boolean =>
   /^(api|scene)\/.*\.ts$/.test(path) && !path.startsWith('scene/shaders/') && !isTestFile(path)
@@ -255,11 +255,13 @@ describe('scan scope', () => {
   it('includes this guard file and every committed spec', () => {
     expect(testFiles).toContain('guards.test.ts')
     expect(testFiles).toContain('api/qvpc.test.ts')
+    expect(testFiles).toContain('api/client.test.ts')
     expect(testFiles).toContain('scene/color.test.ts')
   })
 
   it('covers the coverage-gated modules and nothing that is excluded on purpose', () => {
     expect(gatedSources).toContain('api/qvpc.ts')
+    expect(gatedSources).toContain('api/client.ts')
     expect(gatedSources).toContain('scene/color.ts')
     expect(gatedSources).not.toContain('scene/shaders/orbitalPoints.ts')
     expect(gatedSources).not.toContain('api/qvpc.test.ts')
