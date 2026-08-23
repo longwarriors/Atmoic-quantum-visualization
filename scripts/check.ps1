@@ -23,6 +23,7 @@ Invoke-Checked uv run --group docs mkdocs build --strict
 
 Push-Location (Join-Path $PSScriptRoot '..\web')
 try {
+    Invoke-Checked npm run test
     Invoke-Checked npm run build
 }
 finally {
