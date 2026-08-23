@@ -38,6 +38,7 @@ refs:
 check: lint typecheck test docs web-test web-build
 
 # Network-dependent, so deliberately outside `check`. BROKEN and SUSPECT fail;
-# `--changed-since <ref>` (used by CI on pull requests) fails on anything not OK.
+# `--changed-since <ref>` (CI runs it on every push and pull request) fails on
+# anything not OK except BLOCKED on a known bot-filter host (cite those by DOI).
 links:
 	uv run --group docs python scripts/check_links.py --include-doi

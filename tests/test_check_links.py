@@ -14,7 +14,8 @@ from quviz.docs.links import (
     added_urls,
     classify,
     extract_urls,
-    failing_verdicts,
+    fails_run,
+    format_row,
     probe_target,
     step_summary,
 )
@@ -84,37 +85,76 @@ def test_doi_links_are_probed_through_the_handle_api_not_the_publisher() -> None
     assert probe_target("https://example.org/doi/10.1/x") == "https://example.org/doi/10.1/x"
 
 
+def test_extract_urls_stops_at_cjk_punctuation_and_strips_emphasis() -> None:
+    # The docs are Chinese: a bare URL is routinely followed by the ideographic
+    # full stop (U+3002) or comma (U+FF0C), which used to be glued onto the URL
+    # and probed as part of it.
+    text = (
+        "见 https://example.org/a。然后 https://example.org/b，还有（https://example.org/c）"  # noqa: RUF001
+        "以及 *https://example.org/d* 和 _https://example.org/e_ 与 https://example.org/%E4%B8%AD。"
+    )
+    assert extract_urls(text) == {
+        "https://example.org/a",
+        "https://example.org/b",
+        "https://example.org/c",
+        "https://example.org/d",
+        "https://example.org/e",
+        "https://example.org/%E4%B8%AD",
+    }
+
+
 def test_classify_verdicts() -> None:
-    assert classify("https://example.org", 200, "ok") == "OK"
-    assert classify("https://example.org", 301, "ok") == "OK"
-    assert classify("https://example.org", 404, "http-error") == "BROKEN"
-    assert classify("https://example.org", 503, "http-error") == "BROKEN"
-    assert classify("https://example.org", None, "unreachable: timeout") == "BROKEN"
-    assert classify("https://example.org", 429, "http-error") == "BLOCKED"
-    assert classify("https://www.zhihu.com/q", 403, "http-error") == "BLOCKED"
-    assert classify("https://example.org", 403, "http-error") == "SUSPECT"
+    assert classify("https://example.org", 200) == "OK"
+    assert classify("https://example.org", 301) == "OK"
+    assert classify("https://example.org", 404) == "BROKEN"
+    assert classify("https://example.org", 503) == "BROKEN"
+    assert classify("https://example.org", None) == "BROKEN"
+    assert classify("https://example.org", 429) == "BLOCKED"
+    assert classify("https://www.zhihu.com/q", 403) == "BLOCKED"
+    assert classify("https://example.org", 403) == "SUSPECT"
 
 
 def test_weekly_sweep_fails_on_broken_and_suspect_but_tolerates_blocked() -> None:
-    assert failing_verdicts(strict=False) == {"BROKEN", "SUSPECT"}
+    assert fails_run("BROKEN", "https://example.org", strict=False)
+    assert fails_run("SUSPECT", "https://example.org", strict=False)
+    assert not fails_run("BLOCKED", "https://example.org", strict=False)
+    assert not fails_run("BLOCKED", "https://www.zhihu.com/q", strict=False)
+    assert not fails_run("OK", "https://example.org", strict=False)
 
 
-def test_changed_links_mode_fails_on_anything_that_is_not_ok() -> None:
-    assert failing_verdicts(strict=True) == {"BROKEN", "SUSPECT", "BLOCKED"}
+def test_changed_links_mode_tolerates_blocked_only_for_known_bot_filter_hosts() -> None:
+    # A newly added zhihu/APS/ScienceDirect/ACS/Cambridge link answers 403 to
+    # every bot; failing the pull request on that would just teach people to
+    # ignore the gate. Those sources should be cited by DOI instead.
+    assert not fails_run("BLOCKED", "https://www.zhihu.com/question/1", strict=True)
+    assert not fails_run("BLOCKED", "https://journals.aps.org/prl/abstract/10.1103/x", strict=True)
+    assert not fails_run("BLOCKED", "https://www.sciencedirect.com/science/article/x", strict=True)
+    assert not fails_run("BLOCKED", "https://pubs.acs.org/doi/10.1021/x", strict=True)
+    assert not fails_run("BLOCKED", "https://www.cambridge.org/core/x", strict=True)
+    # Anything else that is not OK still fails a pull request.
+    assert fails_run("BLOCKED", "https://github.com/o/r", strict=True)
+    assert fails_run("SUSPECT", "https://www.zhihu.com/question/1", strict=True)
+    assert fails_run("BROKEN", "https://www.zhihu.com/question/1", strict=True)
+    assert not fails_run("OK", "https://github.com/o/r", strict=True)
 
 
 def test_step_summary_lists_problems_and_counts() -> None:
     buckets = {
-        "OK": ["  [a] 200 https://ok.example"],
-        "BLOCKED": [],
-        "SUSPECT": ["  [b] 403 https://suspect.example"],
-        "BROKEN": ["  [c] 404 https://broken.example"],
+        "OK": [("a", "200", "https://ok.example")],
+        "BLOCKED": [("d", "403", "https://www.zhihu.com/q"), ("e", "429", "https://github.com/x")],
+        "SUSPECT": [("b", "403", "https://suspect.example")],
+        "BROKEN": [("c", "404", "https://broken.example")],
     }
-    summary = step_summary(buckets, failing={"BROKEN", "SUSPECT"})
-    assert "https://broken.example" in summary
-    assert "https://suspect.example" in summary
+    summary = step_summary(buckets, strict=True)
+    assert "[c] 404 https://broken.example" in summary
+    assert "[b] 403 https://suspect.example" in summary
     assert "https://ok.example" not in summary
-    assert "1 ok" in summary and "1 broken" in summary
+    assert "1 ok" in summary and "2 blocked" in summary and "1 broken" in summary
+    zhihu_line = next(line for line in summary.splitlines() if "zhihu" in line)
+    github_line = next(line for line in summary.splitlines() if "github" in line)
+    assert "tolerated" in zhihu_line and "fails" not in zhihu_line
+    assert "fails" in github_line
+    assert format_row(("c", "404", "https://broken.example")) == "[c] 404 https://broken.example"
 
 
 def test_changed_since_with_no_new_links_exits_zero_without_probing() -> None:

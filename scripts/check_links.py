@@ -10,8 +10,10 @@ Two modes:
   is tolerated.
 * ``--changed-since <git-ref>`` probes only the URLs and DOIs *added* to
   ``references.bib`` and ``docs/`` since the merge base with ``<git-ref>``.
-  This is the pull-request gate in ``ci.yml``: a link being introduced has to
-  be shown to work, so in this mode *any* result other than OK fails.
+  This is the gate ``ci.yml`` runs on every push and pull request: a link
+  being introduced has to be shown to work, so in this mode every result
+  other than OK fails -- except BLOCKED on a host in ``BOT_HOSTS``, whose
+  403 says nothing about the link (cite such sources by DOI instead).
 
 The gap the sweep closes is real. Between 2026-08-22 and 2026-08-23 the
 point-group table host ``symmetry.jacobs-university.de`` was already dead --
@@ -51,9 +53,11 @@ from pathlib import Path
 from quviz.docs.bibliography import parse_bibtex_file
 from quviz.docs.links import (
     VERDICTS,
+    Row,
     added_urls,
     classify,
-    failing_verdicts,
+    fails_run,
+    format_row,
     probe_target,
     step_summary,
 )
@@ -154,20 +158,22 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(_probe, targets))
 
-    buckets: dict[str, list[str]] = {verdict: [] for verdict in VERDICTS}
+    buckets: dict[str, list[Row]] = {verdict: [] for verdict in VERDICTS}
     for url, status, detail in sorted(results):
-        verdict = classify(url, status, detail)
-        shown = status if status is not None else detail
-        buckets[verdict].append(f"  [{targets[url]}] {shown} {url}")
+        shown = str(status) if status is not None else detail
+        buckets[classify(url, status)].append((targets[url], shown, url))
 
-    failing = failing_verdicts(strict=strict)
+    failed = False
     for verdict in VERDICTS:
         rows = buckets[verdict]
         if not rows:
             continue
         print(f"{verdict} ({len(rows)})")
         # Healthy links are summarised; problems are always listed in full.
-        print("\n".join(rows if verdict != "OK" else rows[:0]))
+        for row in rows if verdict != "OK" else []:
+            fails = fails_run(verdict, row[2], strict=strict)
+            failed = failed or fails
+            print(f"  {format_row(row)}" + ("" if fails else "  (tolerated)"))
 
     print(
         f"\nsummary: {len(buckets['OK'])} ok, {len(buckets['BLOCKED'])} blocked-by-bot-filter, "
@@ -175,9 +181,8 @@ def main() -> int:
     )
     if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write(step_summary(buckets, failing=failing))
+            handle.write(step_summary(buckets, strict=strict))
 
-    failed = [verdict for verdict in VERDICTS if verdict in failing and buckets[verdict]]
     if failed:
         if strict:
             print("\nA newly added link must resolve cleanly; fix or replace it before merging.")
