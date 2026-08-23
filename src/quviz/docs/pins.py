@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from typing import Literal
 from urllib.parse import unquote, urlsplit
 
-from quviz.docs.bibliography import BibEntry
+from quviz.docs.bibliography import BibEntry, keywords
 
 CODE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "gitee.com")
 RAW_HOSTS = ("githubusercontent.com",)
@@ -39,10 +39,6 @@ URLDATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SOURCE_AUDIT_KEYWORD = "source-audit"
 
 RefKind = Literal["sha", "tag", "ref"]
-
-
-def _keywords(entry: BibEntry) -> set[str]:
-    return {value.strip() for value in entry.fields.get("keywords", "").split(",")}
 
 
 def _host(url: str) -> str:
@@ -153,7 +149,7 @@ def validate_source_pins(entries: Iterable[BibEntry]) -> list[str]:
 
     messages: list[str] = []
     for entry in entries:
-        if SOURCE_AUDIT_KEYWORD not in _keywords(entry):
+        if SOURCE_AUDIT_KEYWORD not in keywords(entry):
             continue
         url = entry.fields.get("url", "").strip()
         if url and is_code_host(url):

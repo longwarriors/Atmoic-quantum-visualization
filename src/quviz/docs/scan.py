@@ -19,7 +19,12 @@ import re
 from collections.abc import Collection
 from pathlib import Path
 
+from quviz.docs.bibliography import Bibliography, keywords
 from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
+
+# Entries that document the build toolchain rather than a scientific claim are
+# not expected to appear in prose.
+TOOLING_KEYWORD = "tooling"
 
 _FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})")
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -95,3 +100,18 @@ def cited_keys_in_tree(docs_dir: Path, *, exclude: Collection[Path] = ()) -> set
         except ValueError as exc:
             raise ValueError(f"{path}: {exc}") from exc
     return keys
+
+
+def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
+    """Entries nobody cites in prose -- and which therefore nobody reviews.
+
+    Entries tagged ``keywords = {tooling}`` are exempt. Shared by the index
+    script and the test suite so the two cannot disagree about what an orphan
+    is.
+    """
+
+    return sorted(
+        key
+        for key, entry in bibliography.entries.items()
+        if key not in used and TOOLING_KEYWORD not in keywords(entry)
+    )

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
-from quviz.docs.bibliography import BibEntry, Bibliography, Person, parse_bibtex_file
+from quviz.docs.bibliography import BibEntry, Bibliography, Person, keywords, parse_bibtex_file
 from quviz.docs.pins import validate_source_pins
-from quviz.docs.scan import cited_keys_in_tree
+from quviz.docs.scan import cited_keys_in_tree, orphan_keys
 
 ROOT = Path(__file__).resolve().parents[1]
 BIB_PATH = ROOT / "references.bib"
-OUTPUT_PATH = ROOT / "docs" / "references" / "index.md"
-# Entries that document the build toolchain rather than a scientific claim are
-# not expected to appear in prose.
-TOOLING_KEYWORD = "tooling"
+DOCS_DIR = ROOT / "docs"
+OUTPUT_PATH = DOCS_DIR / "references" / "index.md"
 
 
 def person_name(person: Person) -> str:
@@ -43,16 +42,16 @@ def links(entry: BibEntry) -> str:
 
 
 def section_name(entry: BibEntry) -> str:
-    keywords = {value.strip() for value in entry.fields.get("keywords", "").split(",")}
-    if "source-audit" in keywords:
+    tags = keywords(entry)
+    if "source-audit" in tags:
         return "Audited source material"
-    if "experiment" in keywords or "measurement" in keywords:
+    if "experiment" in tags or "measurement" in tags:
         return "Experiments and measurement"
-    if "chemistry" in keywords or "symmetry" in keywords:
+    if "chemistry" in tags or "symmetry" in tags:
         return "Symmetry and chemical interpretation"
-    if "software" in keywords:
+    if "software" in tags:
         return "Software and numerical infrastructure"
-    if "visualization" in keywords or "education" in keywords:
+    if "visualization" in tags or "education" in tags:
         return "Visualization and teaching"
     return "Physics and mathematics"
 
@@ -109,25 +108,13 @@ def render(bibliography: Bibliography) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cited_keys(docs_dir: Path = ROOT / "docs", output_path: Path = OUTPUT_PATH) -> set[str]:
+def cited_keys() -> set[str]:
     """Keys cited in documentation prose -- code blocks and comments excluded."""
 
     try:
-        return cited_keys_in_tree(docs_dir, exclude=(output_path,))
+        return cited_keys_in_tree(DOCS_DIR, exclude=(OUTPUT_PATH,))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-
-
-def orphan_keys(bibliography: Bibliography, used: set[str]) -> list[str]:
-    """Entries nobody cites, and which therefore nobody reviews."""
-
-    return sorted(
-        key
-        for key, entry in bibliography.entries.items()
-        if key not in used
-        and TOOLING_KEYWORD
-        not in {value.strip() for value in entry.fields.get("keywords", "").split(",")}
-    )
 
 
 def write_index(path: Path, rendered: str) -> None:
@@ -148,18 +135,13 @@ def index_is_current(path: Path, rendered: str) -> bool:
     return path.exists() and path.read_bytes() == rendered.encode("utf-8")
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
-    # Overridable so the gate itself can be tested against a throwaway tree.
-    parser.add_argument("--bib", type=Path, default=BIB_PATH)
-    parser.add_argument("--docs", type=Path, default=ROOT / "docs")
-    parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
-    args = parser.parse_args()
-    output_path: Path = args.output
+    args = parser.parse_args(argv)
 
-    bibliography = parse_bibtex_file(args.bib)
-    used = cited_keys(args.docs, output_path)
+    bibliography = parse_bibtex_file(BIB_PATH)
+    used = cited_keys()
     missing = used - set(bibliography.entries)
     if missing:
         raise SystemExit(f"unknown documentation citation keys: {sorted(missing)}")
@@ -176,12 +158,12 @@ def main() -> int:
 
     rendered = render(bibliography)
     if args.check:
-        if not index_is_current(output_path, rendered):
+        if not index_is_current(OUTPUT_PATH, rendered):
             raise SystemExit("reference index is stale; run scripts/render_reference_index.py")
         return 0
 
-    write_index(output_path, rendered)
-    print(output_path)
+    write_index(OUTPUT_PATH, rendered)
+    print(OUTPUT_PATH)
     return 0
 
 

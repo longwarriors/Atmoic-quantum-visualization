@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from quviz.docs.bibliography import parse_bibtex, parse_bibtex_file
-from quviz.docs.scan import cited_keys_in_tree
+from quviz.docs.scan import cited_keys_in_tree, orphan_keys
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,12 +74,7 @@ def test_every_bibliography_entry_is_cited_or_marked_tooling() -> None:
     bibliography = parse_bibtex_file(ROOT / "references.bib")
     used = _cited_keys()
 
-    orphans = sorted(
-        key
-        for key, entry in bibliography.entries.items()
-        if key not in used
-        and "tooling" not in {v.strip() for v in entry.fields.get("keywords", "").split(",")}
-    )
+    orphans = orphan_keys(bibliography, used)
     assert not orphans, f"bibliography entries nobody cites: {orphans}"
 
 

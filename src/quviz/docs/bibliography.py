@@ -38,6 +38,17 @@ class Bibliography:
     entries: dict[str, BibEntry]
 
 
+def keywords(entry: BibEntry) -> set[str]:
+    """The comma-separated ``keywords`` field as a set, whitespace stripped.
+
+    Shared by the index renderer, the pin validator and the orphan gate so
+    ``keywords = {tooling}``, ``{ tooling }`` and ``{software, tooling}`` all
+    mean the same thing everywhere.
+    """
+
+    return {value.strip() for value in entry.fields.get("keywords", "").split(",")} - {""}
+
+
 def _skip_space(text: str, index: int) -> int:
     while index < len(text) and text[index].isspace():
         index += 1

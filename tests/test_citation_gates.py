@@ -9,17 +9,15 @@ one.
 from __future__ import annotations
 
 import importlib.util
-import subprocess
-import sys
 from pathlib import Path
 from types import ModuleType
 
 import markdown  # the docs dependency group; deliberately not importorskip
 import pytest
 
-from quviz.docs.bibliography import BibEntry, parse_bibtex_file
+from quviz.docs.bibliography import BibEntry, keywords, parse_bibtex, parse_bibtex_file
 from quviz.docs.pins import validate_source_pins
-from quviz.docs.scan import cited_keys_in, strip_non_prose
+from quviz.docs.scan import cited_keys_in, cited_keys_in_tree, orphan_keys, strip_non_prose
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "render_reference_index.py"
@@ -34,6 +32,11 @@ def _load_script(path: Path) -> ModuleType:
 
 
 render_reference_index = _load_script(SCRIPT)
+
+
+def _entry(key: str, **fields: str) -> BibEntry:
+    fields.setdefault("keywords", "source-audit,software")
+    return BibEntry(entry_type="software", key=key, fields=fields, authors=())
 
 
 def test_docs_dependency_group_is_installed() -> None:
@@ -110,39 +113,35 @@ def test_malformed_citation_in_prose_still_raises() -> None:
 
 
 def test_orphan_check_reports_an_entry_cited_only_inside_a_code_block(tmp_path: Path) -> None:
-    bib = tmp_path / "refs.bib"
-    bib.write_text(
+    # The same helpers drive scripts/render_reference_index.py, pins.py and
+    # tests/test_bibliography.py, so the gate cannot drift between them.
+    bibliography = parse_bibtex(
         "@online{only-fenced, title={A}, url={https://example.invalid/a}}\n"
-        "@online{cited-for-real, title={B}, url={https://example.invalid/b}}\n",
-        encoding="utf-8",
+        "@online{cited-for-real, title={B}, url={https://example.invalid/b}}\n"
+        "@online{build-tool, title={C}, keywords={software, tooling}}\n"
     )
     docs = tmp_path / "docs"
-    (docs / "references").mkdir(parents=True)
+    docs.mkdir()
     (docs / "page.md").write_text(
         "Prose cites [@cited-for-real].\n\n```markdown\nExample: [@only-fenced]\n```\n",
         encoding="utf-8",
     )
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--check",
-            "--bib",
-            str(bib),
-            "--docs",
-            str(docs),
-            "--output",
-            str(docs / "references" / "index.md"),
-        ],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0
-    assert "orphan" in result.stderr
-    assert "only-fenced" in result.stderr
-    assert "cited-for-real" not in result.stderr
+    used = cited_keys_in_tree(docs)
+    assert used == {"cited-for-real"}
+    assert orphan_keys(bibliography, used) == ["only-fenced"]
+
+
+def test_keywords_are_split_and_stripped() -> None:
+    entry = _entry("x", keywords=" software, tooling ,,visualization")
+    assert keywords(entry) == {"software", "tooling", "visualization"}
+    assert keywords(_entry("y", keywords="")) == set()
+    assert keywords(BibEntry("online", "z", {}, ())) == set()
+
+
+def test_check_mode_passes_against_the_repository_in_process() -> None:
+    # In-process twin of the ``--check`` gate: the index, the orphan scan and
+    # the pin validation all run against the real bibliography and docs.
+    assert render_reference_index.main(["--check"]) == 0
 
 
 # --- the generated index must be LF on every platform, and --check must see CRLF ---
@@ -175,11 +174,6 @@ def test_check_reports_a_crlf_copy_of_the_current_index_as_stale(tmp_path: Path)
 
 SHA = "a351de1adbcdd14bb4d12dd50dff534fd0cb595f"
 OTHER_SHA = "ed6684735f63f3678a1538790de9bc342ac8d799"
-
-
-def _entry(key: str, **fields: str) -> BibEntry:
-    fields.setdefault("keywords", "source-audit,software")
-    return BibEntry(entry_type="software", key=key, fields=fields, authors=())
 
 
 def test_commit_placeholder_is_rejected() -> None:
