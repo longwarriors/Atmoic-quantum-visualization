@@ -172,13 +172,16 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
     hex: an explicit tag called ``20240512`` stays a tag.
     """
 
-    segments = _segments(url)
     found: tuple[RefKind, str] | None = None
     if _host_in(_host(url), RAW_HOSTS):
         # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
+        segments = _segments(url)
         if len(segments) > 2:
             found = _named_ref(segments[2:])
     else:
+        # Only the page path is searched: an owner or repository called
+        # ``blob``, ``tree``, ``releases``, ``src`` ... is a name, not a marker.
+        segments = _page_path(url)
         for index, segment in enumerate(segments):
             following = segments[index + 1 :]
             if (

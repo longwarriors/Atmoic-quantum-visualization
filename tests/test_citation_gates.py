@@ -842,6 +842,29 @@ def test_a_literal_dash_segment_is_only_a_separator_on_gitlab(url: str) -> None:
     assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://github.com/someone/tree/blob/{SHA}/f.py",
+        f"https://github.com/releases/src/blob/{SHA}/x",
+        f"https://github.com/tags/blob/tree/{SHA}",
+        f"https://github.com/commit/raw/commit/{SHA}",
+        f"https://gitlab.com/blob/tree/-/blob/{SHA}/f.py",
+        f"https://gitlab.com/releases/tags/src/-/tree/{SHA}",
+    ],
+)
+def test_owner_and_repository_names_are_never_read_as_ref_markers(url: str) -> None:
+    assert url_ref(url) == ("sha", SHA)
+    assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
+
+
+def test_a_repository_named_like_a_marker_is_still_a_bare_repository() -> None:
+    assert url_ref("https://github.com/someone/tree") is None
+    assert url_ref("https://github.com/releases/tag") is None
+    entry = _entry("x", url="https://github.com/someone/tree", commit=SHA)
+    assert validate_source_pins([entry]) == []
+
+
 def test_host_suffix_match_is_shared_and_exact() -> None:
     assert is_code_host("https://github.com/o/r")
     assert is_code_host("https://raw.githubusercontent.com/o/r/x/f.py")
