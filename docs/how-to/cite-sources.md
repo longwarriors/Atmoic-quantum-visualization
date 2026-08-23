@@ -20,6 +20,14 @@ references.bib
 点云可视化已有教育研究与开源实现 [@tully2013pointillist; @evanescence]。
 ```
 
+带页码或章节（核心科学声明必须带）：
+
+```markdown
+径向函数与 Laguerre 约定 [@griffiths2018qm, ch. 4 (pp. 131--197); @dlmf-laguerre, eq. 18.5.12]。
+```
+
+key 写错或格式畸形会让 `mkdocs build --strict` 失败，不会静默输出成普通文本。
+
 ## 生成索引
 
 ```bash
@@ -32,7 +40,7 @@ uv run --group docs python scripts/render_reference_index.py
 uv run --group docs python scripts/render_reference_index.py --check
 ```
 
-未知键会使文档构建失败。
+未知键、畸形引用，以及**没有被任何正文引用的条目**（orphan）都会使检查失败。工具链条目用 `keywords = {tooling}` 豁免 orphan 检查。
 
 ## 资料分类
 

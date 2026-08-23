@@ -6,7 +6,7 @@
 
 | 声明 | 主要来源 | QuViz 验证 | 边界 |
 |---|---|---|---|
-| $Y_\ell^m$ 与 Laguerre 定义/约定 | [@dlmf-spherical-harmonics; @dlmf-laguerre; @griffiths2018qm] | 归一化、正交（径向/角向/全波函数）、通式节点数、$H\psi-E\psi$、$L^2$、$L_z$、$\langle r\rangle$、$\langle1/r\rangle$，均在 `tests/test_analytic_gates.py` | SciPy 参数顺序必须显式映射；角度顺序错误会被变异测试捕获 |
+| $Y_\ell^m$ 与 Laguerre 定义/约定 | [@dlmf-spherical-harmonics, §14.30; @dlmf-laguerre, eq. 18.5.12; @griffiths2018qm, ch. 4 (pp. 131–197)] | 归一化、正交（径向/角向/全波函数）、通式节点数、$H\psi-E\psi$、$L^2$、$L_z$、$\langle r\rangle$、$\langle1/r\rangle$，均在 `tests/test_analytic_gates.py` | SciPy 参数顺序必须显式映射；角度顺序错误会被变异测试捕获 |
 | 代码 API 的角度、相位和函数签名 | [@scipy-sph-harm-y; @scipy-eval-genlaguerre] | 与低阶解析式交叉比较 | 官方 API 只证明接口，不证明本项目调用正确 |
 | 教学推导路线 | [@solara-hydrogen-derivation] | 独立代数与测试 | PDF 正确不代表配套动画源码正确 |
 | 轨道外观 | [@orbitron; @minutephysics2021atoms; @science-asylum2020-orbitals] | 节点/对称性测试和人工视觉回归 | 图库与视频不是数值真值 |
@@ -15,7 +15,7 @@
 
 | 声明 | 主要来源 | QuViz 验证 | 边界 |
 |---|---|---|---|
-| 单轨道分离采样的概率测度 | [@griffiths2018qm; @numpy-rng] | 径向/极角/方位角 KS 检验、三维矩与 seed 重现 | 必须报告有限径向域捕获质量 |
+| 单轨道分离采样的概率测度 | [@griffiths2018qm, ch. 4 (pp. 131–197); @numpy-rng] | 径向/极角/方位角 KS 检验、三维矩与 seed 重现 | 必须报告有限径向域捕获质量 |
 | 点云作为测量样本的教学表达 | [@tully2013pointillist; @evanescence] | 分布检验；不把点排序解释为时间 | Evanescence 的采样包络不直接复制 |
 | marching cubes 的数组/几何语义 | [@skimage-marching-cubes; @numpy-meshgrid] | 轴向、体积、法向、绕向与节点测试 | 看起来像轨道不能代替几何测试 |
 | 有限差分 stencil 的向量化 | [@mocquin2022-fdm; @numpy-sliding-window] | QuViz 自有 benchmark 与边界测试 | “300 倍”不是可迁移承诺 |
@@ -28,7 +28,7 @@
 | 概率流与连续性方程 | [@griffiths2018qm] | 与 $\operatorname{Im}(\psi^*\nabla\psi)$ 有限差分比对、定态 $\nabla\cdot\mathbf j=0$ 残差、$\pm m$ 反向性 | Wikipedia [@probability-current-wikipedia] 只作术语入口；含时残差属 M1 |
 | Stark 态节点可经光电离显微镜映射 | [@stodolna2013stark] | 未来实验前向模型 | 不是自由氢原子三维密度照片 |
 | 对称性约束杂化与定向 | [@maksic1986hybridization] | $sp^3$ 正交性和四面体角；未来投影算符测试 | 杂化是基/解释模型，不是独立 observable |
-| 点群特征标数据 | [@jacobs-character-tables; @shirts2007-character-tables] | 群阶、维数平方和、行列正交、类顺序 | 数据站不可当不可变真值 |
+| 点群特征标数据 | [@jacobs-character-tables; @gelessus1995-character-tables; @shirts2007-character-tables] | 群阶、维数平方和、行列正交、类顺序 | 数据站不可当不可变真值 |
 
 ## 学习动机与视觉语言
 

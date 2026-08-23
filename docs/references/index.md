@@ -15,11 +15,11 @@ renders them as author-year labels.
 [DOI](https://doi.org/10.1017/S0305004100023197)
 
 <a id="dlmf-laguerre"></a>
-### `dlmf-laguerre` — Chapter 18: Orthogonal Polynomials
+### `dlmf-laguerre` — Section 18.5: Explicit Representations (Orthogonal Polynomials)
 
 **NIST Digital Library of Mathematical Functions.** n.d.
 
-[source](https://dlmf.nist.gov/18)
+[source](https://dlmf.nist.gov/18.5)
 
 <a id="dlmf-spherical-harmonics"></a>
 ### `dlmf-spherical-harmonics` — Section 14.30: Spherical and Spheroidal Harmonics
@@ -60,12 +60,19 @@ renders them as author-year labels.
 
 ## Symmetry and chemical interpretation
 
+<a id="gelessus1995-character-tables"></a>
+### `gelessus1995-character-tables` — Multipoles and Symmetry
+
+**Gelessus, Achim; Thiel, Walter; Weber, Wolfgang.** 1995. *Journal of Chemical Education*.
+
+[DOI](https://doi.org/10.1021/ed072p505)
+
 <a id="jacobs-character-tables"></a>
 ### `jacobs-character-tables` — Character Tables for Chemically Important Point Groups
 
 **Gelessus, Achim.** 2007.
 
-[source](http://symmetry.jacobs-university.de/)
+[source](https://symmetry.constructor.university/)
 
 <a id="maksic1986hybridization"></a>
 ### `maksic1986hybridization` — Symmetry, Hybridization and Bonding in Molecules
@@ -118,7 +125,7 @@ renders them as author-year labels.
 
 **Meng, Alvin Q.** 2022.
 
-[source](https://github.com/al2me6/evanescence)
+[source](https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799)
 
 <a id="mocquin2022-fdm"></a>
 ### `mocquin2022-fdm` — 300-times Faster Resolution of Finite-Difference Method Using NumPy
@@ -132,7 +139,7 @@ renders them as author-year labels.
 
 **quantum-visualizations Contributors.** n.d.
 
-[source](https://github.com/quantum-visualizations/qmsolve)
+[source](https://github.com/quantum-visualizations/qmsolve/releases/tag/2.0.0)
 
 <a id="shirts2007-character-tables"></a>
 ### `shirts2007-character-tables` — Correcting Two Long-Standing Errors in Point Group Symmetry Character Tables
@@ -146,24 +153,24 @@ renders them as author-year labels.
 
 **Solara570.** 2023.
 
-[source](https://github.com/Solara570/demo-solara/blob/master/atomic_orbitals.py)
+[source](https://github.com/Solara570/demo-solara/blob/a351de1adbcdd14bb4d12dd50dff534fd0cb595f/atomic_orbitals.py)
 
 <a id="solara-hydrogen-derivation"></a>
 ### `solara-hydrogen-derivation` — Hydrogen Atom and Hydrogen-like Ion Orbital Wavefunction Derivation
 
 **Solara570.** 2023.
 
-[source](https://github.com/Solara570/temp/blob/main/hydrogen_ao_derivation.pdf)
+[source](https://github.com/Solara570/temp/blob/86b572da81a6655b835e66561fa491a1f3d5bbe6/hydrogen_ao_derivation.pdf)
 
 <a id="solara-orbital-plot"></a>
 ### `solara-orbital-plot` — Hydrogen Atomic-Orbital and Hybrid-Orbital Plotting Tutorial
 
 **Solara570.** 2023.
 
-[source](https://github.com/Solara570/temp/tree/main/orbital_plot)
+[source](https://github.com/Solara570/temp/tree/86b572da81a6655b835e66561fa491a1f3d5bbe6/orbital_plot)
 
 <a id="zhihu-molecular-orbital"></a>
-### `zhihu-molecular-orbital` — How Can Molecular-Orbital Theory Be Understood Visually?
+### `zhihu-molecular-orbital` — How Can Molecular-Orbital Theory Be Understood Visually? (怎样形象的理解分子轨道理论？)
 
 **Zhihu User.** 2023.
 

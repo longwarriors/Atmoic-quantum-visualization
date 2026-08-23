@@ -58,7 +58,7 @@ $$
 \Delta x=\frac{L}{N-1},
 $$
 
-不能同时在动能和归一化中使用 $L/N$。QuViz 的 `DirichletGrid1D` 和 `PeriodicGrid1D` 将坐标、间距和边界条件绑定为同一对象。
+不能同时在动能和归一化中使用 $L/N$。QuViz 的 `DirichletGrid1D` 和 `PeriodicGrid1D` 将坐标、间距和边界条件绑定为同一对象 [@qmsolve, v2.0.0]。
 
 ## PRL DOI
 
@@ -73,3 +73,23 @@ $$
 ## Jmol 点云论文作者元数据
 
 正确作者包括 **Shane P. Tully** 与 **Przemyslaw Maslak**；旧索引中的 “Stephen P. Tully” 和 “Peter Maslak” 不是 DOI 注册元数据。BibTeX 已按 DOI `10.1021/ed300393s` 修正 [@tully2013pointillist]。
+
+## QuViz 自身审计的纠错
+
+纠错账本对本项目的审计输出同样适用。以下条目是 QuViz 写错、而不是来源写错。
+
+### YouTube 字幕声明（已撤回）
+
+本页曾在[资料审计](source-audit.md)中断言两段视频“都没有可导出的字幕”。2026-08-23 复核该声明为**假**：
+
+- 两个视频各有**两条**英文字幕轨；
+- 其中各有一条是**人工上传**轨（player response 中 `vssId` 为 `.en` / `.en-US`，且**没有** `"kind":"asr"` 字段——该字段的缺失正是人工轨的标记）；
+- 另有一条 `a.en` 自动生成轨，并暴露 `translationLanguages` 与 `getTranscriptEndpoint`。
+
+三重问题：事实为假；字幕可用性是**随时间变化**的平台状态，却用绝对句式陈述，违反本项目“网页记录访问日期”的规定；而且推论不成立——“没有字幕”不是“只能作教学入口”的理由，正确理由是信源层级为 C。
+
+验证方法：抓取 watch 页的 `playerCaptionsTracklistRenderer`。注意匿名下载字幕字节会被 YouTube 的会话令牌限流，**“我抓不到”不等于“不存在”**——把二者混同正是原声明的错误根源。
+
+### Jacobs 点群表“访问不稳定”（已修正）
+
+原文写“当前站点访问不稳定”。实测该主机 http/https 均无法完成 TCP 连接，属于**整域退役**而非间歇性故障，且资源已迁至 `constructor.university`。原表述既低估了严重性，又掩盖了修复方法只是替换主机名 [@jacobs-character-tables]。

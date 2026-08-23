@@ -5,6 +5,7 @@
   publisher = {Cambridge University Press},
   year = {2018},
   doi = {10.1017/9781316995433},
+  note = {Chapter-level DOIs are registered and are used as citation locators: ch. 1 The Wave Function, pp. 3--24, 10.1017/9781316995433.002; ch. 4 Quantum Mechanics in Three Dimensions, pp. 131--197, 10.1017/9781316995433.005; ch. 11 Quantum Dynamics, pp. 402--445, 10.1017/9781316995433.012. Page ranges verified against Crossref, not against a print copy.},
   keywords = {physics,foundations}
 }
 
@@ -18,9 +19,10 @@
 
 @online{dlmf-laguerre,
   author = {{NIST Digital Library of Mathematical Functions}},
-  title = {Chapter 18: Orthogonal Polynomials},
-  url = {https://dlmf.nist.gov/18},
-  urldate = {2026-08-22},
+  title = {Section 18.5: Explicit Representations (Orthogonal Polynomials)},
+  url = {https://dlmf.nist.gov/18.5},
+  urldate = {2026-08-23},
+  note = {Narrowed from the whole of Chapter 18. Equation 18.5.12 is the explicit sum for the generalized Laguerre polynomial L_n^(alpha)(x) that QuViz's radial function uses; Table 18.3.1 carries the orthogonality normalization.},
   keywords = {physics,mathematics}
 }
 
@@ -60,8 +62,10 @@
   author = {{Solara570}},
   title = {Hydrogen Atom and Hydrogen-like Ion Orbital Wavefunction Derivation},
   year = {2023},
-  url = {https://github.com/Solara570/temp/blob/main/hydrogen_ao_derivation.pdf},
-  urldate = {2026-08-22},
+  url = {https://github.com/Solara570/temp/blob/86b572da81a6655b835e66561fa491a1f3d5bbe6/hydrogen_ao_derivation.pdf},
+  commit = {86b572da81a6655b835e66561fa491a1f3d5bbe6},
+  urldate = {2026-08-23},
+  note = {Pinned: the file has a single commit and the `main` branch is unprotected. Document dated 2023-08-10.},
   keywords = {source-audit,physics,teaching}
 }
 
@@ -69,8 +73,10 @@
   author = {{Solara570}},
   title = {atomic_orbitals.py: Manim Scenes for Atomic-Orbital Explanation},
   year = {2023},
-  url = {https://github.com/Solara570/demo-solara/blob/master/atomic_orbitals.py},
-  urldate = {2026-08-22},
+  url = {https://github.com/Solara570/demo-solara/blob/a351de1adbcdd14bb4d12dd50dff534fd0cb595f/atomic_orbitals.py},
+  commit = {a351de1adbcdd14bb4d12dd50dff534fd0cb595f},
+  urldate = {2026-08-23},
+  note = {Pinned: this is the revision whose hard-coded 3p and 4d radial polynomials are corrected in docs/references/corrections.md.},
   keywords = {source-audit,visualization,teaching}
 }
 
@@ -78,8 +84,10 @@
   author = {{Solara570}},
   title = {Hydrogen Atomic-Orbital and Hybrid-Orbital Plotting Tutorial},
   year = {2023},
-  url = {https://github.com/Solara570/temp/tree/main/orbital_plot},
-  urldate = {2026-08-22},
+  url = {https://github.com/Solara570/temp/tree/86b572da81a6655b835e66561fa491a1f3d5bbe6/orbital_plot},
+  commit = {86b572da81a6655b835e66561fa491a1f3d5bbe6},
+  urldate = {2026-08-23},
+  note = {Pinned. The directory contains only an nbconvert HTML export and a PDF, no .py or .ipynb, so the citable unit is a notebook cell inside orbital-plot.html.},
   keywords = {source-audit,software,visualization,teaching}
 }
 
@@ -97,8 +105,10 @@
   author = {Meng, Alvin Q.},
   title = {Evanescence: An Exploration in the Visualization of Hydrogenic Orbitals},
   year = {2022},
-  url = {https://github.com/al2me6/evanescence},
-  urldate = {2026-08-22},
+  url = {https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799},
+  commit = {ed6684735f63f3678a1538790de9bc342ac8d799},
+  urldate = {2026-08-23},
+  note = {Pinned. The default branch is `dev`, not `master` or `main`: `master` is stale and its README lacks the non-goals paragraph, and `main` does not exist. Commit authored 2023-01-15; the 2022 year follows the README copyright line.},
   keywords = {source-audit,software,visualization,sampling}
 }
 
@@ -132,8 +142,11 @@
   booktitle = {Symmetry: Unifying Human Understanding},
   pages = {697--723},
   year = {1986},
+  editor = {Hargittai, Istvan},
   publisher = {Pergamon},
+  isbn = {9780080339863},
   doi = {10.1016/B978-0-08-033986-3.50050-1},
+  note = {The same text was published simultaneously as a journal article, DOI 10.1016/0898-1221(86)90419-0, in Computers \& Mathematics with Applications 12(3-4), 697--723 --- the volume was issued both as a journal number and as this edited book. The book-chapter DOI is cited because QuViz refers to the book; the journal record is the better-established one (28 citations vs 1) and is the preferred target if only one identifier can be given. Crossref lists the publisher of the chapter record as Elsevier, which absorbed Pergamon.},
   keywords = {chemistry,symmetry,hybridization}
 }
 
@@ -141,8 +154,22 @@
   author = {Gelessus, Achim},
   title = {Character Tables for Chemically Important Point Groups},
   year = {2007},
-  url = {http://symmetry.jacobs-university.de/},
-  urldate = {2026-08-22},
+  url = {https://symmetry.constructor.university/},
+  urldate = {2026-08-23},
+  note = {Relocated. The original host symmetry.jacobs-university.de no longer resolves following the 2022/2023 Jacobs University Bremen to Constructor University rename; the successor preserves the /cgi-bin/group.cgi URL scheme.},
+  keywords = {chemistry,symmetry,reference-data}
+}
+
+@article{gelessus1995-character-tables,
+  author = {Gelessus, Achim and Thiel, Walter and Weber, Wolfgang},
+  title = {Multipoles and Symmetry},
+  journal = {Journal of Chemical Education},
+  volume = {72},
+  number = {6},
+  pages = {505},
+  year = {1995},
+  doi = {10.1021/ed072p505},
+  note = {The peer-reviewed publication behind the Gelessus character-table site. Cited alongside the live URL because a web host can be renamed away, as this one was.},
   keywords = {chemistry,symmetry,reference-data}
 }
 
@@ -195,10 +222,11 @@
 
 @online{zhihu-molecular-orbital,
   author = {{Zhihu User}},
-  title = {How Can Molecular-Orbital Theory Be Understood Visually?},
+  title = {How Can Molecular-Orbital Theory Be Understood Visually? (怎样形象的理解分子轨道理论？)},
   year = {2023},
   url = {https://www.zhihu.com/question/41148274/answer/3329299461},
-  urldate = {2026-08-22},
+  urldate = {2026-08-23},
+  note = {The question was created 2016-03-08; the page does not display this answer's own publication or edit date, and the year 2023 is inferred from the answer id. The author is anonymised to a generic Zhihu user. Verified in a real browser session: an unauthenticated curl request returns HTTP 403.},
   keywords = {source-audit,community,teaching}
 }
 
@@ -254,8 +282,11 @@
 @software{qmsolve,
   author = {{quantum-visualizations Contributors}},
   title = {QMsolve: Visualizing the Schrödinger Equation},
-  url = {https://github.com/quantum-visualizations/qmsolve},
-  urldate = {2026-08-22},
+  url = {https://github.com/quantum-visualizations/qmsolve/releases/tag/2.0.0},
+  version = {2.0.0},
+  commit = {95d75719f665712f32a29a4e6b676b11c0ba26ac},
+  urldate = {2026-08-23},
+  note = {Release 2.0.0 (2024-05-12) is the repository's only tag and the version audited in ADR-0004. The default branch is `main` and has moved since the tag.},
   keywords = {source-audit,software,numerics,visualization}
 }
 
@@ -272,7 +303,7 @@
   title = {Material for MkDocs},
   url = {https://squidfunk.github.io/mkdocs-material/},
   urldate = {2026-08-22},
-  keywords = {software,documentation}
+  keywords = {software,documentation,tooling}
 }
 
 @online{mkdocstrings,
@@ -280,7 +311,7 @@
   title = {mkdocstrings: Automatic Documentation from Sources},
   url = {https://mkdocstrings.github.io/},
   urldate = {2026-08-22},
-  keywords = {software,documentation}
+  keywords = {software,documentation,tooling}
 }
 
 @online{react-three-fiber,

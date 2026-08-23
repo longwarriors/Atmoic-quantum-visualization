@@ -16,8 +16,13 @@ from markdown.extensions import Extension
 from markdown.inlinepatterns import InlineProcessor
 
 from quviz.docs.bibliography import BibEntry, Bibliography, parse_bibtex_file
+from quviz.docs.locators import CitationReference, parse_citation_group
 
-_PATTERN = r"\[@([A-Za-z0-9_:\-]+(?:\s*;\s*@?[A-Za-z0-9_:\-]+)*)\]"
+# Deliberately permissive: a strict key pattern silently fails to match a
+# citation that carries a locator, so ``[@key, p. 4]`` would pass through as
+# literal text and escape validation entirely. Matching loosely and validating
+# afterwards turns that silent hole into a build error.
+_PATTERN = r"(?<!\\)\[@([^\]]+)\]"
 
 
 def _person_family(entry: BibEntry, index: int) -> str:
@@ -49,21 +54,24 @@ class CitationInlineProcessor(InlineProcessor):
         self, match: Match[str], data: str
     ) -> tuple[ElementTree.Element | None, int | None, int | None]:
         del data
-        raw_keys = match.group(1)
-        keys = [value.strip().lstrip("@") for value in raw_keys.split(";")]
-        missing = [key for key in keys if key not in self.bibliography.entries]
+        references: list[CitationReference] = parse_citation_group(match.group(1))
+        missing = [ref.key for ref in references if ref.key not in self.bibliography.entries]
         if missing:
             raise ValueError(f"unknown citation key(s): {', '.join(missing)}")
 
         span = ElementTree.Element("span")
         span.set("class", "quviz-citation")
-        span.set("data-cite-keys", ";".join(keys))
+        span.set("data-cite-keys", ";".join(ref.key for ref in references))
+        locators = [ref.locator or "" for ref in references]
+        if any(locators):
+            span.set("data-cite-locators", ";".join(locators))
         labels: list[str] = []
         titles: list[str] = []
-        for key in keys:
-            entry = self.bibliography.entries[key]
-            labels.append(_author_year(entry))
-            titles.append(f"{key}: {entry.fields.get('title', key)}")
+        for ref in references:
+            entry = self.bibliography.entries[ref.key]
+            label = _author_year(entry)
+            labels.append(f"{label}, {ref.locator}" if ref.locator else label)
+            titles.append(f"{ref.key}: {entry.fields.get('title', ref.key)}")
         span.set("title", " | ".join(titles))
         span.text = f"[{' ; '.join(labels)}]"
         return span, match.start(0), match.end(0)
