@@ -73,7 +73,8 @@
 - ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
 - ✅ binary parser 单测 — `web/src/api/qvpc.test.ts`，含**跨语言黄金向量**（见下）；
 - ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
-- ✅ `qvpc.ts` 与 `color.ts` 的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1；
+- ✅ `src/api/**`、`src/scene/**` 下全部 `.ts`（含 `qvpc.ts`、`client.ts`、`color.ts`；只排除 GLSL 字符串模块、测试文件与 `types.ts`）的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%，按文件评估） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1；
+- ✅ 前端零 skip — `npm run test` 在 vitest 之后运行 `web/scripts/assert-no-skips.mjs` 核对 `coverage/vitest-results.json` 的运行结果：任何非 passed 的测试、缺席的 spec 文件或非零 pending/todo/failed 计数都失败；`web/src/guards.test.ts` 另对 spec 源码扫描 skip/todo/only/skipIf/runIf 的各种拼写与受门禁模块里的 coverage ignore 注释；
 - 🕒 geometry/material 正确 dispose；
 - 🕒 截图视觉回归仅作为辅助；
 - 🧑 UI 不能隐藏关键警告和单位。
