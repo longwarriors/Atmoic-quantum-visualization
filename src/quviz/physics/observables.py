@@ -8,11 +8,13 @@ from scipy.special import roots_legendre
 
 from quviz.conventions import BasisKind
 from quviz.physics.hydrogenic import (
+    cartesian_to_spherical,
     hydrogenic_energy_hartree,
     hydrogenic_wavefunction,
     radial_wavefunction,
     validate_quantum_numbers,
 )
+from quviz.physics.superposition import SuperpositionState
 
 type FloatArray = NDArray[np.float64]
 
@@ -168,3 +170,111 @@ def radial_hamiltonian_residual(
 
     residual = -0.5 * second_derivative + effective * u_here - energy * u_here
     return np.asarray(residual, dtype=np.float64), float(np.max(np.abs(energy * u_here)))
+
+
+def _spherical_from_cartesian(points: FloatArray) -> tuple[FloatArray, FloatArray, FloatArray]:
+    position = np.atleast_2d(np.asarray(points, dtype=np.float64))
+    return cartesian_to_spherical(position[:, 0], position[:, 1], position[:, 2])
+
+
+def superposition_current(
+    state: SuperpositionState,
+    points: ArrayLike,
+    *,
+    time: float = 0.0,
+    reduced_mass_atomic_units: float = 1.0,
+    step: float = 1e-5,
+) -> FloatArray:
+    r"""Return :math:`\mathbf j=\frac{\hbar}{\mu}\operatorname{Im}(\Psi^*\nabla\Psi)`.
+
+    The gradient is taken by central differences on :math:`\Psi` in Cartesian
+    coordinates. That is deliberate: a general superposition has no closed-form
+    azimuthal current the way a single eigenstate does, and differencing the
+    wavefunction keeps one implementation valid for every state. For a
+    one-term superposition it must reproduce
+    :func:`probability_current_hydrogenic`, which is gated.
+    """
+
+    if reduced_mass_atomic_units <= 0.0:
+        raise ValueError("reduced_mass_atomic_units must be positive")
+    if step <= 0.0:
+        raise ValueError("step must be positive")
+
+    position = np.atleast_2d(np.asarray(points, dtype=np.float64))
+    here = state.evaluate(*_spherical_from_cartesian(position), time=time)
+
+    gradient = np.empty((position.shape[0], 3), dtype=np.complex128)
+    for axis in range(3):
+        offset = np.zeros(3)
+        offset[axis] = step
+        forward = state.evaluate(*_spherical_from_cartesian(position + offset), time=time)
+        backward = state.evaluate(*_spherical_from_cartesian(position - offset), time=time)
+        gradient[:, axis] = (forward - backward) / (2.0 * step)
+
+    current = np.imag(np.conj(here)[:, None] * gradient) / reduced_mass_atomic_units
+    return np.asarray(current, dtype=np.float64)
+
+
+def density_time_derivative(
+    state: SuperpositionState,
+    points: ArrayLike,
+    *,
+    time: float = 0.0,
+) -> FloatArray:
+    r"""Return :math:`\partial\rho/\partial t=2\operatorname{Re}(\Psi^*\partial_t\Psi)`.
+
+    Closed form, so the continuity check below measures the current rather than
+    the error of a time-difference scheme.
+    """
+
+    position = np.atleast_2d(np.asarray(points, dtype=np.float64))
+    spherical = _spherical_from_cartesian(position)
+    here = state.evaluate(*spherical, time=time)
+    rate = state.time_derivative(*spherical, time=time)
+    return np.asarray(2.0 * np.real(np.conj(here) * rate), dtype=np.float64)
+
+
+def continuity_residual(
+    state: SuperpositionState,
+    points: ArrayLike,
+    *,
+    time: float = 0.0,
+    reduced_mass_atomic_units: float = 1.0,
+    gradient_step: float = 1e-4,
+    divergence_step: float = 1e-3,
+) -> tuple[FloatArray, float]:
+    r"""Return the continuity residual and the scale it should be judged against.
+
+    .. math::
+
+       \frac{\partial\rho}{\partial t}+\nabla\cdot\mathbf j=0.
+
+    The returned scale is :math:`\max|\partial\rho/\partial t|`, so a caller can
+    form a dimensionless ratio. A stationary state gives a scale of zero, which
+    is the correct answer and not a failure --- callers should notice that the
+    test is then vacuous rather than passing it silently.
+    """
+
+    position = np.atleast_2d(np.asarray(points, dtype=np.float64))
+    divergence = np.zeros(position.shape[0], dtype=np.float64)
+    for axis in range(3):
+        offset = np.zeros(3)
+        offset[axis] = divergence_step
+        forward = superposition_current(
+            state,
+            position + offset,
+            time=time,
+            reduced_mass_atomic_units=reduced_mass_atomic_units,
+            step=gradient_step,
+        )[:, axis]
+        backward = superposition_current(
+            state,
+            position - offset,
+            time=time,
+            reduced_mass_atomic_units=reduced_mass_atomic_units,
+            step=gradient_step,
+        )[:, axis]
+        divergence += (forward - backward) / (2.0 * divergence_step)
+
+    rate = density_time_derivative(state, position, time=time)
+    return np.asarray(rate + divergence, dtype=np.float64), float(np.max(np.abs(rate)))

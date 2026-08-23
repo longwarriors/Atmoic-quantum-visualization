@@ -6,8 +6,8 @@ import type { SceneStatus } from '../api/types'
  * thing the legend exists to name.
  */
 export function Legend({ status }: { status: SceneStatus }) {
-  const basis = status.metadata?.state.basis
-  const representation = status.metadata?.representation
+  const basis = status.metadata?.state.basis ?? status.superposition?.basis
+  const representation = status.metadata?.representation ?? status.superposition?.representation
 
   if (representation === 'streamlines') {
     return (

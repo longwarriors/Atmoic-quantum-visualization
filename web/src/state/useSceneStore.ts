@@ -2,7 +2,14 @@ import { create } from 'zustand'
 
 import type { BasisKind, OrbitalParameters, RepresentationKind } from '../api/types'
 
+export type SceneMode = 'eigenstate' | 'superposition'
+
 interface SceneStore {
+  mode: SceneMode
+  superpositionTerms: string
+  superpositionLabel: string
+  timeAu: number
+  playing: boolean
   orbital: OrbitalParameters
   representation: RepresentationKind
   samples: number
@@ -17,6 +24,10 @@ interface SceneStore {
   fogStrength: number
   autoRotate: boolean
   showGrid: boolean
+  setMode: (value: SceneMode) => void
+  setSuperposition: (terms: string, label: string) => void
+  setTimeAu: (value: number) => void
+  setPlaying: (value: boolean) => void
   setOrbital: (patch: Partial<OrbitalParameters>) => void
   setRepresentation: (value: RepresentationKind) => void
   setSamples: (value: number) => void
@@ -65,6 +76,11 @@ export function supportedRepresentation(
 }
 
 export const useSceneStore = create<SceneStore>()((set) => ({
+  mode: 'eigenstate',
+  superpositionTerms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
+  superpositionLabel: '1s + 2p_z (Bohr oscillation)',
+  timeAu: 0,
+  playing: false,
   orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
   representation: 'point_cloud',
   samples: 28000,
@@ -79,6 +95,11 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   fogStrength: 0.18,
   autoRotate: false,
   showGrid: true,
+  setMode: (mode) => set({ mode, playing: false }),
+  setSuperposition: (superpositionTerms, superpositionLabel) =>
+    set({ superpositionTerms, superpositionLabel, timeAu: 0 }),
+  setTimeAu: (timeAu) => set({ timeAu }),
+  setPlaying: (playing) => set({ playing }),
   setOrbital: (patch) =>
     set((state) => {
       const orbital = normalizeOrbital(state.orbital, patch)

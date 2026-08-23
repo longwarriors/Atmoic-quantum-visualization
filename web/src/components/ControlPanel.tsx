@@ -1,8 +1,8 @@
-import { Atom, Cloud, Layers3, Pause, Play, RotateCcw, Waves } from 'lucide-react'
+import { Atom, Clock, Cloud, Layers3, Pause, Play, RotateCcw, Waves } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { fetchCatalog } from '../api/client'
-import type { OrbitalPreset, RepresentationKind } from '../api/types'
+import { fetchCatalog, fetchSuperpositionCatalog } from '../api/client'
+import type { OrbitalPreset, RepresentationKind, SuperpositionPreset } from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
 
 function RangeRow({
@@ -50,6 +50,7 @@ export function ControlPanel() {
     [store.orbital.l],
   )
   const minimumResolution = Math.max(49, 16 * store.orbital.n + 17)
+  const [mixtures, setMixtures] = useState<SuperpositionPreset[]>([])
   const surfaceAvailable = store.orbital.n <= 4
   // A real stationary orbital carries identically zero current, so offering
   // the flow view there would promise a picture that cannot exist.
@@ -58,8 +59,21 @@ export function ControlPanel() {
   useEffect(() => {
     const controller = new AbortController()
     fetchCatalog(controller.signal).then(setPresets).catch(() => setPresets([]))
+    fetchSuperpositionCatalog(controller.signal)
+      .then(setMixtures)
+      .catch(() => setMixtures([]))
     return () => controller.abort()
   }, [])
+
+  // Stepping time re-requests the asset, so the interval is slow enough that
+  // requests do not pile up behind each other.
+  useEffect(() => {
+    if (!store.playing || store.mode !== 'superposition') return undefined
+    const timer = window.setInterval(() => {
+      store.setTimeAu(Number(((store.timeAu + 0.6) % 40).toFixed(3)))
+    }, 420)
+    return () => window.clearInterval(timer)
+  }, [store, store.playing, store.mode, store.timeAu])
 
   const setRepresentation = (value: RepresentationKind) => store.setRepresentation(value)
 
@@ -145,6 +159,63 @@ export function ControlPanel() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="control-section">
+        <div className="section-title"><Clock size={15} /> State kind</div>
+        <div className="representation-switch">
+          <button
+            type="button"
+            className={store.mode === 'eigenstate' ? 'active' : ''}
+            onClick={() => store.setMode('eigenstate')}
+          >
+            <Atom size={17} /> Eigenstate
+          </button>
+          <button
+            type="button"
+            className={store.mode === 'superposition' ? 'active' : ''}
+            title="Analytic time-dependent superposition of eigenstates"
+            onClick={() => store.setMode('superposition')}
+          >
+            <Clock size={17} /> Superposition
+          </button>
+        </div>
+
+        {store.mode === 'superposition' ? (
+          <>
+            <div className="mixture-list">
+              {mixtures.map((mixture) => (
+                <button
+                  key={mixture.id}
+                  type="button"
+                  title={mixture.note}
+                  className={`preset${store.superpositionTerms === mixture.terms ? ' active' : ''}`}
+                  onClick={() => store.setSuperposition(mixture.terms, mixture.label)}
+                >
+                  {mixture.label}
+                </button>
+              ))}
+            </div>
+            <RangeRow
+              label="Time"
+              value={store.timeAu}
+              min={0}
+              max={40}
+              step={0.2}
+              suffix=" a.u."
+              onChange={store.setTimeAu}
+            />
+            <button
+              type="button"
+              className="toggle-row"
+              onClick={() => store.setPlaying(!store.playing)}
+            >
+              {store.playing ? <Pause size={15} /> : <Play size={15} />}
+              <span>Evolve in time</span>
+              <span className={store.playing ? 'switch on' : 'switch'} />
+            </button>
+          </>
+        ) : null}
       </section>
 
       <section className="control-section">

@@ -5,6 +5,8 @@ import type {
   OrbitalParameters,
   OrbitalPreset,
   PointCloudData,
+  SuperpositionIsosurfacePayload,
+  SuperpositionPreset,
 } from './types'
 
 const HEADER_BYTES = 16
@@ -125,4 +127,28 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<OrbitalPreset[
     throw new Error(await response.text())
   }
   return (await response.json()) as OrbitalPreset[]
+}
+
+export async function fetchSuperpositionCatalog(
+  signal?: AbortSignal,
+): Promise<SuperpositionPreset[]> {
+  const response = await fetch('/api/superposition/catalog', { signal })
+  if (!response.ok) {
+    throw new Error(await response.text())
+  }
+  return (await response.json()) as SuperpositionPreset[]
+}
+
+export async function fetchSuperpositionIsosurface(
+  terms: string,
+  time: number,
+  resolution: number,
+  signal?: AbortSignal,
+): Promise<SuperpositionIsosurfacePayload> {
+  const query = queryString({ terms, time, resolution })
+  const response = await fetch(`/api/superposition/isosurface?${query}`, { signal })
+  if (!response.ok) {
+    throw new Error(await response.text())
+  }
+  return (await response.json()) as SuperpositionIsosurfacePayload
 }

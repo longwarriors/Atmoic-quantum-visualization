@@ -4,12 +4,18 @@ import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing'
 import { type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
 import * as THREE from 'three'
 
-import { fetchCurrentField, fetchIsosurface, fetchPointCloud } from '../api/client'
+import {
+  fetchCurrentField,
+  fetchIsosurface,
+  fetchPointCloud,
+  fetchSuperpositionIsosurface,
+} from '../api/client'
 import type {
   CurrentFieldPayload,
   IsosurfacePayload,
   PointCloudData,
   SceneStatus,
+  SuperpositionIsosurfacePayload,
 } from '../api/types'
 import { Atmosphere } from '../scene/Atmosphere'
 import { CurrentStreamlines } from '../scene/CurrentStreamlines'
@@ -26,7 +32,7 @@ function FitOnAssetChange({ asset, children }: { asset: object | null; children:
   const { camera } = useThree()
 
   const state =
-    'metadata' in (asset ?? {})
+    'metadata' in (asset ?? {}) && 'state' in (asset as { metadata: object }).metadata
       ? (asset as PointCloudData | IsosurfacePayload | CurrentFieldPayload).metadata.state
       : undefined
 
@@ -84,6 +90,9 @@ function RendererSettings({
 
 export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
   const {
+    mode,
+    superpositionTerms,
+    timeAu,
     orbital,
     representation,
     samples,
@@ -102,6 +111,8 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
   const [pointData, setPointData] = useState<PointCloudData | null>(null)
   const [surfaceData, setSurfaceData] = useState<IsosurfacePayload | null>(null)
   const [currentData, setCurrentData] = useState<CurrentFieldPayload | null>(null)
+  const [superpositionData, setSuperpositionData] =
+    useState<SuperpositionIsosurfacePayload | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -109,7 +120,33 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
     setPointData(null)
     setSurfaceData(null)
     setCurrentData(null)
-    if (representation === 'point_cloud') {
+    setSuperpositionData(null)
+    if (mode === 'superposition') {
+      // A superposition is a different physical object, not a display option,
+      // so it is its own request rather than a re-render of the eigenstate.
+      fetchSuperpositionIsosurface(superpositionTerms, timeAu, 65, controller.signal)
+        .then((data) => {
+          setSuperpositionData(data)
+          onStatus({
+            loading: false,
+            triangleCount: data.faces.length,
+            extentBohr: data.extent_bohr,
+            densityLevel: data.density_level,
+            capturedProbabilityMass: data.captured_probability_mass,
+            finiteGridDensityIntegral: data.finite_grid_density_integral,
+            gridResolution: data.grid_resolution,
+            gridSpacingBohr: data.grid_spacing_bohr,
+            timeAu: data.metadata.time_au,
+            superposition: data.metadata,
+            warnings: data.metadata.warnings,
+          })
+        })
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) {
+            onStatus({ loading: false, error: error instanceof Error ? error.message : String(error) })
+          }
+        })
+    } else if (representation === 'point_cloud') {
       fetchPointCloud(orbital, samples, seed, controller.signal)
         .then((data) => {
           setPointData(data)
@@ -179,9 +216,16 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
     samples,
     seed,
     seedCount,
+    mode,
+    superpositionTerms,
+    timeAu,
   ])
 
-  const extent = pointData?.extentBohr ?? surfaceData?.extent_bohr ?? currentData?.extent_bohr
+  const extent =
+    pointData?.extentBohr ??
+    surfaceData?.extent_bohr ??
+    currentData?.extent_bohr ??
+    superpositionData?.extent_bohr
 
   return (
     <Canvas
@@ -203,10 +247,11 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
       <RendererSettings exposure={exposure} fogStrength={fogStrength} extent={extent} />
       <Atmosphere showGrid={showGrid} extent={extent} />
       <Bounds fit clip observe margin={1.35} maxDuration={0.8}>
-        <FitOnAssetChange asset={pointData ?? surfaceData ?? currentData}>
+        <FitOnAssetChange asset={pointData ?? surfaceData ?? currentData ?? superpositionData}>
           {pointData ? <ElectronCloud data={pointData} pointSize={pointSize} opacity={opacity} /> : null}
           {surfaceData ? <OrbitalSurface data={surfaceData} opacity={opacity} /> : null}
           {currentData ? <CurrentStreamlines data={currentData} opacity={opacity} /> : null}
+          {superpositionData ? <OrbitalSurface data={superpositionData} opacity={opacity} /> : null}
         </FitOnAssetChange>
       </Bounds>
       <OrbitControls

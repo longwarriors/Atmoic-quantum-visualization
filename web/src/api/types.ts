@@ -44,12 +44,8 @@ export interface OrbitalMetadata {
   warnings: string[]
 }
 
-export interface IsosurfacePayload {
+export interface IsosurfacePayload extends SurfaceGeometry {
   metadata: OrbitalMetadata
-  vertices: number[][]
-  normals: number[][]
-  faces: number[][]
-  phase: number[]
   density_level: number
   requested_probability_mass: number
   captured_probability_mass: number
@@ -73,6 +69,61 @@ export interface CurrentFieldPayload {
   integration_rule: string
 }
 
+export interface SuperpositionTermSpec {
+  n: number
+  l: number
+  m: number
+  coefficient_real: number
+  coefficient_imag: number
+}
+
+export interface SuperpositionMetadata {
+  terms: SuperpositionTermSpec[]
+  label: string
+  basis: BasisKind
+  time_au: number
+  energy_expectation_hartree: number
+  is_stationary: boolean
+  length_unit: string
+  observable: string
+  representation: string
+  normalization: string
+  coordinate_convention: string
+  spherical_harmonic_convention: string
+  geometry_semantics: string
+  color_semantics: string
+  references: string[]
+  warnings: string[]
+}
+
+/** Geometry fields shared by the stationary and time-dependent isosurfaces. */
+export interface SurfaceGeometry {
+  vertices: number[][]
+  normals: number[][]
+  faces: number[][]
+  phase: number[]
+}
+
+export interface SuperpositionIsosurfacePayload extends SurfaceGeometry {
+  metadata: SuperpositionMetadata
+  density_level: number
+  requested_probability_mass: number
+  captured_probability_mass: number
+  finite_grid_density_integral: number
+  grid_resolution: number
+  grid_spacing_bohr: number
+  integration_rule: string
+  extent_bohr: number
+}
+
+export interface SuperpositionPreset {
+  id: string
+  label: string
+  terms: string
+  period_au: number
+  note: string
+}
+
 export interface OrbitalPreset extends OrbitalParameters {
   id: string
   label: string
@@ -93,6 +144,8 @@ export interface SceneStatus {
   lineCount?: number
   maxSpeed?: number
   continuityResidual?: number
+  timeAu?: number
+  superposition?: SuperpositionMetadata
   metadata?: OrbitalMetadata
   warnings?: string[]
 }

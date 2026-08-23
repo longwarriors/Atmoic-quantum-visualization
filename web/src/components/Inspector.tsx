@@ -8,20 +8,30 @@ interface InspectorProps {
 
 export function Inspector({ status }: InspectorProps) {
   const metadata = status.metadata
+  const mixture = status.superposition
   const state = metadata?.state
+  // An eigenstate and a superposition carry different metadata shapes on
+  // purpose, but the contract panel must describe whichever one is on screen.
+  const label = metadata?.label ?? mixture?.label
+  const observable = metadata?.observable ?? mixture?.observable
+  const representation = metadata?.representation ?? mixture?.representation
+  const energy = metadata?.energy_hartree ?? mixture?.energy_expectation_hartree
+  const subtitle = state
+    ? `ψ(${state.n}, ${state.l}, ${state.m}) · ${state.basis} basis`
+    : mixture
+      ? `${mixture.terms.length}-term superposition · ${mixture.basis} basis`
+      : 'Awaiting verified metadata'
 
   return (
     <aside className="panel inspector-panel">
       <span className="eyebrow">SCENE CONTRACT</span>
       <div className="state-title-row">
         <div>
-          <h2>{metadata?.label ?? (status.loading ? 'Computing…' : 'No asset')}</h2>
-          <p>
-            {state ? `ψ(${state.n}, ${state.l}, ${state.m}) · ${state.basis} basis` : 'Awaiting verified metadata'}
-          </p>
+          <h2>{label ?? (status.loading ? 'Computing…' : 'No asset')}</h2>
+          <p>{subtitle}</p>
         </div>
         <span className="energy-pill">
-          {metadata ? `${metadata.energy_hartree.toFixed(6)} Ha` : '—'}
+          {energy !== undefined ? `${energy.toFixed(6)} Ha` : '—'}
         </span>
       </div>
 
@@ -29,12 +39,12 @@ export function Inspector({ status }: InspectorProps) {
         <div className="metric-card">
           <Sigma size={15} />
           <span>Observable</span>
-          <strong>{metadata?.observable ?? '—'}</strong>
+          <strong>{observable ?? '—'}</strong>
         </div>
         <div className="metric-card">
           <Box size={15} />
           <span>Representation</span>
-          <strong>{metadata?.representation ?? '—'}</strong>
+          <strong>{representation ?? '—'}</strong>
         </div>
         <div className="metric-card">
           <Database size={15} />
@@ -58,11 +68,11 @@ export function Inspector({ status }: InspectorProps) {
       </div>
 
       <dl className="contract-list">
-        <div><dt>Coordinates</dt><dd>{metadata?.coordinate_convention ?? '—'}</dd></div>
-        <div><dt>Normalization</dt><dd>{metadata?.normalization ?? '—'}</dd></div>
-        <div><dt>Length unit</dt><dd>{metadata?.length_unit ?? '—'}</dd></div>
-        <div><dt>Geometry</dt><dd>{metadata?.geometry_semantics ?? '—'}</dd></div>
-        <div><dt>Color</dt><dd>{metadata?.color_semantics ?? '—'}</dd></div>
+        <div><dt>Coordinates</dt><dd>{metadata?.coordinate_convention ?? mixture?.coordinate_convention ?? '—'}</dd></div>
+        <div><dt>Normalization</dt><dd>{metadata?.normalization ?? mixture?.normalization ?? '—'}</dd></div>
+        <div><dt>Length unit</dt><dd>{metadata?.length_unit ?? mixture?.length_unit ?? '—'}</dd></div>
+        <div><dt>Geometry</dt><dd>{metadata?.geometry_semantics ?? mixture?.geometry_semantics ?? '—'}</dd></div>
+        <div><dt>Color</dt><dd>{metadata?.color_semantics ?? mixture?.color_semantics ?? '—'}</dd></div>
         {status.radialMass !== undefined ? (
           <div><dt>Radial mass</dt><dd>{(status.radialMass * 100).toFixed(5)}%</dd></div>
         ) : null}
@@ -74,6 +84,31 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.gridResolution !== undefined ? (
           <div><dt>Grid</dt><dd>{status.gridResolution}³ · Δ={status.gridSpacingBohr?.toFixed(3)} bohr</dd></div>
+        ) : null}
+        {status.timeAu !== undefined ? (
+          <div><dt>Time</dt><dd>{status.timeAu.toFixed(2)} a.u.</dd></div>
+        ) : null}
+        {status.superposition ? (
+          <div>
+            <dt>Coefficients</dt>
+            <dd>
+              {status.superposition.terms
+                .map((term) => {
+                  const magnitude = Math.hypot(term.coefficient_real, term.coefficient_imag)
+                  return `${magnitude.toFixed(3)}|${term.n},${term.l},${term.m}⟩`
+                })
+                .join('  +  ')}
+            </dd>
+          </div>
+        ) : null}
+        {status.superposition ? (
+          <div>
+            <dt>⟨H⟩</dt>
+            <dd>
+              {status.superposition.energy_expectation_hartree.toFixed(6)} Ha
+              {status.superposition.is_stationary ? ' · degenerate (static)' : ''}
+            </dd>
+          </div>
         ) : null}
         {status.lineCount !== undefined ? (
           <div><dt>Streamlines</dt><dd>{status.lineCount}</dd></div>
@@ -89,10 +124,12 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
       </dl>
 
-      {metadata?.references.length ? (
+      {(metadata ?? mixture)?.references.length ? (
         <div className="reference-block">
           <span>Reference keys</span>
-          {metadata.references.map((reference) => <code key={reference}>{reference}</code>)}
+          {(metadata ?? mixture)!.references.map((reference) => (
+            <code key={reference}>{reference}</code>
+          ))}
         </div>
       ) : null}
 

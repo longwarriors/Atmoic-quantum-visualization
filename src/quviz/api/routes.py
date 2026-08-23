@@ -9,10 +9,23 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from quviz import __version__
 from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
 from quviz.physics.hydrogenic import validate_quantum_numbers
+from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
 from quviz.sampling.point_cloud import sample_orbital_point_cloud
 from quviz.scene.binary import encode_point_cloud
-from quviz.scene.builders import build_current_field, build_isosurface, orbital_metadata
-from quviz.scene.models import CurrentFieldPayload, IsosurfacePayload, OrbitalMetadata
+from quviz.scene.builders import (
+    build_current_field,
+    build_isosurface,
+    build_superposition_current_field,
+    build_superposition_isosurface,
+    orbital_metadata,
+)
+from quviz.scene.models import (
+    CurrentFieldPayload,
+    IsosurfacePayload,
+    OrbitalMetadata,
+    SuperpositionCurrentPayload,
+    SuperpositionIsosurfacePayload,
+)
 
 router = APIRouter(prefix="/api", tags=["QuViz"])
 
@@ -187,5 +200,125 @@ def current_field(
     _validate_or_422(n, l, m)
     try:
         return _cached_current_field(n, l, m, z, basis, seed_count, arc_step)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# --- Time-dependent superpositions (M1) --------------------------------------
+
+_TERM_SPEC_HELP = (
+    "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'"
+)
+
+
+def _parse_superposition(spec: str, basis: BasisKind) -> SuperpositionState:
+    """Parse the compact query encoding, turning any error into a 422."""
+
+    terms: list[SuperpositionTerm] = []
+    for chunk in spec.split(";"):
+        fields = [piece.strip() for piece in chunk.split(",") if piece.strip()]
+        if len(fields) not in (4, 5):
+            raise HTTPException(
+                status_code=422, detail=f"malformed term {chunk!r}; expected {_TERM_SPEC_HELP}"
+            )
+        try:
+            n, l, m = (int(value) for value in fields[:3])
+            real = float(fields[3])
+            imag = float(fields[4]) if len(fields) == 5 else 0.0
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"unparsable term {chunk!r}") from exc
+        _validate_or_422(n, l, m)
+        terms.append(SuperpositionTerm(n, l, m, complex(real, imag)))
+
+    try:
+        return SuperpositionState(terms=tuple(terms), basis=basis)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/superposition/catalog")
+def superposition_catalog() -> list[dict[str, object]]:
+    """Presets chosen to make the physics legible, including a negative control."""
+
+    return [
+        {
+            "id": "1s-2pz",
+            "label": "1s + 2p_z (Bohr oscillation)",
+            "terms": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+            "period_au": 16.755160819145562,
+            "note": "Dipole oscillates at omega = 3/8 hartree; the textbook radiating state.",
+        },
+        {
+            "id": "2s-2pz",
+            "label": "2s + 2p_z (degenerate, stationary)",
+            "terms": "2,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+            "period_au": 0.0,
+            "note": "Same energy, so nothing moves. A control: visible motion here is a bug.",
+        },
+        {
+            "id": "1s-3dz2",
+            "label": "1s + 3d_z2",
+            "terms": "1,0,0,0.7071067811865476;3,2,0,0.7071067811865476",
+            "period_au": 14.139717579927678,
+            "note": "omega = 4/9 hartree. No dipole coupling, so the breathing is quadrupolar.",
+        },
+        {
+            "id": "2pplus-2pminus",
+            "label": "2p(+1) + 2p(-1)",
+            "terms": "2,1,1,0.7071067811865476;2,1,-1,0.7071067811865476",
+            "period_au": 0.0,
+            "note": "Degenerate: a real p orbital in disguise, with zero net current.",
+        },
+    ]
+
+
+@lru_cache(maxsize=32)
+def _cached_superposition_isosurface(
+    spec: str, basis: BasisKind, time: float, resolution: int, probability_mass: float
+) -> SuperpositionIsosurfacePayload:
+    state = _parse_superposition(spec, basis)
+    return build_superposition_isosurface(
+        state, time=time, resolution=resolution, probability_mass=probability_mass
+    )
+
+
+@router.get("/superposition/isosurface")
+def superposition_isosurface(
+    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
+    basis: BasisKind = BasisKind.COMPLEX,
+    resolution: int = Query(65, ge=49, le=81),
+    probability_mass: float = Query(0.90, ge=0.50, le=0.99),
+) -> SuperpositionIsosurfacePayload:
+    r"""The :math:`|\Psi(t)|^2` level set of a superposition at one instant."""
+
+    try:
+        return _cached_superposition_isosurface(terms, basis, time, resolution, probability_mass)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@lru_cache(maxsize=16)
+def _cached_superposition_current(
+    spec: str, basis: BasisKind, time: float, seed_count: int, arc_step: float
+) -> SuperpositionCurrentPayload:
+    state = _parse_superposition(spec, basis)
+    return build_superposition_current_field(
+        state, time=time, seed_count=seed_count, arc_step=arc_step
+    )
+
+
+@router.get("/superposition/current-field")
+def superposition_current_field(
+    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
+    basis: BasisKind = BasisKind.COMPLEX,
+    seed_count: int = Query(24, ge=1, le=128),
+    arc_step: float = Query(0.15, gt=0.01, le=1.0),
+) -> SuperpositionCurrentPayload:
+    """Probability-flow streamlines of a superposition, with its continuity residual."""
+
+    try:
+        return _cached_superposition_current(terms, basis, time, seed_count, arc_step)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

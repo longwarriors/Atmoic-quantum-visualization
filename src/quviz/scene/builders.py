@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from math import pi
 
 import numpy as np
@@ -22,13 +24,24 @@ from quviz.physics.hydrogenic import (
     radial_wavefunction,
     validate_quantum_numbers,
 )
-from quviz.physics.observables import phase, probability_current_hydrogenic, probability_density
+from quviz.physics.observables import (
+    continuity_residual,
+    phase,
+    probability_current_hydrogenic,
+    probability_density,
+    superposition_current,
+)
+from quviz.physics.superposition import SuperpositionState
 from quviz.sampling.inverse_cdf import normalized_cdf
 from quviz.scene.models import (
     CurrentFieldPayload,
     IsosurfacePayload,
     OrbitalMetadata,
     QuantumStateSpec,
+    SuperpositionCurrentPayload,
+    SuperpositionIsosurfacePayload,
+    SuperpositionMetadata,
+    SuperpositionTermSpec,
 )
 from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamlines
 
@@ -155,6 +168,73 @@ def _density_threshold_for_mass(
     return level, captured, total
 
 
+@dataclass(frozen=True, slots=True)
+class _MeshResult:
+    vertices: np.ndarray
+    faces: np.ndarray
+    normals: np.ndarray
+    vertex_psi: np.ndarray
+    level: float
+    captured: float
+    integrated_mass: float
+    spacing: float
+
+
+def _build_density_mesh(
+    evaluate: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray],
+    *,
+    extent: float,
+    resolution: int,
+    probability_mass: float,
+) -> _MeshResult:
+    """Marching-cubes core shared by every density isosurface.
+
+    Takes a wavefunction evaluator rather than quantum numbers so a single
+    eigenstate and a time-dependent superposition produce geometry through the
+    same code path, including the winding fix and the mass accounting.
+    """
+
+    axis = np.linspace(-extent, extent, resolution, dtype=np.float64)
+    spacing = float(axis[1] - axis[0])
+    x, y, z_coord = np.meshgrid(axis, axis, axis, indexing="ij")
+    radius, theta, phi = cartesian_to_spherical(x, y, z_coord)
+    density = probability_density(evaluate(radius, theta, phi))
+    integration_weights = _simpson_weights_3d(resolution, spacing)
+    level, captured, integrated_mass = _density_threshold_for_mass(
+        density, integration_weights, probability_mass
+    )
+    if not float(np.min(density)) < level < float(np.max(density)):
+        raise RuntimeError("computed isosurface level is outside the density range")
+
+    vertices, faces, normals, _ = marching_cubes(  # type: ignore[no-untyped-call]
+        density.astype(np.float32),
+        level=level,
+        spacing=(spacing, spacing, spacing),
+        allow_degenerate=False,
+    )
+    vertices += np.asarray([axis[0], axis[0], axis[0]], dtype=np.float32)
+    face_normals = np.cross(
+        vertices[faces[:, 1]] - vertices[faces[:, 0]],
+        vertices[faces[:, 2]] - vertices[faces[:, 0]],
+    )
+    mean_vertex_normals = np.mean(normals[faces], axis=1)
+    if float(np.mean(np.einsum("ij,ij->i", face_normals, mean_vertex_normals))) < 0.0:
+        faces = faces[:, [0, 2, 1]]
+    vertex_r, vertex_theta, vertex_phi = cartesian_to_spherical(
+        vertices[:, 0], vertices[:, 1], vertices[:, 2]
+    )
+    return _MeshResult(
+        vertices=vertices,
+        faces=faces,
+        normals=normals,
+        vertex_psi=evaluate(vertex_r, vertex_theta, vertex_phi),
+        level=level,
+        captured=captured,
+        integrated_mass=integrated_mass,
+        spacing=spacing,
+    )
+
+
 def build_isosurface(
     n: int,
     l: int,
@@ -187,46 +267,16 @@ def build_isosurface(
     basis_kind = BasisKind(basis)
 
     extent = _radial_extent_for_mass(n, l, z)
-    axis = np.linspace(-extent, extent, resolution, dtype=np.float64)
-    spacing = float(axis[1] - axis[0])
-    x, y, z_coord = np.meshgrid(axis, axis, axis, indexing="ij")
-    radius, theta, phi = cartesian_to_spherical(x, y, z_coord)
-    psi = hydrogenic_wavefunction(n, l, m, radius, theta, phi, z=z, basis=basis_kind)
-    density = probability_density(psi)
-    integration_weights = _simpson_weights_3d(resolution, spacing)
-    level, captured, integrated_mass = _density_threshold_for_mass(
-        density, integration_weights, probability_mass
+    mesh = _build_density_mesh(
+        lambda r, th, ph: hydrogenic_wavefunction(n, l, m, r, th, ph, z=z, basis=basis_kind),
+        extent=extent,
+        resolution=resolution,
+        probability_mass=probability_mass,
     )
-    if not float(np.min(density)) < level < float(np.max(density)):
-        raise RuntimeError("computed isosurface level is outside the density range")
-
-    vertices, faces, normals, _ = marching_cubes(  # type: ignore[no-untyped-call]
-        density.astype(np.float32),
-        level=level,
-        spacing=(spacing, spacing, spacing),
-        allow_degenerate=False,
-    )
-    vertices += np.asarray([axis[0], axis[0], axis[0]], dtype=np.float32)
-    face_normals = np.cross(
-        vertices[faces[:, 1]] - vertices[faces[:, 0]],
-        vertices[faces[:, 2]] - vertices[faces[:, 0]],
-    )
-    mean_vertex_normals = np.mean(normals[faces], axis=1)
-    if float(np.mean(np.einsum("ij,ij->i", face_normals, mean_vertex_normals))) < 0.0:
-        faces = faces[:, [0, 2, 1]]
-    vertex_r, vertex_theta, vertex_phi = cartesian_to_spherical(
-        vertices[:, 0], vertices[:, 1], vertices[:, 2]
-    )
-    vertex_psi = hydrogenic_wavefunction(
-        n,
-        l,
-        m,
-        vertex_r,
-        vertex_theta,
-        vertex_phi,
-        z=z,
-        basis=basis_kind,
-    )
+    vertices, faces, normals = mesh.vertices, mesh.faces, mesh.normals
+    vertex_psi = mesh.vertex_psi
+    level, captured, integrated_mass = mesh.level, mesh.captured, mesh.integrated_mass
+    spacing = mesh.spacing
 
     warnings: list[str] = []
     if abs(integrated_mass - 1.0) > 0.002:
@@ -403,4 +453,217 @@ def build_current_field(
         seed_density_floor=density_floor,
         extent_bohr=extent,
         continuity_residual=_continuity_residual((n, l, m, z, basis_kind)),
+    )
+
+
+def superposition_metadata(
+    state: SuperpositionState,
+    *,
+    time: float,
+    observable: ObservableKind,
+    representation: RepresentationKind,
+    warnings: list[str] | None = None,
+) -> SuperpositionMetadata:
+    """Metadata for a superposition asset, including the instant it depicts."""
+
+    notes = list(warnings or [])
+    if state.is_stationary and len(state.terms) > 1:
+        notes.append(
+            "all terms share one energy, so this superposition is stationary: "
+            "the density does not evolve and any apparent motion is an artefact"
+        )
+    geometry = (
+        "streamlines of probability flow v = j / rho, sampled at equal arc length; "
+        "these are flow lines, not electron trajectories"
+        if representation is RepresentationKind.STREAMLINES
+        else "level set of probability density |Psi|^2 at the stated time"
+    )
+    color = (
+        "flow speed |j|/rho normalized to the reported maximum"
+        if representation is RepresentationKind.STREAMLINES
+        else "principal wavefunction phase in [-pi, pi]"
+    )
+    return SuperpositionMetadata(
+        terms=[
+            SuperpositionTermSpec(
+                n=term.n,
+                l=term.l,
+                m=term.m,
+                coefficient_real=float(np.real(term.coefficient)),
+                coefficient_imag=float(np.imag(term.coefficient)),
+            )
+            for term in state.terms
+        ],
+        label=state.label(),
+        basis=state.basis,
+        time_au=time,
+        energy_expectation_hartree=state.energy_expectation,
+        is_stationary=state.is_stationary,
+        observable=observable,
+        representation=representation,
+        coordinate_convention=ANGLE_CONVENTION,
+        spherical_harmonic_convention=SPHERICAL_HARMONIC_CONVENTION,
+        geometry_semantics=geometry,
+        color_semantics=color,
+        references=["dlmf-spherical-harmonics", "dlmf-laguerre", "griffiths2018qm"],
+        warnings=notes,
+    )
+
+
+def _superposition_extent(state: SuperpositionState) -> float:
+    """The widest term sets the cube: a smaller box would clip a real component."""
+
+    return max(_radial_extent_for_mass(term.n, term.l, state.z) for term in state.terms)
+
+
+def build_superposition_isosurface(
+    state: SuperpositionState,
+    *,
+    time: float = 0.0,
+    resolution: int = 65,
+    probability_mass: float = 0.90,
+) -> SuperpositionIsosurfacePayload:
+    r"""Build the :math:`|\Psi(t)|^2` isosurface of a superposition at one instant."""
+
+    highest = max(term.n for term in state.terms)
+    if highest > 4:
+        raise ValueError("isosurface generation is validated only for n <= 4")
+    minimum_resolution = max(49, 16 * highest + 17)
+    if resolution < minimum_resolution or resolution > 81:
+        raise ValueError(f"resolution must be between {minimum_resolution} and 81 for n={highest}")
+    if resolution % 2 == 0:
+        raise ValueError("resolution must be odd so Cartesian nodal planes lie on the grid")
+    if not 0.50 <= probability_mass <= 0.99:
+        raise ValueError("probability_mass must be between 0.50 and 0.99")
+
+    extent = _superposition_extent(state)
+    mesh = _build_density_mesh(
+        lambda r, th, ph: state.evaluate(r, th, ph, time=time),
+        extent=extent,
+        resolution=resolution,
+        probability_mass=probability_mass,
+    )
+
+    warnings: list[str] = []
+    if abs(mesh.integrated_mass - 1.0) > 0.002:
+        shells = {term.n for term in state.terms}
+        if len(shells) > 1:
+            # Name the real cause. The cube is sized for the widest term, so a
+            # compact term sits on too few points. Measured for 1s + 2p the
+            # error is about six times a single-shell state's at the same
+            # resolution (0.979 vs 0.996 at 49); it does converge, just from
+            # much further away, so "increase resolution" alone would mislead.
+            warnings.append(
+                f"finite-grid density integral is {mesh.integrated_mass:.6f}: terms span "
+                f"n={sorted(shells)}, so the uniform cube sized for the widest term "
+                f"under-resolves the most compact one. The error is several times larger "
+                f"than for a single-shell state at the same resolution; treat the "
+                f"enclosed mass as approximate."
+            )
+        else:
+            warnings.append(
+                f"finite-grid density integral is {mesh.integrated_mass:.6f}; increase resolution"
+            )
+    return SuperpositionIsosurfacePayload(
+        metadata=superposition_metadata(
+            state,
+            time=time,
+            observable=ObservableKind.PROBABILITY_DENSITY,
+            representation=RepresentationKind.ISOSURFACE,
+            warnings=warnings,
+        ),
+        vertices=np.round(mesh.vertices, 6).tolist(),
+        normals=np.round(mesh.normals, 6).tolist(),
+        faces=mesh.faces.astype(np.int32).tolist(),
+        phase=np.round(np.mod(phase(mesh.vertex_psi) + pi, 2.0 * pi) - pi, 6).tolist(),
+        density_level=mesh.level,
+        requested_probability_mass=probability_mass,
+        captured_probability_mass=mesh.captured,
+        finite_grid_density_integral=mesh.integrated_mass,
+        grid_resolution=resolution,
+        grid_spacing_bohr=mesh.spacing,
+        extent_bohr=extent,
+    )
+
+
+def build_superposition_current_field(
+    state: SuperpositionState,
+    *,
+    time: float = 0.0,
+    seed_count: int = 48,
+    arc_step: float = 0.12,
+    seed_density_fraction: float = 1e-3,
+    lattice: int = 21,
+) -> SuperpositionCurrentPayload:
+    r"""Build probability-flow streamlines of :math:`\Psi(t)`.
+
+    Seeding is fully three-dimensional here, unlike the stationary single-state
+    builder. A superposition has no azimuthal symmetry to exploit: its flow
+    lines generally do not close, so one azimuth no longer enumerates them.
+    """
+
+    if seed_count < 1:
+        raise ValueError("seed_count must be positive")
+    if arc_step <= 0.0:
+        raise ValueError("arc_step must be positive")
+
+    extent = _superposition_extent(state)
+    axis = np.linspace(-extent, extent, lattice, dtype=np.float64)
+    x, y, z_axis = np.meshgrid(axis, axis, axis, indexing="ij")
+    candidates = np.column_stack((x.ravel(), y.ravel(), z_axis.ravel()))
+    radius, polar, azimuth = cartesian_to_spherical(
+        candidates[:, 0], candidates[:, 1], candidates[:, 2]
+    )
+    density = probability_density(state.evaluate(radius, polar, azimuth, time=time))
+    density_floor = float(np.max(density)) * seed_density_fraction
+    keep = np.flatnonzero(density > density_floor)
+    keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
+
+    lines: list[list[list[float]]] = []
+    speeds: list[list[float]] = []
+    max_speed = 0.0
+    if keep.size:
+
+        def velocity(points: np.ndarray) -> np.ndarray:
+            spherical = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
+            rho = probability_density(state.evaluate(*spherical, time=time))
+            current = superposition_current(state, points, time=time)
+            result = np.zeros_like(current)
+            live = rho > 1e-14
+            np.divide(current, rho[:, None], out=result, where=live[:, None])
+            return result
+
+        for line in integrate_streamlines(
+            velocity,
+            candidates[keep],
+            arc_step=arc_step,
+            max_points=int(4.0 * extent / arc_step) + 8,
+            close_tolerance=0.5 * arc_step,
+        ):
+            if line.vertices.shape[0] < 4:
+                continue
+            lines.append(np.round(line.vertices, 6).tolist())
+            speeds.append(np.round(line.speed, 6).tolist())
+            max_speed = max(max_speed, float(np.max(line.speed)))
+
+    probes = candidates[keep[: min(8, keep.size)]] if keep.size else candidates[:1]
+    residual, rate_scale = continuity_residual(state, probes, time=time)
+    normalized = float(np.max(np.abs(residual)) / rate_scale) if rate_scale > 0.0 else 0.0
+
+    return SuperpositionCurrentPayload(
+        metadata=superposition_metadata(
+            state,
+            time=time,
+            observable=ObservableKind.PROBABILITY_CURRENT,
+            representation=RepresentationKind.STREAMLINES,
+        ),
+        lines=lines,
+        speed=speeds,
+        seed_count=len(lines),
+        max_speed=max_speed,
+        arc_step_bohr=arc_step,
+        seed_density_floor=density_floor,
+        extent_bohr=extent,
+        continuity_residual=normalized,
+        density_rate_scale=rate_scale,
     )

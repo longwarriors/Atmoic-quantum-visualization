@@ -1,11 +1,12 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 
-import type { IsosurfacePayload } from '../api/types'
+import type { SurfaceGeometry } from '../api/types'
 import { phaseToRgb } from './color'
 
 interface OrbitalSurfaceProps {
-  data: IsosurfacePayload
+  /** Geometry only: the stationary and time-dependent payloads share these fields. */
+  data: SurfaceGeometry
   opacity: number
 }
 

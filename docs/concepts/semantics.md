@@ -10,7 +10,8 @@
 | 概率流 | $\mathbf j$ | 箭头、流线、流管 | 默认等同实测轨迹 |
 | 等值面 | $\rho=c$ 或 $\psi=c$ | 三维网格 | 唯一的轨道边界 |
 | 随机样本 | $\mathbf r_i\sim|\psi|^2d^3r$ | 点云 | 单电子的历史路径 |
-| 概率流线 | $\mathbf v=\mathbf j/ho$ 的积分曲线 | 弧长等距折线，颜色表速度 | 电子的实测轨迹 |
+| 概率流线 | $\mathbf v=\mathbf j/
+ho$ 的积分曲线 | 弧长等距折线，颜色表速度 | 电子的实测轨迹 |
 | 实验图样 | $I=|\mathcal M[\psi]|^2$ | 探测器强度 | 原空间三维密度照片 |
 
 ## Observable 与 representation 的正交关系
@@ -29,5 +30,7 @@
 |---|---|---|---|
 | `probability_density` | ✅ | ✅ | — |
 | `probability_current` | — | — | ✅ |
+
+定态与含时叠加态使用**不同的 metadata 契约**（`OrbitalMetadata` vs `SuperpositionMetadata`）：叠加态没有单一 $(n,\ell,m)$，硬塞一个会让契约声称一个并非画面所示的态。系数与时刻是叠加态物理身份的一部分，因此是必填字段。
 
 `wavefunction`、`phase` 作为独立 observable，以及 `slice` representation 仍是枚举中的占位，尚未实现。

@@ -55,7 +55,9 @@
 - ✅ $\pm m$ 密度相同而流反向 — `test_current_reverses_sign_with_m_while_density_is_unchanged`；
 - ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`；
 - ✅ payload 报告实测 $\nabla\cdot\mathbf j$ 残差而非宣称该性质 — `CurrentFieldPayload.continuity_residual`；
-- 🕒 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$（M1）。
+- ✅ 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$ — `tests/test_superposition.py`；$\partial\rho/\partial t$ 取闭式而非差分，因此该检验衡量的是电流，而不是时间差分格式的误差；
+- ✅ 叠加态范数与 $\langle H\rangle$ 守恒（依赖上面的正交性门禁）；
+- ✅ 1s–2p 偶极振幅与 Bohr 频率对照闭式；简并叠加密度不动。
 
 ## 几何与等值面
 

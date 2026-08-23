@@ -113,6 +113,8 @@ h1, h2, p { margin: 0; }
 .round-button:hover { color: var(--cyan); border-color: var(--line-strong); }
 
 .preset-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 17px; }
+.mixture-list { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 12px; }
+.mixture-list .preset { text-align: left; padding: 7px 10px; line-height: 1.25; white-space: normal; }
 .preset {
   min-height: 31px;
   padding: 0 6px;

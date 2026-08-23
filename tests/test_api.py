@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from quviz.api.app import create_app
@@ -104,3 +105,71 @@ def test_openapi_describes_the_current_field_contract() -> None:
     properties = schemas["CurrentFieldPayload"]["properties"]
     for field in ("lines", "speed", "continuity_residual", "arc_step_bohr", "seed_density_floor"):
         assert field in properties
+
+
+BOHR_PAIR = "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"
+
+
+def test_superposition_catalog_includes_a_degenerate_control() -> None:
+    entries = client.get("/api/superposition/catalog").json()
+    ids = {entry["id"] for entry in entries}
+    assert {"1s-2pz", "2s-2pz"} <= ids
+    control = next(entry for entry in entries if entry["id"] == "2s-2pz")
+    assert control["period_au"] == 0.0
+
+
+def test_superposition_isosurface_route_carries_time_and_coefficients() -> None:
+    response = client.get(f"/api/superposition/isosurface?terms={BOHR_PAIR}&time=3.5&resolution=49")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["metadata"]["observable"] == "probability_density"
+    assert payload["metadata"]["time_au"] == 3.5
+    assert payload["metadata"]["is_stationary"] is False
+    assert len(payload["metadata"]["terms"]) == 2
+    assert len(payload["vertices"]) == len(payload["phase"]) > 0
+
+
+def test_superposition_current_route_reports_the_continuity_residual() -> None:
+    response = client.get(
+        f"/api/superposition/current-field?terms={BOHR_PAIR}&time=2.0&seed_count=8"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["metadata"]["representation"] == "streamlines"
+    assert payload["density_rate_scale"] > 0.0
+    assert payload["continuity_residual"] < 1e-2
+
+
+def test_degenerate_superposition_route_warns_that_nothing_moves() -> None:
+    degenerate = "2,0,0,0.7071067811865476;2,1,0,0.7071067811865476"
+    payload = client.get(f"/api/superposition/isosurface?terms={degenerate}&resolution=49").json()
+
+    assert payload["metadata"]["is_stationary"] is True
+    assert any("stationary" in w for w in payload["metadata"]["warnings"])
+
+
+@pytest.mark.parametrize(
+    "terms",
+    [
+        "1,0,0,0.5;2,1,0,0.5",  # not normalized
+        "1,0,0,1.0;1,0,0,0.0",  # duplicate quantum numbers
+        "2,1,2,1.0",  # |m| > l
+        "nonsense",  # unparsable
+        "1,0,0",  # too few fields
+    ],
+)
+def test_superposition_route_rejects_bad_term_specs(terms: str) -> None:
+    assert (
+        client.get(f"/api/superposition/isosurface?terms={terms}&resolution=49").status_code == 422
+    )
+
+
+def test_openapi_describes_the_superposition_contracts() -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "SuperpositionIsosurfacePayload" in schemas
+    assert "SuperpositionCurrentPayload" in schemas
+    metadata = schemas["SuperpositionMetadata"]["properties"]
+    for field in ("terms", "time_au", "energy_expectation_hartree", "is_stationary"):
+        assert field in metadata
