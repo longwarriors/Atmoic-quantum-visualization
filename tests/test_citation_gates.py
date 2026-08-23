@@ -536,6 +536,26 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ),
         ('> <div markdown="1">[@k]</div>\n', True),
         ('- <div markdown="1">[@k]</div>\n', True),
+        # The final reviewer's placements: one to three leading spaces (the
+        # extractor still calls that "line start" and opens the element, but
+        # the spaces precede its placeholder in the block), a tab or a second
+        # block in the tail of a raw block, and an indented line after a
+        # blank line. Text *before* the tag on a fresh line is different:
+        # there the tag is inline HTML inside a paragraph and its content is
+        # prose to the build, so the scanner must keep counting it.
+        ('  <div markdown="1">[@k]</div>\n', False),
+        ('text <div markdown="1">[@k]</div>\n', True),
+        ('text<div markdown="1">[@k]</div>\n', True),
+        ('<div>x</div> <div markdown="1">[@k]</div>\n', False),
+        ('<div>x</div>\t<div markdown="1">[@k]</div>\n', False),
+        ('<div>x</div>\n\n  <div markdown="1">[@k]</div>\n', False),
+        ('<div>x</div>\n\ntext <div markdown="1">[@k]</div>\n', True),
+        ('<!-- c -->  <div markdown="1">[@k]</div>\n', False),
+        ('text\n\n  <div markdown="1">[@k]</div>\n', False),
+        ('  <div markdown="1">\n\n[@k]\n\n</div>\n', False),
+        ('  <div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n', False),
+        ('  <div markdown="1">[@k]</div> tail [@k]\n', True),
+        ('  <div markdown="1">[@k]</div>\n\n[@k]\n', True),
         # pymdownx.arithmatex, generic mode with smart dollars: inline math.
         ("$[@k]$\n", False),
         ("a $x [@k]$ b\n", False),

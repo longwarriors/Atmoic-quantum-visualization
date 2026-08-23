@@ -28,8 +28,11 @@ extension list and checks that the scanner agrees:
   (``<pre>``, ``<div>``, ``<details>``, ``<script>`` ...) starting a line
   indented at most three spaces opens a raw block that ends at its matching
   closing tag, or swallows the rest of the document when never closed; a
-  ``markdown`` attribute other than ``"0"`` keeps the content as prose --
-  and the ones it got wrong. After a raw block, a block-level comment, an
+  ``markdown`` attribute other than ``"0"`` keeps the content as prose only
+  when the opening tag is the very first thing in its block -- at column 0
+  of its line, not even one space in front of it, and nothing but a line
+  break or blank lines between it and the previous block (the full rule is
+  below) -- and the ones it got wrong. After a raw block, a block-level comment, an
   ``<hr>``, a void tag or a ``markdown`` element closes with more content on
   its line the extractor is *in tail*: the next block-level tag on that line
   opens another raw block wherever it sits, and a comment there joins the raw
@@ -40,9 +43,14 @@ extension list and checks that the scanner agrees:
   parsed as blocks of its own, as ``MarkdownInHtmlProcessor`` does -- but
   only when the element's placeholder *starts* its block: that processor
   matches it at position 0. A ``markdown`` element opened in the tail of a
-  raw block, after text on its line, or on an indented line shares its
-  block with whatever precedes it and is emitted verbatim, attribute and
-  all, so its content is raw to the build and blanked here.
+  raw block (after the closing tag, a comment, an ``<hr>`` or a void tag on
+  the same line, whatever whitespace separates them), or on a line indented
+  one to three spaces (``at_line_start`` still opens the element, but the
+  spaces land in front of its placeholder) shares its block with whatever
+  precedes it and is emitted verbatim, attribute and all, so its content is
+  raw to the build and blanked here. Prose text *before* the tag on a
+  fresh line is the other case: the tag is then inline HTML inside a
+  paragraph and its content is prose, to the build and to the scanner.
 * **HTML comments** are removed when they start a line (a block-level
   comment) or follow a closed block in its tail. A comment inside a prose
   line stays in the paragraph, where the citation pattern runs *before* the
