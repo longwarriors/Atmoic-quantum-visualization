@@ -122,7 +122,7 @@ def test_weekly_sweep_fails_on_broken_and_suspect_but_tolerates_blocked() -> Non
     assert not fails_run("OK", "https://example.org", strict=False)
 
 
-def test_changed_links_mode_tolerates_blocked_only_for_known_bot_filter_hosts() -> None:
+def test_changed_links_mode_tolerates_blocked_on_every_host() -> None:
     # A newly added zhihu/APS/ScienceDirect/ACS/Cambridge link answers 403 to
     # every bot; failing the pull request on that would just teach people to
     # ignore the gate. Those sources should be cited by DOI instead.
@@ -131,11 +131,26 @@ def test_changed_links_mode_tolerates_blocked_only_for_known_bot_filter_hosts() 
     assert not fails_run("BLOCKED", "https://www.sciencedirect.com/science/article/x", strict=True)
     assert not fails_run("BLOCKED", "https://pubs.acs.org/doi/10.1021/x", strict=True)
     assert not fails_run("BLOCKED", "https://www.cambridge.org/core/x", strict=True)
+    # Off the bot-filter hosts the only way to be BLOCKED is a 429, which the
+    # checker's own concurrency provokes (GitHub in particular). Rate limiting
+    # says nothing about the link, so it is tolerated in the pull-request mode
+    # too; it used to fail the run there, contradicting classify()'s comment.
+    assert classify("https://github.com/o/r", 429) == "BLOCKED"
+    assert not fails_run("BLOCKED", "https://github.com/o/r", strict=True)
     # Anything else that is not OK still fails a pull request.
-    assert fails_run("BLOCKED", "https://github.com/o/r", strict=True)
     assert fails_run("SUSPECT", "https://www.zhihu.com/question/1", strict=True)
+    assert fails_run("SUSPECT", "https://github.com/o/r", strict=True)
     assert fails_run("BROKEN", "https://www.zhihu.com/question/1", strict=True)
     assert not fails_run("OK", "https://github.com/o/r", strict=True)
+
+
+def test_a_403_off_the_bot_filter_hosts_is_suspect_so_it_still_fails_strict_mode() -> None:
+    # Tolerating BLOCKED everywhere must not let a real 403 through: off
+    # BOT_HOSTS a 403 is SUSPECT, never BLOCKED.
+    url = "https://github.com/o/r"
+    assert classify(url, 403) == "SUSPECT"
+    assert fails_run(classify(url, 403), url, strict=True)
+    assert fails_run(classify(url, 403), url, strict=False)
 
 
 def test_step_summary_lists_problems_and_counts() -> None:
@@ -152,8 +167,10 @@ def test_step_summary_lists_problems_and_counts() -> None:
     assert "1 ok" in summary and "2 blocked" in summary and "1 broken" in summary
     zhihu_line = next(line for line in summary.splitlines() if "zhihu" in line)
     github_line = next(line for line in summary.splitlines() if "github" in line)
+    suspect_line = next(line for line in summary.splitlines() if "suspect.example" in line)
     assert "tolerated" in zhihu_line and "fails" not in zhihu_line
-    assert "fails" in github_line
+    assert "tolerated" in github_line and "fails" not in github_line
+    assert "fails the run" in suspect_line
     assert format_row(("c", "404", "https://broken.example")) == "[c] 404 https://broken.example"
 
 

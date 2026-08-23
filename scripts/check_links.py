@@ -6,14 +6,15 @@ Two modes:
   every DOI) in ``references.bib``. It needs the network, so it is deliberately
   NOT part of ``make check`` / ``check.ps1`` -- a transient outage must not
   block local development -- and runs as the weekly ``link-check`` workflow.
-  BROKEN and SUSPECT results fail the run; BLOCKED (a bot filter, see below)
-  is tolerated.
+  BROKEN and SUSPECT results fail the run; BLOCKED (a bot filter, see below,
+  or a 429 rate limit) is tolerated.
 * ``--changed-since <git-ref>`` probes only the URLs and DOIs *added* to
   ``references.bib`` and ``docs/`` since the merge base with ``<git-ref>``.
   This is the gate ``ci.yml`` runs on every push and pull request: a link
   being introduced has to be shown to work, so in this mode every result
-  other than OK fails -- except BLOCKED on a host in ``BOT_HOSTS``, whose
-  403 says nothing about the link (cite such sources by DOI instead).
+  other than OK fails -- except BLOCKED, which is either a 401/403 from a
+  host in ``BOT_HOSTS`` (cite such sources by DOI instead) or a 429 rate
+  limit from any host; neither says anything about the link.
 
 The gap the sweep closes is real. Between 2026-08-22 and 2026-08-23 the
 point-group table host ``symmetry.jacobs-university.de`` was already dead --
@@ -90,7 +91,8 @@ def _request(url: str) -> tuple[int | None, str]:
 
 def _probe(url: str) -> tuple[str, int | None, str]:
     # 429 is usually this script's own concurrency (GitHub in particular);
-    # back off briefly and try again before reporting it.
+    # back off briefly and try again before reporting it. One that survives
+    # the retries is BLOCKED and tolerated in both modes (quviz.docs.links).
     status, detail = _request(url)
     for delay in RETRY_DELAYS:
         if status != 429:
