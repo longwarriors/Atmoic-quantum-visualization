@@ -100,14 +100,19 @@ def _is_gitlab(url: str) -> bool:
 
 
 def _page_path(url: str) -> list[str]:
-    """The path segments after the repository (after GitLab's ``-`` separator)."""
+    """The path segments after the repository (after GitLab's ``-`` separator).
+
+    Only GitLab separates owner/(sub)groups/repo from the page kind with a
+    ``-`` segment; on every other host ``-`` is an ordinary directory name.
+    """
 
     segments = _segments(url)
-    if "-" in segments[2:]:  # GitLab separates owner/(sub)groups/repo from the page kind
+    gitlab = _is_gitlab(url)
+    if gitlab and "-" in segments[2:]:
         return segments[segments.index("-", 2) + 1 :]
     rest = segments[2:]
     known = _REF_MARKERS | {"releases", "tags"} | NON_SOURCE_PATHS
-    if _is_gitlab(url) and not any(part in known for part in rest):
+    if gitlab and not any(part in known for part in rest):
         return []  # /group/subgroup/repo without a page kind
     return rest
 

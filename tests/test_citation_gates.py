@@ -827,6 +827,21 @@ def test_bare_repository_and_file_urls_are_still_accepted(url: str) -> None:
     assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://github.com/o/r/blob/{SHA}/docs/-/README.md",
+        f"https://github.com/o/r/tree/{SHA}/-",
+        f"https://github.com/o/r/blob/{SHA}/-/f.py",
+    ],
+)
+def test_a_literal_dash_segment_is_only_a_separator_on_gitlab(url: str) -> None:
+    # GitLab separates the repository from the page kind with ``/-/``; on
+    # every other host a ``-`` is an ordinary directory name.
+    assert url_ref(url) == ("sha", SHA)
+    assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
+
+
 def test_host_suffix_match_is_shared_and_exact() -> None:
     assert is_code_host("https://github.com/o/r")
     assert is_code_host("https://raw.githubusercontent.com/o/r/x/f.py")
