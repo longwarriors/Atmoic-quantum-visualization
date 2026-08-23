@@ -9,13 +9,16 @@ import type {
 const HEADER_BYTES = 16
 const EXPECTED_MAGIC = 'QVPC'
 
-function queryString(params: Record<string, string | number>): string {
+function queryString(params: object): string {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => search.set(key, String(value)))
   return search.toString()
 }
 
-export function parsePointCloud(buffer: ArrayBuffer, headers: Headers): PointCloudData {
+export function parsePointCloud(
+  buffer: ArrayBuffer,
+  headers: Headers,
+): Omit<PointCloudData, 'metadata'> {
   if (buffer.byteLength < HEADER_BYTES) {
     throw new Error('Point-cloud payload is shorter than the QVPC header.')
   }
@@ -66,12 +69,15 @@ export async function fetchPointCloud(
   signal?: AbortSignal,
 ): Promise<PointCloudData> {
   const query = queryString({ ...params, samples, seed })
-  const response = await fetch(`/api/orbitals/point-cloud?${query}`, { signal })
+  const [response, metadata] = await Promise.all([
+    fetch(`/api/orbitals/point-cloud?${query}`, { signal }),
+    fetchMetadata(params, signal),
+  ])
   if (!response.ok) {
     throw new Error(await response.text())
   }
   const buffer = await response.arrayBuffer()
-  return parsePointCloud(buffer, response.headers)
+  return { ...parsePointCloud(buffer, response.headers), metadata }
 }
 
 export async function fetchIsosurface(

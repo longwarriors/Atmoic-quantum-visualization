@@ -12,6 +12,8 @@ interface SceneStore {
   pointSize: number
   opacity: number
   bloom: number
+  exposure: number
+  fogStrength: number
   autoRotate: boolean
   showGrid: boolean
   setOrbital: (patch: Partial<OrbitalParameters>) => void
@@ -23,6 +25,8 @@ interface SceneStore {
   setPointSize: (value: number) => void
   setOpacity: (value: number) => void
   setBloom: (value: number) => void
+  setExposure: (value: number) => void
+  setFogStrength: (value: number) => void
   setAutoRotate: (value: boolean) => void
   setShowGrid: (value: boolean) => void
   applyPreset: (preset: OrbitalParameters) => void
@@ -37,19 +41,33 @@ function normalizeOrbital(current: OrbitalParameters, patch: Partial<OrbitalPara
   return { n, l, m, z, basis }
 }
 
+function minimumSurfaceResolution(n: number): number {
+  return Math.max(49, 16 * n + 17)
+}
+
 export const useSceneStore = create<SceneStore>()((set) => ({
   orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
   representation: 'point_cloud',
   samples: 28000,
   seed: 7,
-  resolution: 52,
+  resolution: 65,
   probabilityMass: 0.9,
-  pointSize: 3.8,
-  opacity: 0.82,
-  bloom: 0.58,
-  autoRotate: true,
+  pointSize: 2.8,
+  opacity: 1.0,
+  bloom: 0.12,
+  exposure: 0.9,
+  fogStrength: 0.18,
+  autoRotate: false,
   showGrid: true,
-  setOrbital: (patch) => set((state) => ({ orbital: normalizeOrbital(state.orbital, patch) })),
+  setOrbital: (patch) =>
+    set((state) => {
+      const orbital = normalizeOrbital(state.orbital, patch)
+      return {
+        orbital,
+        representation: orbital.n > 4 ? 'point_cloud' : state.representation,
+        resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
+      }
+    }),
   setRepresentation: (representation) => set({ representation }),
   setSamples: (samples) => set({ samples }),
   setSeed: (seed) => set({ seed }),
@@ -58,7 +76,17 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   setPointSize: (pointSize) => set({ pointSize }),
   setOpacity: (opacity) => set({ opacity }),
   setBloom: (bloom) => set({ bloom }),
+  setExposure: (exposure) => set({ exposure }),
+  setFogStrength: (fogStrength) => set({ fogStrength }),
   setAutoRotate: (autoRotate) => set({ autoRotate }),
   setShowGrid: (showGrid) => set({ showGrid }),
-  applyPreset: (preset) => set((state) => ({ orbital: normalizeOrbital(state.orbital, preset) })),
+  applyPreset: (preset) =>
+    set((state) => {
+      const orbital = normalizeOrbital(state.orbital, preset)
+      return {
+        orbital,
+        representation: orbital.n > 4 ? 'point_cloud' : state.representation,
+        resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
+      }
+    }),
 }))

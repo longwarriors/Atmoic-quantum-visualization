@@ -15,7 +15,6 @@ export function ElectronCloud({ data, pointSize, opacity }: ElectronCloudProps) 
   const geometry = useMemo(() => {
     const value = new THREE.BufferGeometry()
     value.setAttribute('position', new THREE.BufferAttribute(data.positions, 3))
-    value.setAttribute('intensity', new THREE.BufferAttribute(data.intensity, 1))
     value.setAttribute('phase', new THREE.BufferAttribute(data.phase, 1))
     value.computeBoundingBox()
     value.computeBoundingSphere()
@@ -23,11 +22,15 @@ export function ElectronCloud({ data, pointSize, opacity }: ElectronCloudProps) 
   }, [data])
 
   const uniforms = useMemo(
-    () => ({
-      pointSize: { value: pointSize },
-      pixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-      opacity: { value: opacity },
-    }),
+    () =>
+      THREE.UniformsUtils.merge([
+        THREE.UniformsLib.fog,
+        {
+          pointSize: { value: pointSize },
+          pixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+          opacity: { value: opacity },
+        },
+      ]),
     [],
   )
 
@@ -49,8 +52,9 @@ export function ElectronCloud({ data, pointSize, opacity }: ElectronCloudProps) 
         uniforms={uniforms}
         transparent
         depthWrite={false}
-        blending={THREE.AdditiveBlending}
-        toneMapped={false}
+        blending={THREE.NormalBlending}
+        fog
+        toneMapped
       />
     </points>
   )

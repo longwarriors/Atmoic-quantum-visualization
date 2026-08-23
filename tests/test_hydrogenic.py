@@ -89,9 +89,7 @@ def test_full_wavefunction_is_normalized_on_spherical_grid() -> None:
     )
     # R(1) appears in angular above, so divide it back out before integrating.
     angular_density = probability_density(angular) / float(radial_wavefunction(3, 2, 1.0) ** 2)
-    angular_mass = np.trapezoid(
-        np.trapezoid(angular_density, phi, axis=1) * np.sin(theta), theta
-    )
+    angular_mass = np.trapezoid(np.trapezoid(angular_density, phi, axis=1) * np.sin(theta), theta)
     assert radial_mass * angular_mass == pytest.approx(1.0, abs=3e-5)
 
 

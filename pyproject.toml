@@ -50,6 +50,8 @@ dev = [
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",
+  "scipy-stubs",
+  "types-Markdown",
 ]
 docs = [
   "mkdocs-material~=9.0",
@@ -80,7 +82,8 @@ src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501"]
+# ``l`` is the standard orbital angular-momentum quantum number throughout the API.
+ignore = ["E501", "E741"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["quviz"]

@@ -17,6 +17,7 @@ export interface PointCloudData {
   phase: Float32Array
   radialMass: number
   extentBohr: number
+  metadata: OrbitalMetadata
 }
 
 export interface QuantumStateSpec {
@@ -37,6 +38,8 @@ export interface OrbitalMetadata {
   normalization: string
   coordinate_convention: string
   spherical_harmonic_convention: string
+  geometry_semantics: string
+  color_semantics: string
   references: string[]
   warnings: string[]
 }
@@ -50,7 +53,10 @@ export interface IsosurfacePayload {
   density_level: number
   requested_probability_mass: number
   captured_probability_mass: number
+  finite_grid_density_integral: number
   grid_resolution: number
+  grid_spacing_bohr: number
+  integration_rule: string
   extent_bohr: number
 }
 
@@ -67,5 +73,10 @@ export interface SceneStatus {
   radialMass?: number
   extentBohr?: number
   densityLevel?: number
+  capturedProbabilityMass?: number
+  finiteGridDensityIntegral?: number
+  gridResolution?: number
+  gridSpacingBohr?: number
+  metadata?: OrbitalMetadata
   warnings?: string[]
 }

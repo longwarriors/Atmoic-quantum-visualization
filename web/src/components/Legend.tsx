@@ -1,14 +1,15 @@
-import { useSceneStore } from '../state/useSceneStore'
+import type { SceneStatus } from '../api/types'
 
-export function Legend() {
-  const { orbital, representation } = useSceneStore()
+export function Legend({ status }: { status: SceneStatus }) {
+  const basis = status.metadata?.state.basis
+  const representation = status.metadata?.representation
   return (
     <div className="legend">
       <div className="legend-title">Wavefunction phase</div>
-      {orbital.basis === 'real' ? (
+      {basis !== 'complex' ? (
         <div className="real-legend">
-          <span><i className="phase-dot cyan" /> phase 0</span>
-          <span><i className="phase-dot violet" /> phase π</span>
+          <span><i className="phase-dot red" /> phase 0</span>
+          <span><i className="phase-dot cyan" /> phase π</span>
         </div>
       ) : (
         <>
@@ -18,8 +19,10 @@ export function Legend() {
       )}
       <p>
         {representation === 'point_cloud'
-          ? 'Point positions are samples from |ψ|²d³r. Brightness is local density.'
-          : 'Geometry is a |ψ|² level set; color carries phase.'}
+          ? 'Positions sample |ψ|²d³r; every marker has equal visual weight.'
+          : representation === 'isosurface'
+            ? 'Geometry is a |ψ|² level set; color carries phase.'
+            : 'Waiting for asset metadata.'}
       </p>
     </div>
   )

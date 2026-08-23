@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
-
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from quviz.conventions import BasisKind
 from quviz.physics.hydrogenic import hydrogenic_wavefunction
 
-FloatArray: TypeAlias = NDArray[np.float64]
+type FloatArray = NDArray[np.float64]
 
 
 def probability_density(psi: ArrayLike) -> FloatArray:

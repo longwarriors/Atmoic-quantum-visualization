@@ -25,7 +25,7 @@ def test_point_cloud_is_reproducible_and_gpu_ready() -> None:
     assert first.intensity.shape == (1_500,)
     assert first.phase.shape == (1_500,)
     assert np.array_equal(first.positions, second.positions)
-    assert np.all((0.0 <= first.intensity) & (first.intensity <= 1.0))
+    assert np.all(first.intensity == 1.0)
     assert first.radial_mass_captured > 0.999_99
 
 

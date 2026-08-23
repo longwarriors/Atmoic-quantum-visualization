@@ -24,7 +24,7 @@ export default function App() {
             <p>Drag to orbit · scroll to zoom · phase is color, not charge</p>
           </div>
           <OrbitalCanvas onStatus={handleStatus} />
-          <Legend />
+          <Legend status={status} />
           <LoadingOverlay visible={status.loading} />
           <div className="corner-mark top-left" />
           <div className="corner-mark bottom-right" />

@@ -18,6 +18,12 @@ cd web && npm run build
 make check
 ```
 
+Windows PowerShell：
+
+```powershell
+& .\scripts\check.ps1
+```
+
 ## 提交前门禁
 
 一次完整检查包含：

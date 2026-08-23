@@ -8,7 +8,6 @@ changed. The angular convention follows :func:`scipy.special.sph_harm_y`:
 from __future__ import annotations
 
 from math import pi
-from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -16,8 +15,8 @@ from scipy.special import eval_genlaguerre, gammaln, sph_harm_y
 
 from quviz.conventions import BasisKind
 
-FloatArray: TypeAlias = NDArray[np.float64]
-ComplexArray: TypeAlias = NDArray[np.complex128]
+type FloatArray = NDArray[np.float64]
+type ComplexArray = NDArray[np.complex128]
 
 
 def validate_quantum_numbers(n: int, l: int, m: int) -> None:
@@ -159,7 +158,10 @@ def hydrogenic_wavefunction(
         if basis_kind is BasisKind.COMPLEX
         else real_spherical_harmonic(l, m, theta, phi)
     )
-    return np.asarray(radial * angular)
+    values = radial * angular
+    if basis_kind is BasisKind.COMPLEX:
+        return np.asarray(values, dtype=np.complex128)
+    return np.asarray(values, dtype=np.float64)
 
 
 def cartesian_to_spherical(
@@ -196,6 +198,6 @@ def orbital_label(n: int, l: int, m: int, *, basis: BasisKind | str = BasisKind.
         suffix = {1: "x", -1: "y", 0: "z"}[m]
         return f"{n}p{suffix}"
     if basis_kind is BasisKind.REAL and l == 2:
-        suffix = {2: "x²−y²", 1: "xz", 0: "z²", -1: "yz", -2: "xy"}[m]
+        suffix = {2: "x²-y²", 1: "xz", 0: "z²", -1: "yz", -2: "xy"}[m]
         return f"{n}d({suffix})"
     return f"{n}{shell}, m={m}"

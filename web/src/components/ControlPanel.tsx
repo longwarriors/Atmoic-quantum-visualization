@@ -49,6 +49,8 @@ export function ControlPanel() {
     () => Array.from({ length: 2 * store.orbital.l + 1 }, (_, index) => index - store.orbital.l),
     [store.orbital.l],
   )
+  const minimumResolution = Math.max(49, 16 * store.orbital.n + 17)
+  const surfaceAvailable = store.orbital.n <= 4
 
   useEffect(() => {
     const controller = new AbortController()
@@ -155,6 +157,8 @@ export function ControlPanel() {
           <button
             type="button"
             className={store.representation === 'isosurface' ? 'active' : ''}
+            disabled={!surfaceAvailable}
+            title={surfaceAvailable ? 'Render a validated density isosurface' : 'Isosurfaces are validated for n ≤ 4'}
             onClick={() => setRepresentation('isosurface')}
           >
             <Layers3 size={17} /> Density surface
@@ -168,12 +172,14 @@ export function ControlPanel() {
           </>
         ) : (
           <>
-            <RangeRow label="Grid" value={store.resolution} min={28} max={68} step={4} onChange={store.setResolution} />
+            <RangeRow label="Grid" value={store.resolution} min={minimumResolution} max={81} step={8} onChange={store.setResolution} />
             <RangeRow label="Mass" value={Math.round(store.probabilityMass * 100)} min={50} max={99} step={1} suffix="%" onChange={(value) => store.setProbabilityMass(value / 100)} />
           </>
         )}
         <RangeRow label="Opacity" value={Math.round(store.opacity * 100)} min={25} max={100} step={1} suffix="%" onChange={(value) => store.setOpacity(value / 100)} />
-        <RangeRow label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={120} step={2} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
+        <RangeRow label="Exposure" value={Math.round(store.exposure * 100)} min={50} max={140} step={2} suffix="%" onChange={(value) => store.setExposure(value / 100)} />
+        <RangeRow label="Fog" value={Math.round(store.fogStrength * 100)} min={0} max={70} step={2} suffix="%" onChange={(value) => store.setFogStrength(value / 100)} />
+        <RangeRow label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={50} step={1} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
       </section>
 
       <section className="control-section compact">

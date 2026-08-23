@@ -44,9 +44,7 @@ def test_point_cloud_binary_header_and_interleaving() -> None:
     values = np.frombuffer(payload, dtype="<f4", offset=16).reshape(2, 5)
     np.testing.assert_allclose(
         values,
-        np.asarray(
-            [[1.0, 2.0, 3.0, 0.25, 0.0], [-1.0, -2.0, -3.0, 0.75, np.pi]]
-        ),
+        np.asarray([[1.0, 2.0, 3.0, 0.25, 0.0], [-1.0, -2.0, -3.0, 0.75, np.pi]]),
         rtol=1e-7,
         atol=1e-7,
     )
@@ -69,7 +67,7 @@ def test_metadata_separates_observable_from_representation() -> None:
 
 
 def test_isosurface_payload_is_semantically_complete() -> None:
-    payload = build_isosurface(1, 0, 0, resolution=24, probability_mass=0.8)
+    payload = build_isosurface(1, 0, 0, resolution=49, probability_mass=0.8)
     assert len(payload.vertices) > 20
     assert len(payload.faces) > 20
     assert len(payload.phase) == len(payload.vertices)
@@ -77,3 +75,74 @@ def test_isosurface_payload_is_semantically_complete() -> None:
     assert payload.metadata.representation is RepresentationKind.ISOSURFACE
     assert payload.requested_probability_mass == pytest.approx(0.8)
     assert payload.captured_probability_mass == pytest.approx(0.8, abs=0.02)
+    assert payload.finite_grid_density_integral == pytest.approx(1.0, abs=0.003)
+    assert payload.density_level == pytest.approx(0.00441053295, rel=0.04)
+    assert payload.grid_spacing_bohr > 0.0
+
+
+def _mesh_component_count(faces: np.ndarray) -> int:
+    vertices = np.unique(faces)
+    parent = {int(vertex): int(vertex) for vertex in vertices}
+
+    def find(vertex: int) -> int:
+        while parent[vertex] != vertex:
+            parent[vertex] = parent[parent[vertex]]
+            vertex = parent[vertex]
+        return vertex
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for first, second, third in faces:
+        union(int(first), int(second))
+        union(int(second), int(third))
+    return len({find(int(vertex)) for vertex in vertices})
+
+
+def test_pz_isosurface_preserves_nodal_plane_and_winding() -> None:
+    payload = build_isosurface(2, 1, 0, resolution=49, probability_mass=0.9)
+    vertices = np.asarray(payload.vertices)
+    faces = np.asarray(payload.faces)
+    normals = np.asarray(payload.normals)
+
+    assert _mesh_component_count(faces) == 2
+    assert np.min(np.abs(vertices[:, 2])) > 0.0
+    assert np.max(np.abs(vertices)) < payload.extent_bohr
+
+    face_normals = np.cross(
+        vertices[faces[:, 1]] - vertices[faces[:, 0]],
+        vertices[faces[:, 2]] - vertices[faces[:, 0]],
+    )
+    mean_vertex_normals = np.mean(normals[faces], axis=1)
+    alignment = np.einsum("ij,ij->i", face_normals, mean_vertex_normals)
+    assert float(np.mean(alignment)) > 0.0
+
+
+def test_isosurface_rejects_even_or_underresolved_grids() -> None:
+    with pytest.raises(ValueError, match="odd"):
+        build_isosurface(1, 0, 0, resolution=50)
+    with pytest.raises(ValueError, match="between 65 and 81"):
+        build_isosurface(3, 1, 0, resolution=49)
+
+
+def test_3p_surface_preserves_angular_and_radial_nodes() -> None:
+    payload = build_isosurface(3, 1, 0, resolution=65, probability_mass=0.9)
+    assert _mesh_component_count(np.asarray(payload.faces)) == 4
+    assert payload.finite_grid_density_integral == pytest.approx(1.0, abs=0.002)
+
+
+def test_complex_surface_carries_full_phase_cycle() -> None:
+    payload = build_isosurface(
+        2,
+        1,
+        1,
+        basis=BasisKind.COMPLEX,
+        resolution=49,
+        probability_mass=0.8,
+    )
+    vertex_phase = np.asarray(payload.phase)
+    assert float(np.ptp(vertex_phase)) > 5.5
+    assert any("color carries wavefunction phase" in item for item in payload.metadata.warnings)

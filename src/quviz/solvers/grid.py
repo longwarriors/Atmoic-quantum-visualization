@@ -36,9 +36,16 @@ class DirichletGrid1D:
         return np.linspace(self.x_min, self.x_max, self.points + 2, dtype=np.float64)[1:-1]
 
     def laplacian(self) -> csr_matrix:
-        main = -2.0 * np.ones(self.points)
-        off = np.ones(self.points - 1)
-        return diags((off, main, off), offsets=(-1, 0, 1), format="csr") / self.dx**2
+        main = -2.0 * np.ones(self.points, dtype=np.float64)
+        off = np.ones(self.points - 1, dtype=np.float64)
+        matrix: csr_matrix[np.float64] = diags(
+            [off.tolist(), main.tolist(), off.tolist()],
+            offsets=[-1, 0, 1],
+            shape=(self.points, self.points),
+            format="csr",
+            dtype=np.float64,
+        )
+        return matrix / self.dx**2
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +68,4 @@ class PeriodicGrid1D:
 
     @property
     def coordinates(self) -> FloatArray:
-        return np.linspace(
-            self.x_min, self.x_max, self.points, endpoint=False, dtype=np.float64
-        )
+        return np.linspace(self.x_min, self.x_max, self.points, endpoint=False, dtype=np.float64)

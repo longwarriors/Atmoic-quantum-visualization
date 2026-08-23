@@ -39,23 +39,14 @@ export function OrbitalSurface({ data, opacity }: OrbitalSurfaceProps) {
       <mesh geometry={geometry} castShadow receiveShadow>
         <meshPhysicalMaterial
           vertexColors
-          transparent
+          transparent={opacity < 0.999}
           opacity={opacity}
           roughness={0.24}
           metalness={0.02}
           clearcoat={0.7}
           clearcoatRoughness={0.24}
-          side={THREE.DoubleSide}
-          depthWrite={opacity > 0.92}
-        />
-      </mesh>
-      <mesh geometry={geometry} scale={1.002}>
-        <meshBasicMaterial
-          color="#d8f8ff"
-          transparent
-          opacity={0.035}
-          wireframe
-          depthWrite={false}
+          side={THREE.FrontSide}
+          depthWrite={opacity > 0.8}
         />
       </mesh>
     </group>

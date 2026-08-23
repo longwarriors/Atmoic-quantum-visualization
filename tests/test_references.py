@@ -7,7 +7,7 @@ import pytest
 markdown_module = pytest.importorskip("markdown", reason="install the docs dependency group")
 Markdown = markdown_module.Markdown
 
-from quviz.docs.citations import CitationExtension
+from quviz.docs.citations import CitationExtension  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 

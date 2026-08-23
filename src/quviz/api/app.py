@@ -6,7 +6,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from quviz import __version__
@@ -17,11 +16,10 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def create_app() -> FastAPI:
+def create_app(*, mount_frontend: bool = True) -> FastAPI:
     app = FastAPI(
         title="QuViz API",
         version=__version__,
-        default_response_class=ORJSONResponse,
         description="Physically explicit scene assets for browser-native quantum visualization.",
     )
     app.add_middleware(
@@ -35,9 +33,10 @@ def create_app() -> FastAPI:
     app.include_router(router)
 
     web_dist = _repository_root() / "web" / "dist"
-    if web_dist.is_dir():
+    if mount_frontend and web_dist.is_dir():
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
     else:
+
         @app.get("/")
         def root() -> dict[str, str]:
             return {

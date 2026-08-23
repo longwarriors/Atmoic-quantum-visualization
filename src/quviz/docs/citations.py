@@ -45,9 +45,9 @@ class CitationInlineProcessor(InlineProcessor):
         super().__init__(pattern)
         self.bibliography = bibliography
 
-    def handleMatch(
+    def handleMatch(  # type: ignore[override]
         self, match: Match[str], data: str
-    ) -> tuple[ElementTree.Element | None, int | None, int | None]:  # noqa: N802
+    ) -> tuple[ElementTree.Element | None, int | None, int | None]:
         del data
         raw_keys = match.group(1)
         keys = [value.strip().lstrip("@") for value in raw_keys.split(";")]
@@ -76,7 +76,7 @@ class CitationExtension(Extension):
         }
         super().__init__(**kwargs)
 
-    def extendMarkdown(self, md: Markdown) -> None:  # noqa: N802
+    def extendMarkdown(self, md: Markdown) -> None:
         bib_path = Path(str(self.getConfig("bib_file"))).resolve()
         bibliography = parse_bibtex_file(bib_path)
         md.inlinePatterns.register(
@@ -84,5 +84,5 @@ class CitationExtension(Extension):
         )
 
 
-def makeExtension(**kwargs: object) -> CitationExtension:  # noqa: N802
+def makeExtension(**kwargs: object) -> CitationExtension:
     return CitationExtension(**kwargs)

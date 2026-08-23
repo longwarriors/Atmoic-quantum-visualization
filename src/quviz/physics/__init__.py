@@ -7,7 +7,7 @@ from .hydrogenic import (
     orbital_label,
     radial_wavefunction,
 )
-from .observables import probability_density, probability_current_hydrogenic
+from .observables import probability_current_hydrogenic, probability_density
 
 __all__ = [
     "cartesian_to_spherical",

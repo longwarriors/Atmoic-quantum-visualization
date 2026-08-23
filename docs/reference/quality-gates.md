@@ -1,8 +1,8 @@
 # 质量门禁
 
-!!! warning "这是验收要求，不是当前通过列表"
+!!! note "门禁定义"
 
-    当前 `make check` 仍然失败。实际基线和阻断项见[当前状态](../project/status.md)。只有所有适用门禁在同一提交上通过，才能称为“全绿”。
+    Unix 使用 `make check`，Windows PowerShell 使用 `& .\scripts\check.ps1`。只有所有适用门禁在同一提交上通过，才能称为“全绿”；最新结果见[当前状态](../project/status.md)。
 
 ## 解析态
 

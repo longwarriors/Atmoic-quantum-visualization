@@ -34,7 +34,7 @@ FastAPI 自动生成 OpenAPI 文档 [@fastapi]。
 
 参数：
 
-- `resolution`：24–72；
+- `resolution`：49–81，必须为奇数；最低值随 $n$ 增长为 $\max(49,16n+17)$；
 - `probability_mass`：0.50–0.99。
 
-返回 indexed mesh、法向和逐顶点相位。当前使用 JSON，生产规模可升级为 GLB 或自定义 mesh binary。
+当前等值面 API 保守限制为 $n\le4$，但这不表示已经穷举验证该范围的全部轨道。返回 typed OpenAPI schema，包括 indexed mesh、法向、逐顶点相位、阈值、superlevel-set 质量、有限网格 $\int\rho dV$、网格间距和 Scene metadata。当前使用 JSON，生产规模可升级为 GLB 或自定义 mesh binary。

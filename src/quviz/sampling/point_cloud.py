@@ -21,7 +21,7 @@ from quviz.physics.hydrogenic import (
     radial_wavefunction,
     validate_quantum_numbers,
 )
-from quviz.physics.observables import phase, probability_density
+from quviz.physics.observables import phase
 from quviz.sampling.inverse_cdf import inverse_transform_sample, normalized_cdf
 
 FloatArray = NDArray[np.float64]
@@ -136,13 +136,10 @@ def sample_orbital_point_cloud(
     z_coord = radius * cos_theta
     positions = np.column_stack((x, y, z_coord))
 
-    psi = hydrogenic_wavefunction(
-        n, l, m, radius, theta, phi, z=z, a_mu=a_mu, basis=basis_kind
-    )
-    density = probability_density(psi)
-    max_density = float(np.max(density))
-    scaled = density / max_density if max_density > 0.0 else density
-    intensity = np.log1p(99.0 * scaled) / np.log(100.0)
+    psi = hydrogenic_wavefunction(n, l, m, radius, theta, phi, z=z, a_mu=a_mu, basis=basis_kind)
+    # Spatial concentration already encodes |psi|². Uniform marker weights avoid
+    # applying the density a second time through point size, alpha, or brightness.
+    intensity = np.ones(count, dtype=np.float64)
 
     return OrbitalPointCloud(
         positions=np.asarray(positions, dtype=np.float32),

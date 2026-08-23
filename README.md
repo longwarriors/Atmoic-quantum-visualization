@@ -16,7 +16,7 @@ Quantum state → Observable → Representation → Scene contract → GPU rende
 
 ## 当前状态
 
-科学内核目前已实现并测试解析氢样轨道、实/复球谐、概率密度、相位、定态概率流和分离逆 CDF 点采样。FastAPI、QVPC/1、三维等值面和 React/Three.js 场景已有原型，但还不是可发布基线：等值面几何、前端曝光/相机/相位图例、端到端 metadata 和完整质量门禁均有阻断项。
+Phase 0 目前已有可演示基线：解析氢样轨道、实/复球谐、概率密度、相位、定态概率流和分离逆 CDF 点采样通过测试；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$；FastAPI/QVPC/1 与 React/Three.js 已端到端传递 Scene metadata。它仍是 Alpha，不代表通用 TISE/TDSE 或多电子求解器已经完成。
 
 请先阅读文档中的[当前状态](docs/project/status.md)；愿景或路线图中的能力不代表今天已经实现。
 
@@ -82,7 +82,13 @@ uv run --group docs mkdocs serve -a 127.0.0.1:8001
 make check
 ```
 
-当前提交的完整门禁尚未全绿；命令用于重现问题，不应把命令存在误读为检查已经通过。已知结果见[当前状态](docs/project/status.md)。
+Windows PowerShell 使用：
+
+```powershell
+& .\scripts\check.ps1
+```
+
+两者运行同一组 Python、类型、测试、引用、文档和前端构建门禁。最新实测结果见[当前状态](docs/project/status.md)。
 
 也可分别执行：
 

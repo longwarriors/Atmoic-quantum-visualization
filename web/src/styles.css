@@ -156,6 +156,7 @@ h1, h2, p { margin: 0; }
 .segmented button.active, .representation-switch button.active { color: #eafeff; background: linear-gradient(135deg, rgba(34,211,238,.13), rgba(139,92,246,.13)); box-shadow: inset 0 0 0 1px rgba(34,211,238,.2); }
 .representation-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
 .representation-switch button { display: grid; place-items: center; gap: 5px; min-height: 58px; border: 1px solid var(--line); font-size: 10px; }
+.representation-switch button:disabled { opacity: .38; cursor: not-allowed; }
 
 .range-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) 49px; align-items: center; gap: 8px; min-height: 31px; }
 .control-label { color: #8fa5b9; font-size: 10px; }
@@ -189,8 +190,8 @@ h1, h2, p { margin: 0; }
 .real-legend span { display: flex; align-items: center; gap: 5px; }
 .phase-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .phase-dot.cyan { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
-.phase-dot.violet { background: #8b5cf6; box-shadow: 0 0 8px #8b5cf6; }
-.phase-wheel { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #f05, #f90, #df0, #0ec, #06f, #b0f, #f05); }
+.phase-dot.red { background: #fa4646; box-shadow: 0 0 8px #fa4646; }
+.phase-wheel { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #47fafa, #4747fa, #fa47fa, #fa4747, #fafa47, #47fa47, #47fafa); }
 .phase-labels { display: flex; justify-content: space-between; margin-top: 3px; color: #6f879a; font-size: 8px; }
 .legend p { margin-top: 8px; color: #71889c; font-size: 8.5px; line-height: 1.45; }
 
@@ -215,7 +216,7 @@ h1, h2, p { margin: 0; }
 .contract-list { margin: 15px 0 0; }
 .contract-list div { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
 .contract-list dt { color: #6e8498; font-size: 9px; }
-.contract-list dd { margin: 0; color: #b9ccdc; font-size: 9px; text-align: right; }
+.contract-list dd { max-width: 62%; margin: 0; overflow-wrap: anywhere; color: #b9ccdc; font-size: 9px; text-align: right; }
 .reference-block { display: grid; gap: 6px; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 11px; background: rgba(4, 11, 20, .5); }
 .reference-block span { color: #71879a; font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }
 .reference-block code { overflow: hidden; color: #91dce6; font-family: "SFMono-Regular", Consolas, monospace; font-size: 8.5px; text-overflow: ellipsis; }

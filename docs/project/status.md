@@ -1,60 +1,59 @@
 # 当前状态
 
-!!! warning "Alpha 原型，不是可发布产品"
+!!! success "Phase 0 可演示基线"
 
-    科学内核的若干部分已经通过数值测试；三维等值面、浏览器场景和端到端 Scene Contract 仍有阻断性缺陷。这里的“已实现”只表示仓库里存在代码，“已验证”才表示已有独立检查。
+    2026-08-23，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
-| 能力 | 实现状态 | 验证状态 | 当前结论 |
-|---|---|---|---|
-| 氢与类氢解析波函数 | 已实现 | 归一化、节点、实/复球谐和已知公式测试通过 | 可作为 Phase 0 科学内核 |
-| 概率密度与相位 | 已实现 | 单元测试覆盖 | 可复用，但前端色图仍需统一 |
-| 定态氢样概率流 | Python 函数已实现 | 与解析结构和数值差分核对 | 尚无 API/前端 representation |
-| 分离逆 CDF 点采样 | 已实现 | 边际分布与矩检验通过 | 样本位置可信；当前亮度编码会二次强调密度 |
-| 固定目标质量等值面 | 原型已实现 | 现有测试不足以发现几何错误 | 偶数网格节面融合、粗网格质量偏差与法向问题待修 |
-| $sp^3$ 系数与四面体方向 | Python 辅助函数已实现 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，也未接入产品 |
-| 1D 网格契约 | 两个 dataclass 已实现 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
-| HTTP API 与 QVPC/1 | 原型已实现 | 后端 API/二进制测试通过 | metadata 未随主要资产端到端传递，OpenAPI schema 不完整 |
-| React/Three.js 场景 | 原型已实现 | 生产构建当前失败，视觉审计不通过 | 相机、曝光、雾、相位图例和等值面显示需重做 |
-| 引用与 MkDocs | 已实现 | 引用键和生成索引受测试保护 | 本次重构增加来源分级与控制字符门禁 |
+| 能力 | 实现与验证 | 当前边界 |
+|---|---|---|
+| 氢与类氢解析波函数 | 归一化、节点、实/复球谐和已知公式测试通过 | 解析 Coulomb 单电子态 |
+| 概率密度、相位与定态概率流 | 单元测试通过；前端相位色图与图例统一 | 概率流尚无 API/前端 representation |
+| 分离逆 CDF 点采样 | 边际分布、矩、seed 重现测试通过；marker 统一权重 | 单一可分离氢样态，不是一般线性组合 sampler |
+| 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性和绕向测试通过 | API 保守限制为 $n\le4$；拓扑回归覆盖 1s、2p、3p 与复 2p，并未穷举全部轨道 |
+| $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
+| 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
+| HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
+| React/Three.js 场景 | 生产构建通过；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查，主 bundle 尚待拆分 |
+| 引用与 MkDocs | 引用键、生成索引、控制字符与 strict build 受门禁保护 | 外部网页的可访问状态仍可能变化 |
 
-## 2026-08-22 基线检查
+## 审计输入基线：2026-08-22
 
-Claude Fable 审计 artifact 提供了缺陷清单和以下重构前基线；本次工作把它作为待复核输入，而不是科学或工程正确性的替代证据 [@claude-fable-audit]。这些结果不应被解释为持续集成已经通过：
+Claude Fable 审计 artifact 提供了缺陷清单和以下重构前基线；本项目把它作为待复核输入，而不是科学或工程正确性的替代证据 [@claude-fable-audit]：
 
-| 检查 | 结果 |
+| 检查 | 重构前结果 |
 |---|---|
 | `pytest --cov` | 42 tests passed；覆盖率 88.47% |
 | `ruff check` | 39 errors |
 | `ruff format --check` | 8 files would be reformatted |
 | `mypy` | 9 errors |
 | `npm run build` | TypeScript error，构建失败 |
-| `mkdocs build --strict` | 构建通过，但旧门禁没有发现控制字符和未渲染 RST |
+| `mkdocs build --strict` | 构建通过，但旧门禁没有发现控制字符和未渲染 Mermaid |
 | `make check` | 在 lint 阶段失败 |
 
-因此，“有测试”“有 Makefile”和“文档 strict build 通过”都不能简写成“质量门禁全绿”。
+## M0R 实现验证：2026-08-23
 
-## 本次文档重构验证
+Windows 上执行 `& .\scripts\check.ps1`；它与 Unix `make check` 包含相同门禁：
 
-在本次文档变更上重新执行：
-
-| 检查 | 结果 |
+| 检查 | 当前结果 |
 |---|---|
-| 全量 `pytest --cov` | 43 tests passed；覆盖率 88.47% |
-| 引用/文档专项测试 | 7 tests passed |
+| Ruff lint / format | 通过 |
+| mypy strict | 23 个源码文件无问题 |
+| 全量 `pytest --cov` | 48 tests passed；总覆盖率 88.57%（门槛 85%） |
 | 引用索引 `--check` | 通过 |
-| `mkdocs build --strict` | 通过；Mermaid fence 与修正后的数学文本已在生成 HTML 中确认 |
-| 新增测试文件 Ruff/format | 通过 |
+| `mkdocs build --strict` | 通过 |
+| TypeScript + Vite production build | 通过 |
+| 浏览器实测 | 点云、2pz 分离等值面、3dz²、相机重新 fit、红—青相位图例和 metadata 显示通过 |
 
-这只证明本次文档与已有测试相容；它没有消除上表中的代码、类型、前端和视觉阻断项。
+Vite 仍提示主 JavaScript chunk 超过 500 kB；这是性能优化项，不是当前构建失败。浏览器控制台唯一观察到的警告来自依赖内部的 `THREE.Clock` 弃用。
 
-## 已知阻断项
+## 剩余限制
 
-1. 重做等值面网格范围、零平面覆盖、质量估计、面绕向与独立几何测试；
-2. 重写点云曝光与密度视觉映射，统一相位色图，数据到达后重新 fit 相机；
-3. 让每种资产携带真实 metadata，前端不再自行重算物理标签；
-4. 修复 Python、类型检查和前端构建，使 `make check` 真正通过；
-5. 只有完成以上项目后，才把 Phase 0 标为“可演示基线”。
+1. 为前端增加可提交到 CI 的 parser、交互与截图回归，而不只依赖人工浏览器 QA；
+2. 拆分 Three.js/后处理 bundle，并测量帧时、显存与大资产传输；
+3. 将等值面验证扩展到更高 $n$ 前，先设计随节点数增长的收敛策略；
+4. 实现概率流、切片和节点面 representation 后再进入解析含时叠加；
+5. 清理 FastAPI/TestClient 与 scikit-image 上游弃用警告。
 
-后续顺序见[开发路线图](roadmap.md)。
+后续科学能力顺序见[开发路线图](roadmap.md)。

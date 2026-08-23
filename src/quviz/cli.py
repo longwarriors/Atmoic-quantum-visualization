@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import numpy as np
 import typer
@@ -24,9 +25,9 @@ def version() -> None:
 
 @app.command()
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Bind address."),
-    port: int = typer.Option(8000, min=1, max=65535, help="HTTP port."),
-    reload: bool = typer.Option(False, help="Reload when Python files change."),
+    host: Annotated[str, typer.Option(help="Bind address.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(min=1, max=65535, help="HTTP port.")] = 8000,
+    reload: Annotated[bool, typer.Option(help="Reload when Python files change.")] = False,
 ) -> None:
     """Run the scientific API and, when built, the production frontend."""
 
@@ -35,13 +36,13 @@ def serve(
 
 @app.command()
 def sample(
-    output: Path = typer.Argument(Path("outputs/orbital_points.npz")),
-    n: int = typer.Option(2),
-    l: int = typer.Option(1),
-    m: int = typer.Option(0),
-    basis: BasisKind = typer.Option(BasisKind.REAL),
-    count: int = typer.Option(20_000, min=100, max=200_000),
-    seed: int = typer.Option(7, min=0),
+    output: Annotated[Path, typer.Argument()] = Path("outputs/orbital_points.npz"),
+    n: Annotated[int, typer.Option()] = 2,
+    l: Annotated[int, typer.Option()] = 1,
+    m: Annotated[int, typer.Option()] = 0,
+    basis: Annotated[BasisKind, typer.Option()] = BasisKind.REAL,
+    count: Annotated[int, typer.Option(min=100, max=200_000)] = 20_000,
+    seed: Annotated[int, typer.Option(min=0)] = 7,
 ) -> None:
     """Export a reproducible point cloud for offline analysis."""
 

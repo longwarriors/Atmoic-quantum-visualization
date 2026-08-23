@@ -59,8 +59,6 @@ def test_serve_command_forwards_options(monkeypatch) -> None:
 def test_doctor_reports_repository_assets() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "references.bib" in result.stdout
-    assert "mkdocs.yml" in result.stdout
-    assert "frontend package" in result.stdout
-    assert "frontend build" in result.stdout
-    assert "missing" in result.stdout
+    for label in ("references.bib", "mkdocs.yml", "frontend package", "frontend build"):
+        line = next(line for line in result.stdout.splitlines() if label in line)
+        assert {"ok", "missing"} & set(line.split())

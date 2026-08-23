@@ -23,7 +23,7 @@ uv run quviz sample outputs/2pz.npz --n 2 --l 1 --m 0 --basis real --count 20000
 输出包含：
 
 - `positions`: 物理坐标，单位 bohr；
-- `intensity`: 仅用于渲染的归一化局部密度；
+- `intensity`: QVPC/1 兼容字段；当前固定为 1，使每个抽样标记具有相同视觉权重；
 - `phase`: 波函数相位；
 - `radial_mass_captured`: 有限径向表覆盖的概率质量。
 

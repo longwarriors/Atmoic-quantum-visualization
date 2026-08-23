@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import ORJSONResponse
 
 from quviz import __version__
 from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
@@ -13,6 +12,7 @@ from quviz.physics.hydrogenic import validate_quantum_numbers
 from quviz.sampling.point_cloud import sample_orbital_point_cloud
 from quviz.scene.binary import encode_point_cloud
 from quviz.scene.builders import build_isosurface, orbital_metadata
+from quviz.scene.models import IsosurfacePayload, OrbitalMetadata
 
 router = APIRouter(prefix="/api", tags=["QuViz"])
 
@@ -58,7 +58,7 @@ def metadata(
     m: int = Query(0, ge=-11, le=11),
     z: float = Query(1.0, gt=0.0, le=20.0),
     basis: BasisKind = BasisKind.REAL,
-) -> ORJSONResponse:
+) -> OrbitalMetadata:
     _validate_or_422(n, l, m)
     value = orbital_metadata(
         n,
@@ -69,7 +69,7 @@ def metadata(
         observable=ObservableKind.PROBABILITY_DENSITY,
         representation=RepresentationKind.POINT_CLOUD,
     )
-    return ORJSONResponse(value.model_dump(mode="json"))
+    return value
 
 
 @lru_cache(maxsize=32)
@@ -124,8 +124,8 @@ def _cached_isosurface(
     basis: BasisKind,
     resolution: int,
     probability_mass: float,
-) -> dict[str, object]:
-    payload = build_isosurface(
+) -> IsosurfacePayload:
+    return build_isosurface(
         n,
         l,
         m,
@@ -134,22 +134,21 @@ def _cached_isosurface(
         resolution=resolution,
         probability_mass=probability_mass,
     )
-    return payload.model_dump(mode="json")
 
 
 @router.get("/orbitals/isosurface")
 def isosurface(
-    n: int = Query(2, ge=1, le=8),
-    l: int = Query(1, ge=0, le=7),
-    m: int = Query(0, ge=-7, le=7),
+    n: int = Query(2, ge=1, le=4),
+    l: int = Query(1, ge=0, le=3),
+    m: int = Query(0, ge=-3, le=3),
     z: float = Query(1.0, gt=0.0, le=20.0),
     basis: BasisKind = BasisKind.REAL,
-    resolution: int = Query(52, ge=24, le=72),
+    resolution: int = Query(65, ge=49, le=81),
     probability_mass: float = Query(0.90, ge=0.50, le=0.99),
-) -> ORJSONResponse:
+) -> IsosurfacePayload:
     _validate_or_422(n, l, m)
     try:
         result = _cached_isosurface(n, l, m, z, basis, resolution, probability_mass)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return ORJSONResponse(result)
+    return result

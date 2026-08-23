@@ -12,9 +12,7 @@ def test_dirichlet_grid_coordinates_and_dx_share_one_contract() -> None:
     assert grid.coordinates == pytest.approx([-0.5, 0.0, 0.5])
     assert np.diff(grid.coordinates) == pytest.approx(np.full(2, grid.dx))
 
-    expected = np.asarray(
-        [[-2.0, 1.0, 0.0], [1.0, -2.0, 1.0], [0.0, 1.0, -2.0]]
-    ) / grid.dx**2
+    expected = np.asarray([[-2.0, 1.0, 0.0], [1.0, -2.0, 1.0], [0.0, 1.0, -2.0]]) / grid.dx**2
     assert grid.laplacian().toarray() == pytest.approx(expected)
 
 

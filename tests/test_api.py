@@ -4,8 +4,7 @@ from fastapi.testclient import TestClient
 
 from quviz.api.app import create_app
 
-
-client = TestClient(create_app())
+client = TestClient(create_app(mount_frontend=False))
 
 
 def test_health_and_catalog() -> None:
@@ -25,9 +24,7 @@ def test_invalid_quantum_numbers_return_422() -> None:
 
 
 def test_point_cloud_route_returns_binary_contract() -> None:
-    response = client.get(
-        "/api/orbitals/point-cloud?n=1&l=0&m=0&basis=real&samples=1000&seed=5"
-    )
+    response = client.get("/api/orbitals/point-cloud?n=1&l=0&m=0&basis=real&samples=1000&seed=5")
     assert response.status_code == 200
     assert response.headers["x-quviz-format"] == "QVPC/1"
     assert response.content[:4] == b"QVPC"
@@ -49,16 +46,26 @@ def test_root_and_metadata_contract() -> None:
 
 def test_isosurface_route_returns_indexed_phase_mesh() -> None:
     response = client.get(
-        "/api/orbitals/isosurface?n=1&l=0&m=0&basis=real&resolution=24&probability_mass=0.8"
+        "/api/orbitals/isosurface?n=1&l=0&m=0&basis=real&resolution=49&probability_mass=0.8"
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["grid_resolution"] == 24
+    assert payload["grid_resolution"] == 49
     assert len(payload["vertices"]) == len(payload["phase"])
     assert len(payload["faces"]) > 0
     assert abs(payload["captured_probability_mass"] - 0.8) < 0.02
 
 
 def test_invalid_isosurface_quantum_numbers_return_422() -> None:
-    response = client.get("/api/orbitals/isosurface?n=2&l=1&m=2&resolution=24")
+    response = client.get("/api/orbitals/isosurface?n=2&l=1&m=2&resolution=49")
     assert response.status_code == 422
+
+
+def test_openapi_describes_metadata_and_isosurface_contracts() -> None:
+    schema = client.get("/openapi.json").json()
+    schemas = schema["components"]["schemas"]
+    assert "OrbitalMetadata" in schemas
+    assert "IsosurfacePayload" in schemas
+    properties = schemas["IsosurfacePayload"]["properties"]
+    assert "finite_grid_density_integral" in properties
+    assert "grid_spacing_bohr" in properties
