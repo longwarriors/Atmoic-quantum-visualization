@@ -115,9 +115,9 @@ export function parsePointCloud(
     intensity[index] = interleaved[source + 3]
     phase[index] = interleaved[source + 4]
   }
+  // version and flags are validated above but not returned: no consumer
+  // branches on them, and the test suite pins them via the golden header bytes.
   return {
-    version,
-    flags,
     count,
     stride,
     positions,

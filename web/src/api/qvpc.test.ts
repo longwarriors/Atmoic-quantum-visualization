@@ -78,13 +78,27 @@ describe('parsePointCloud, against the Python-generated golden vector', () => {
   it('decodes exactly what the Python encoder wrote', () => {
     const result = parsePointCloud(goldenBuffer(), headers())
 
-    expect(result.version).toBe(spec.version)
-    expect(result.flags).toBe(0)
     expect(result.count).toBe(spec.count)
     expect(result.stride).toBe(spec.stride)
     expect(Array.from(result.positions)).toEqual(spec.positions.flat())
     expect(Array.from(result.intensity)).toEqual(spec.intensity)
     expect(Array.from(result.phase)).toEqual(spec.phase)
+  })
+
+  it('exposes only the fields a scene consumer needs', () => {
+    // version and flags are validated (see the rejection cases below and the
+    // golden header bytes above) but are not part of the public shape: nothing
+    // outside this decoder has a reason to branch on them.
+    const result = parsePointCloud(goldenBuffer(), headers())
+    expect(Object.keys(result).sort()).toEqual([
+      'count',
+      'extentBohr',
+      'intensity',
+      'phase',
+      'positions',
+      'radialMass',
+      'stride',
+    ])
   })
 
   it('de-interleaves rather than copying the raw stride', () => {

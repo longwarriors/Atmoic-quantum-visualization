@@ -10,10 +10,6 @@ export interface OrbitalParameters {
 }
 
 export interface PointCloudData {
-  /** QVPC header fields, kept so a consumer can see exactly what was decoded. */
-  version: number
-  /** Reserved; the decoder rejects anything but 0. */
-  flags: number
   count: number
   stride: number
   positions: Float32Array
