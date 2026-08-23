@@ -1,9 +1,8 @@
 """Gates that make the citation checks truthful.
 
-Unlike ``tests/test_references.py`` this module never ``importorskip``s: the
-whole suite must error loudly when the docs dependency group is missing,
-because a skipped gate that nobody notices is indistinguishable from a passing
-one.
+Nothing here ``importorskip``s: the docs dependency group is mandatory on
+every runner and ``tests/conftest.py`` fails the session on any skip, so a
+missing group errors loudly instead of silently dropping a gate.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
-import markdown  # the docs dependency group; deliberately not importorskip
+import markdown
 import pytest
 
 from quviz.docs.bibliography import BibEntry, keywords, parse_bibtex, parse_bibtex_file
@@ -37,12 +36,6 @@ render_reference_index = _load_script(SCRIPT)
 def _entry(key: str, **fields: str) -> BibEntry:
     fields.setdefault("keywords", "source-audit,software")
     return BibEntry(entry_type="software", key=key, fields=fields, authors=())
-
-
-def test_docs_dependency_group_is_installed() -> None:
-    # ``scripts/check.ps1``, ``make test`` and CI all run pytest with
-    # ``--group docs``. If this import fails, the gate runner forgot it.
-    assert hasattr(markdown, "Markdown")
 
 
 # --- C3: the orphan / unknown-key scan must only see prose -----------------
