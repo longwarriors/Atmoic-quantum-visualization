@@ -130,8 +130,18 @@ def test_fence_follows_superfences_closing_and_indentation_rules() -> None:
     assert cited_keys_in("~~~\n[@a]\n```\nlater [@b]\n") == {"a", "b"}
 
 
-def test_strip_non_prose_preserves_line_count() -> None:
-    text = "a\n```\nb\nc\n```\n<!-- x\ny -->\nd <!-- x\ny --> e `f`\n<div>\n<p>z</p>\n</div> t\n"
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a\n```\nb\nc\n```\n<!-- x\ny -->\nd <!-- x\ny --> e `f`\n<div>\n<p>z</p>\n</div> t\n",
+        "<div>a</div> <div>\nb\n</div> <!-- c\nd --> e\n<div>\nf\n",
+        '<div markdown="1">\n<div>\na\n</div>\n<div markdown="1">\nb\n</div>\n</div>\n',
+        '<div markdown="1">\n<div>\na\n',
+        "<script>\na\n",
+        "<div\na\n",
+    ],
+)
+def test_strip_non_prose_preserves_line_count(text: str) -> None:
     assert strip_non_prose(text).count("\n") == text.count("\n")
 
 
@@ -183,13 +193,102 @@ def test_key_outside_or_inside_a_markdown_enabled_html_element_is_cited(text: st
     assert cited_keys_in(text) == {"k"}
 
 
-def test_block_level_tag_list_matches_the_installed_python_markdown() -> None:
-    from markdown.util import BLOCK_LEVEL_ELEMENTS
+def test_scanner_extractor_sees_the_block_level_tags_of_the_site_build(
+    site_markdown: tuple[list[str], dict[str, dict[str, object]]],
+) -> None:
+    # The scanner runs python-markdown's HTMLExtractorExtra on a bare
+    # ``Markdown()``; it must agree with the mkdocs.yml extension set about
+    # which tags are block-level, or an extension could widen the raw-block
+    # rules without the scanner noticing.
+    from quviz.docs.scan import _HiddenSpanExtractor
 
-    from quviz.docs.scan import BLOCK_TAGS
+    extensions, configs = site_markdown
+    site = markdown.Markdown(extensions=extensions, extension_configs=configs)
+    extractor = _HiddenSpanExtractor(markdown.Markdown(), "")
+    assert extractor.block_level_tags == set(site.block_level_elements)
 
-    # ``hr`` is void: it cannot contain a citation, so the scanner skips it.
-    assert BLOCK_TAGS | {"hr"} == set(BLOCK_LEVEL_ELEMENTS)
+
+# --- C5: adjacent raw blocks follow the HtmlBlockPreprocessor state machine --
+#
+# After a raw block, a block-level comment, an ``<hr>``, a void tag or a
+# ``markdown``-enabled element closes with more content on the same line,
+# python-markdown's ``HTMLExtractor`` is *in tail*: the next block-level tag
+# on that line opens another raw block wherever it sits, and a comment there
+# is appended to the raw cache. ``md_in_html`` adds one more rule: directly
+# inside a ``markdown`` element, before any text, a block-level tag opens a
+# nested element whose content is raw unless it carries ``markdown`` itself.
+# None of those citations reach the inline patterns at build time.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # a block-level tag later on the line a raw block closed on
+        "<div>a</div> <div>[@k]</div>\n",
+        "<div>a</div><div>[@k]</div>\n",
+        "<div>a</div> x <div>[@k]</div>\n",
+        "<div>a</div><span>x</span><div>[@k]</div>\n",
+        "<div>a</div> <div>\n[@k]\n</div>\n",
+        "<div>a</div> <pre>[@k]</pre>\n",
+        "<div>a</div>\n<div>b</div> <div>[@k]</div>\n",
+        # ... or a comment there, which joins the raw cache
+        "<div>a</div> <!-- [@k] -->\n",
+        "<div>a</div> x <!-- [@k] -->\n",
+        # the same tail after a standalone empty block element
+        "<!-- x --> <div>[@k]</div>\n",
+        "<!-- x --> <!-- [@k] -->\n",
+        "<hr> <div>[@k]</div>\n",
+        "<hr/> <div>[@k]</div>\n",
+        "<div/> <div>[@k]</div>\n",
+        # ... and after a markdown-enabled element
+        '<div markdown="1">a</div> <div>[@k]</div>\n',
+        # md_in_html: a block-level tag directly inside a markdown element,
+        # before any text, nests a raw element
+        '<div markdown="1"><div>[@k]</div></div>\n',
+        '<div markdown="1">\n<div>\n[@k]\n',
+    ],
+)
+def test_key_in_a_raw_block_opened_in_the_tail_of_another_is_not_cited(text: str) -> None:
+    assert cited_keys_in(text) == set()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # prose in the tail of a closed raw block stays prose
+        "<div>a</div>[@k]\n",
+        "<div>a</div> <div>x</div> tail [@k]\n",
+        "<div>a</div>[@k]<div>b</div>\n",
+        "<br> <div>[@k]</div>\n",
+        '<div markdown="1">a</div> [@k]\n',
+        # a newline ends the tail: the next line is judged on its own
+        "<div>a</div>\n[@k]\n",
+        "<div>a\n</div>[@k]\n",
+        # inside a markdown element, a block-level tag after text is inline
+        '<div markdown="1">\ntext <div>[@k]</div>\n</div>\n',
+        '<div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n',
+    ],
+)
+def test_prose_in_the_tail_of_a_closed_raw_block_is_cited(text: str) -> None:
+    assert cited_keys_in(text) == {"k"}
+
+
+def test_orphan_check_reports_an_entry_cited_only_in_a_tail_raw_block(tmp_path: Path) -> None:
+    # The bypass end to end: the build never renders this citation, so the
+    # entry is an orphan and the gate must say so.
+    bibliography = parse_bibtex(
+        "@online{tail-only, title={A}, url={https://example.invalid/a}}\n"
+        "@online{cited-for-real, title={B}, url={https://example.invalid/b}}\n"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text(
+        "Prose cites [@cited-for-real].\n\n<div>a</div> <div>[@tail-only]</div>\n",
+        encoding="utf-8",
+    )
+    used = cited_keys_in_tree(docs)
+    assert used == {"cited-for-real"}
+    assert orphan_keys(bibliography, used) == ["tail-only"]
 
 
 # --- (b) a backtick run on a list-marker line is a code span, not a fence ---
@@ -270,6 +369,87 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ("<div/>\n[@k]\n", True),
         ("<!-- x --> tail [@k]\n", True),
         ("<!-- unclosed [@k]\n", True),
+        # Adjacent raw blocks (C5). The HtmlBlockPreprocessor is "in tail"
+        # after a raw block, a block comment, an <hr>, a void tag or a
+        # markdown element closes with more content on its line: a block-level
+        # tag there opens another raw block, a comment there joins the cache.
+        ("<div>a</div>\n<div>[@k]</div>\n", False),
+        ("<div>a</div>[@k]\n", True),
+        ("<pre>x</pre>\n\n<div>[@k]</div>\n", False),
+        ("<div>\n<p>[@k]</p>\n</div>\n", False),
+        ('<div markdown="1">[@k]</div>\n', True),
+        ("<div>\n<div>[@k]\n", False),
+        ("<div>\n<div>[@k]</div>\ntext [@k]\n", False),
+        ("<div>a</div> <div>[@k]</div>\n", False),
+        ("<div>a</div><div>[@k]</div>\n", False),
+        ("<div>a</div> x <div>[@k]</div>\n", False),
+        ("<div>a</div><span>x</span><div>[@k]</div>\n", False),
+        ("<div>a</div> <div>\n[@k]\n</div>\n", False),
+        ("<div>a</div> <pre>[@k]</pre>\n", False),
+        ("<div>a</div> <!-- [@k] -->\n", False),
+        ("<div>a</div> x <!-- [@k] -->\n", False),
+        ("<div>a</div> <div>[@k]</div> tail [@k]\n", True),
+        ("<div>a</div>[@k]<div>b</div>\n", True),
+        ("<div>a</div>\n<div>b</div> <div>[@k]</div>\n", False),
+        ("<div>a</div>\n[@k]\n", True),
+        ("<div>a</div> \n[@k]\n", True),
+        ("<div>a\n</div>[@k]\n", True),
+        ("<div>a</div></div> [@k]\n", True),
+        ("</div>\n[@k]\n", True),
+        ("<!-- x --> <div>[@k]</div>\n", False),
+        ("<!-- x --> <!-- [@k] -->\n", False),
+        ("<hr> <div>[@k]</div>\n", False),
+        ("<hr/> <div>[@k]</div>\n", False),
+        ("<div/> <div>[@k]</div>\n", False),
+        ("<br> <div>[@k]</div>\n", True),
+        ('<div markdown="1">a</div> <div>[@k]</div>\n', False),
+        ('<div markdown="1">a</div> [@k]\n', True),
+        # md_in_html nesting: a block-level tag directly inside a markdown
+        # element (at a line start, or before any text) nests an element that
+        # is raw unless it carries ``markdown`` itself; after text it is inline.
+        ('<div markdown="1"><div>[@k]</div></div>\n', False),
+        ('<div markdown="1">\n<div>[@k]</div>\n</div>\n', False),
+        ('<div markdown="1">\n<div>\n[@k]\n</div>\n</div>\n', False),
+        ('<div markdown="1">\ntext <div>[@k]</div>\n</div>\n', True),
+        ('<div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n', True),
+        ('<div markdown="1">\n<div>\n<div markdown="1">[@k]</div>\n</div>\n</div>\n', False),
+        ('<div markdown="span">\n<div>[@k]</div>\n</div>\n', False),
+        ('<div markdown="block">\n<p>[@k]</p>\n</div>\n', False),
+        ('<p markdown="1">[@k]</p>\n', True),
+        ("<p>[@k]</p>\n", False),
+        ('<div markdown="1">\n[@k]\n', True),
+        ('<div markdown="1">\n<div>\n[@k]\n', False),
+        ('<div markdown="1">\n<pre>[@k]</pre>\n</div>\n', False),
+        ('<div markdown="1">\n<!-- [@k] -->\n</div>\n', False),
+        ('<div markdown="1">\nx <!-- [@k] -->\n</div>\n', True),
+        # The markdown element's own tags leave the text flow, so its content
+        # is parsed as blocks of its own (here: arithmatex block math).
+        ('<div markdown="1">\n$$\n[@k]\n$$\n</div>\n', False),
+        ('<div markdown="1">\n<p>[@k]\n<div>y</div>\n</div>\n', False),
+        ('<div markdown="1">\n<div>\n[@k]\n</div>\nmore [@k]\n', True),
+        ('<div markdown="1"><hr>[@k]</div>\n', False),
+        ('<details markdown="1">\n<summary>[@k]</summary>\n</details>\n', False),
+        ("<table>\n<tr><td markdown='1'>[@k]</td></tr>\n</table>\n", False),
+        ("<table markdown='1'>\n<tr><td>[@k]</td></tr>\n</table>\n", False),
+        # Constructs the parser only settles at EOF (``feed`` stops, ``close``
+        # resumes in a truncated buffer): positions must stay right across it.
+        ("<div\n[@k]\n", True),
+        ("[@k] <", True),
+        ("[@k] &", True),
+        ("<div>a</div> [@k] <", True),
+        ("<?php [@k]\n", True),
+        ("<?php [@k] ?>\n", False),
+        ("<!DOCTYPE html> [@k]\n", True),
+        ("<script>\n[@k]\n", False),
+        ("x <script>[@k]\n", True),
+        ("<div>a</div> <script>[@k]\n", False),
+        ("<!-- a --!> [@k]\n", True),
+        ("<!-- a --!> <div>[@k]</div>\n", False),
+        ("<div>a</div> &#38; <div>[@k]</div>\n", False),
+        # ... and the later scanner stages still see the build's block layout.
+        ("<div>a</div>\n$$\n[@k]\n$$\n", False),
+        ("<div>a</div> `[@k]`\n", False),
+        ("<div>a</div> `x</div>` [@k]\n", True),
         # pymdownx.arithmatex, generic mode with smart dollars: inline math.
         ("$[@k]$\n", False),
         ("a $x [@k]$ b\n", False),

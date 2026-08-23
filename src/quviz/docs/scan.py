@@ -21,17 +21,28 @@ extension list and checks that the scanner agrees:
   prose. A backtick run on a list-marker line (``- ```\\```) is *not* a fence
   opener; it is paragraph text that python-markdown pairs into a multi-line
   code span, which the code-span rule below handles (so ``- ~~~`` stays prose).
-* **Raw HTML blocks**: a block-level tag (``<pre>``, ``<div>``, ``<details>``,
-  ``<script>`` ...) that starts a line, indented at most three spaces, is
-  stashed whole by python-markdown's ``HtmlBlockPreprocessor`` -- nothing
-  inside it is a citation -- unless it carries a ``markdown`` attribute other
-  than ``"0"`` (``md_in_html``). The block ends at the matching closing tag;
-  text after that tag on the same line is prose again. An unclosed block
-  swallows the rest of the document, as it does at build time.
-* **HTML comments** are removed only when they start a line (a block-level
-  comment). A comment inside a prose line stays in the paragraph, where the
-  citation pattern runs *before* the inline-HTML pattern, so ``[@key]`` inside
-  it is validated at build time and must be counted here too.
+* **Raw HTML blocks** are decided by python-markdown itself: the scanner runs
+  the ``md_in_html`` ``HTMLExtractorExtra`` that ``HtmlBlockPreprocessor``
+  uses at build time and blanks every source span it stashes. That covers
+  the rules a hand-written scanner used to approximate -- a block-level tag
+  (``<pre>``, ``<div>``, ``<details>``, ``<script>`` ...) starting a line
+  indented at most three spaces opens a raw block that ends at its matching
+  closing tag, or swallows the rest of the document when never closed; a
+  ``markdown`` attribute other than ``"0"`` keeps the content as prose --
+  and the ones it got wrong. After a raw block, a block-level comment, an
+  ``<hr>``, a void tag or a ``markdown`` element closes with more content on
+  its line the extractor is *in tail*: the next block-level tag on that line
+  opens another raw block wherever it sits, and a comment there joins the raw
+  cache. Directly inside a ``markdown`` element, before any text, a
+  block-level tag nests an element whose content is raw unless it carries
+  ``markdown`` itself; after text it is inline HTML and its content is prose.
+  The ``markdown`` element's own tags leave the text flow, so its content is
+  parsed as blocks of its own, as ``MarkdownInHtmlProcessor`` does.
+* **HTML comments** are removed when they start a line (a block-level
+  comment) or follow a closed block in its tail. A comment inside a prose
+  line stays in the paragraph, where the citation pattern runs *before* the
+  inline-HTML pattern, so ``[@key]`` inside it is validated at build time
+  and must be counted here too.
 * **Code spans** never cross a blank line, because python-markdown splits the
   document into blocks before inline patterns run.
 * **Math** (``pymdownx.arithmatex``, generic mode, smart dollars): inline
@@ -66,22 +77,26 @@ extension list and checks that the scanner agrees:
 What is *not* stripped, deliberately: four-space indented blocks. In
 mkdocs-material they are admonition bodies far more often than indented code,
 and a citation inside an admonition is real prose. Known, rare divergences:
-a block-level tag later on the line a block just closed on (python-markdown
-opens another raw block there); a fence whose info string superfences would
-reject; a YAML front matter that is not a mapping (mkdocs then leaves it in
-the page as prose, the scanner still removes it); an inline math pair whose
-delimiters sit in different block elements that no blank line separates (a
-heading and the paragraph under it); a reference definition line that setext
-underlining turns into a heading; and an indented ``# heading`` continuing a
-paragraph (literal text to the build, a splitter to the scanner because the
-same indentation is an admonition body).
+a fence whose info string superfences would reject; a YAML front matter that
+is not a mapping (mkdocs then leaves it in the page as prose, the scanner
+still removes it); an inline math pair whose delimiters sit in different
+block elements that no blank line separates (a heading and the paragraph
+under it); a reference definition line that setext underlining turns into a
+heading; an indented ``# heading`` continuing a paragraph (literal text to
+the build, a splitter to the scanner because the same indentation is an
+admonition body); and a ``markdown="span"`` element, whose content the build
+hands straight to the inline patterns without block parsing (a reference
+definition or block math in there is prose to the build, blanked here).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from pathlib import Path
+
+from markdown import Markdown
+from markdown.extensions.md_in_html import HTMLExtractorExtra
 
 from quviz.docs.bibliography import Bibliography, keywords
 from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
@@ -90,36 +105,11 @@ from quviz.docs.locators import GROUP_PATTERN, parse_citation_group
 # not expected to appear in prose.
 TOOLING_KEYWORD = "tooling"
 
-# python-markdown's BLOCK_LEVEL_ELEMENTS minus the void ``hr``, which cannot
-# contain a citation. tests/test_citation_gates.py pins this to the installed
-# python-markdown so the two cannot drift.
-BLOCK_TAGS = frozenset({
-    "address", "article", "aside", "blockquote", "body", "canvas", "center", "colgroup",
-    "dd", "details", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
-    "form", "group", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "html",
-    "iframe", "legend", "li", "main", "map", "math", "menu", "nav", "noscript", "object",
-    "ol", "option", "output", "p", "pre", "progress", "script", "section", "style",
-    "summary", "table", "tbody", "td", "textarea", "tfoot", "th", "thead", "tr", "ul",
-    "video",
-})  # fmt: skip
-
 # superfences: optional whitespace / blockquote prefix, then a backtick or tilde
 # run. The info string of a backtick fence may not contain a backtick.
 _FENCE_OPEN = re.compile(r"^(?P<prefix>[ \t>]*)(?P<fence>`{3,}(?=[^`\n]*$)|~{3,})")
 _FENCE_PREFIX_CHARS = " \t>"
 
-# A raw HTML block starts a line (up to three spaces in) with a comment opener
-# or a tag; attributes may span lines.
-_HTML_BLOCK_START = re.compile(
-    r"^[ ]{0,3}(?:(?P<comment><!--)|<(?P<tag>[a-zA-Z][a-zA-Z0-9]*)"
-    r"(?P<attrs>(?:\s[^>]*?)?)\s*(?P<void>/?)>)",
-    re.MULTILINE,
-)
-# md_in_html: ``markdown``, ``markdown="1"``, ``markdown="block"``/``"span"``
-# mean "parse the contents"; ``markdown="0"`` means raw.
-_MARKDOWN_ATTR = re.compile(
-    r"""(?<![\w-])markdown(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+)))?"""
-)
 # A code span is delimited by backtick runs of equal length (CommonMark 6.1)
 # and, in python-markdown, never spans a blank line.
 _CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n).)+?)(?<!`)\1(?!`)", re.DOTALL)
@@ -230,51 +220,125 @@ def _strip_fences(markdown: str) -> str:
     return "\n".join(out)
 
 
-def _markdown_enabled(attrs: str) -> bool:
-    match = _MARKDOWN_ATTR.search(attrs)
-    if match is None:
-        return False
-    value = next((group for group in match.groups() if group is not None), "1")
-    return value != "0"
+class _HiddenSpanExtractor(HTMLExtractorExtra):
+    """python-markdown's own raw-HTML extractor, recording what it hides.
+
+    ``HtmlBlockPreprocessor`` (the ``md_in_html`` flavour ``mkdocs.yml``
+    configures) runs this parser over the source and stashes raw blocks,
+    block-level comments and the content of ``markdown``-disabled elements
+    away from every later processor. Instead of re-deriving its rules -- the
+    "in tail" state after a block closes with text left on its line, the
+    nested-element rule of ``md_in_html`` ... -- this subclass lets the real
+    state machine run and notes the source spans that end up stashed, so the
+    scanner can blank exactly those and keep its line numbers.
+
+    Positions come from ``updatepos``, which the parser calls with the
+    offsets of every token it consumes, rather than from ``getpos``: after
+    ``feed`` stops on an incomplete construct, ``close`` re-parses the
+    remainder in a truncated buffer, and ``_base`` keeps the absolute offset
+    straight across that boundary.
+    """
+
+    def __init__(self, md: Markdown, source: str) -> None:
+        super().__init__(md)
+        self.source = source
+        self.hidden: list[tuple[int, int]] = []
+        self._base = 0
+        self._cursor = 0
+        self._at_eof = False
+        self._raw_start: int | None = None
+        self._off_start: int | None = None
+
+    # -- position tracking ----------------------------------------------------
+
+    def goahead(self, end: bool) -> None:
+        self._cursor = self._base
+        super().goahead(end)
+        self._base = len(self.source) - len(self.rawdata)
+        self._cursor = self._base
+
+    def updatepos(self, i: int, j: int) -> int:
+        self._cursor = self._base + j
+        return super().updatepos(i, j)
+
+    def _tag_end(self, pos: int) -> int:
+        if self._at_eof:
+            return len(self.source)
+        close = self.source.find(">", pos)
+        return len(self.source) if close < 0 else close + 1
+
+    def _hide(self, start: int, end: int) -> None:
+        self.hidden.append((start, end))
+
+    # -- the extractor's decisions, observed -----------------------------------
+
+    def handle_starttag(self, tag: str, attrs: Iterable[tuple[str, str | None]]) -> None:
+        pos = self._cursor
+        super().handle_starttag(tag, attrs)
+        if self.inraw:
+            if self._raw_start is None:
+                self._raw_start = pos
+        elif self.mdstack and self.mdstarted[-1]:
+            # md_in_html opened an element for this tag: the tag itself
+            # leaves the text flow, and an element whose content is not
+            # parsed hides everything until it closes.
+            self._hide(pos, pos + len(self.get_starttag_text()))
+            if self.mdstate[-1] == "off" and self._off_start is None:
+                self._off_start = pos
+
+    def handle_endtag(self, tag: str) -> None:
+        pos = self._cursor
+        was_raw = self.inraw
+        was_element = not was_raw and tag in self.mdstack
+        super().handle_endtag(tag)
+        end = self._tag_end(pos)
+        if was_raw and not self.inraw and self._raw_start is not None:
+            self._hide(self._raw_start, end)
+            self._raw_start = None
+        if self._off_start is not None and not (self.mdstack and self.mdstate[-1] == "off"):
+            self._hide(self._off_start, end)
+            self._off_start = None
+        if was_element:
+            self._hide(pos, end)
+
+    def handle_empty_tag(self, data: str, is_block: bool) -> None:
+        pos = self._cursor
+        # In the tail of a closed block (and outside any markdown element) the
+        # extractor appends the tag to its raw cache; elsewhere it is hidden
+        # exactly when it went into the HTML stash.
+        in_tail = self.intail and not self.mdstack
+        stashed = self.md.htmlStash.html_counter
+        super().handle_empty_tag(data, is_block)
+        if self.inraw or self._off_start is not None:
+            return  # already inside a hidden span
+        if in_tail or self.md.htmlStash.html_counter > stashed:
+            self._hide(pos, pos + len(data))
+
+    def close(self) -> None:
+        # Flush what ``feed`` left while positions are still tracked, then
+        # let the extractor close unclosed blocks and elements at EOF.
+        self.goahead(True)
+        self._at_eof = True
+        super().close()
+        for start in (self._raw_start, self._off_start):
+            if start is not None:
+                self._hide(start, len(self.source))
 
 
-def _html_block_end(markdown: str, match: re.Match[str]) -> int | None:
-    """End offset of the raw block ``match`` opens, or ``None`` if it opens none."""
-
-    if match.group("comment"):
-        close = markdown.find("-->", match.end())
-        # An unclosed ``<!--`` is literal text to python-markdown.
-        return None if close < 0 else close + len("-->")
-    tag = match.group("tag").lower()
-    if tag not in BLOCK_TAGS or _markdown_enabled(match.group("attrs")):
-        return None
-    if match.group("void"):
-        return match.end()
-    depth = 1
-    same_tag = re.compile(rf"<(/?){re.escape(tag)}(?=[\s/>])[^>]*>", re.IGNORECASE)
-    for tag_match in same_tag.finditer(markdown, match.end()):
-        if tag_match.group(1):
-            depth -= 1
-            if depth == 0:
-                return tag_match.end()
-        elif not tag_match.group(0).endswith("/>"):
-            depth += 1
-    return len(markdown)
-
-
-def _strip_html_blocks(markdown: str) -> str:
+def _strip_html_blocks(text: str) -> str:
+    extractor = _HiddenSpanExtractor(Markdown(), text)
+    extractor.feed(text)
+    extractor.close()
     out: list[str] = []
     pos = 0
-    while (match := _HTML_BLOCK_START.search(markdown, pos)) is not None:
-        end = _html_block_end(markdown, match)
-        if end is None:
-            out.append(markdown[pos : match.end()])
-            pos = match.end()
+    for start, end in sorted(extractor.hidden):
+        if end <= pos:
             continue
-        out.append(markdown[pos : match.start()])
-        out.append(_blank_lines(markdown[match.start() : end]))
+        start = max(start, pos)
+        out.append(text[pos:start])
+        out.append(_blank_lines(text[start:end]))
         pos = end
-    out.append(markdown[pos:])
+    out.append(text[pos:])
     return "".join(out)
 
 
