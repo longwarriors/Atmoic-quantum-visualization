@@ -4,9 +4,14 @@ A text-level check that reads the docs with ``read_text()`` (universal
 newlines) and tolerates ``\\r`` cannot see the corruption class that actually
 hit this repository: a ``\\r``/``\\n``/``\\t`` escape inside LaTeX (``\\rho``,
 ``\\nabla``, ``\\theta``) being interpreted by a tool and written back as a raw
-CR/LF/TAB byte. The symptoms are a lone CR or TAB in the file, a formula split
-across two lines, and a Markdown table row that silently gains or loses cells.
-These gates read the raw bytes and fail on each symptom independently.
+CR/LF/TAB byte. The symptoms are a lone CR or TAB in the file and a formula
+split across two lines. These gates read the raw bytes and fail on each
+symptom independently.
+
+A third gate catches a different defect at its cause: an unescaped ``|``
+inside ``$...$`` on a ``|``-prefixed table row, which Python-Markdown would
+split into an extra cell. It does not scan ``\\(...\\)`` math, and a row
+without a leading ``|`` is not scanned at all.
 """
 
 from __future__ import annotations
@@ -65,6 +70,26 @@ NON_CONTROL_RUN = re.compile(rb"[^\x00-\x1f]+")
 TABLE_ROW = re.compile(r"^\s*\|")
 INLINE_MATH = re.compile(r"\$(?P<body>[^$]+?)\$")
 
+# Characters that precede a command inside a formula. A fragment directly
+# after one of these (optionally separated by whitespace, because a
+# whitespace-normalising editor turns the TAB of a corrupted ``\t...`` into
+# spaces) is evidence -- but only on a formula line, see
+# ``orphan_fragment_violations``.
+FORMULA_OPERATORS = "/{=(+-,^_$"
+# Commands whose brace argument is prose: ``\text{ext}``, ``\mathrm{vert}``,
+# ``\operatorname{angle}`` are legitimate, so a ``{`` opened by one of these
+# is not an operator. Known limit: a corrupted escape *inside* such an
+# argument (``\text{\theta}`` -> ``\text{heta}``) is not reported.
+TEXT_ARGUMENT_COMMANDS = ("text", "textbf", "mathrm", "mathbf", "mathit", "operatorname")
+# A fenced code block (``` or ~~~, any indentation, any info string). Code is
+# not scanned: a sample may start a line with ``eta`` / ``frac`` / ``vert``
+# or show a literal ``$$``.
+FENCE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})")
+# An inline code span is code too: ``test_x_angle_y`` must not read as the
+# operator ``_`` + ``angle``, and a literal ``$`` / ``$$`` in a span is not a
+# formula marker.
+INLINE_CODE = re.compile(r"`+[^`]*`+")
+
 
 # Fragments shorter than this (``u`` from ``\nu``, ``ar`` from ``\bar``, ``e``
 # from ``\ne``, ``ho`` from ``\rho``) are ordinary prose far too often
@@ -79,9 +104,9 @@ class OrphanPatterns(NamedTuple):
     """Compiled detectors for the fragments a corrupted escape leaves behind."""
 
     # A fragment only counts at the very start of a chunk (the byte after the
-    # corrupted escape) or directly after a character that, in a formula, would
-    # precede a command: ``/``, ``{``, ``=``, ``(``. It must not continue as a
-    # word.
+    # corrupted escape) or after one of ``FORMULA_OPERATORS`` (plus optional
+    # whitespace), excluding a ``{`` that opens the argument of a
+    # ``TEXT_ARGUMENT_COMMANDS`` command. It must not continue as a word.
     at_chunk_start: re.Pattern[str]
     after_operator: re.Pattern[str]
     # Short fragments: chunk start only, and only when glued to ``$``, ``}``,
@@ -113,9 +138,15 @@ def compile_orphan_patterns(fragments: Iterable[str]) -> OrphanPatterns:
     short = [fragment for fragment in fragments if len(fragment) < MIN_FRAGMENT_LENGTH]
     alternation = "|".join(re.escape(fragment) for fragment in long)
     short_alternation = "|".join(re.escape(fragment) for fragment in short)
+    # ``{`` counts unless a text-argument command immediately precedes it
+    # (one fixed-width lookbehind per command; ``re`` has no variable-width
+    # lookbehind).
+    not_text_argument = "".join(rf"(?<!\\{command})" for command in TEXT_ARGUMENT_COMMANDS)
+    other_operators = re.escape(FORMULA_OPERATORS.replace("{", ""))
+    operator = rf"(?:{not_text_argument}\{{|[{other_operators}])"
     return OrphanPatterns(
         at_chunk_start=re.compile(rf"^(?:{alternation})(?![A-Za-z])"),
-        after_operator=re.compile(rf"[/{{=(](?:{alternation})(?![A-Za-z])"),
+        after_operator=re.compile(rf"{operator}\s*(?:{alternation})(?![A-Za-z])"),
         short_at_chunk_start=(
             re.compile(rf"^(?:{short_alternation})(?=[$}}_^\\0-9])") if short else None
         ),
@@ -147,24 +178,50 @@ def control_byte_violations(data: bytes) -> list[str]:
     ]
 
 
+def _closes_fence(text: str, open_fence: str) -> bool:
+    """CommonMark: same fence character, at least as long, nothing after it."""
+
+    fence = FENCE.match(text)
+    return (
+        fence is not None
+        and fence.group("fence")[0] == open_fence[0]
+        and len(fence.group("fence")) >= len(open_fence)
+        and not text[fence.end() :].strip()
+    )
+
+
 def orphan_fragment_violations(data: bytes, patterns: OrphanPatterns) -> list[str]:
     # Split on every control byte (not just LF) so a fragment that follows a
     # lone CR or a form feed is still seen "at the start of a line".
     violations: list[str] = []
     in_display_math = False
+    open_fence: str | None = None
     for chunk in NON_CONTROL_RUN.finditer(data):
         text = chunk.group().decode("utf-8")
-        hit = patterns.at_chunk_start.search(text)
+        # Fenced code is skipped entirely, and a fence boundary (either way)
+        # resets the display-math state: a ``$$`` shown inside a fence must not
+        # open a block for the rest of the file.
+        if open_fence is not None:
+            if _closes_fence(text, open_fence):
+                open_fence = None
+                in_display_math = False
+            continue
+        if (fence := FENCE.match(text)) is not None:
+            open_fence = fence.group("fence")
+            in_display_math = False
+            continue
+        prose = INLINE_CODE.sub("", text)
+        hit = patterns.at_chunk_start.search(prose)
         if hit is None and patterns.short_at_chunk_start is not None:
-            hit = patterns.short_at_chunk_start.search(text)
+            hit = patterns.short_at_chunk_start.search(prose)
         # Operators only indicate LaTeX context when the line is a formula:
         # inline ``$...$`` on this line, or a line inside a ``$$ ... $$`` block.
-        if hit is None and ("$" in text or in_display_math):
-            hit = patterns.after_operator.search(text)
+        if hit is None and ("$" in prose or in_display_math):
+            hit = patterns.after_operator.search(prose)
         if hit is not None:
             violations.append(f"{_line_of(data, chunk.start())}: {hit.group(0)!r} in {text[:60]!r}")
         # A line with an odd number of ``$$`` opens or closes a display block.
-        if text.count("$$") % 2 == 1:
+        if prose.count("$$") % 2 == 1:
             in_display_math = not in_display_math
     return violations
 
@@ -283,3 +340,92 @@ def test_operator_fragments_are_checked_inside_display_math_blocks() -> None:
     assert orphan_fragment_violations(b"x = r\\cos(heta)\n", patterns) == []
     # A closed block stops the context.
     assert orphan_fragment_violations(b"$$\nx\n$$\nx = r\\cos(heta)\n", patterns) == []
+
+
+def test_text_command_arguments_are_not_orphan_fragments() -> None:
+    # ``\text{ext}``, ``\mathrm{vert}``, ``\operatorname{...}`` legitimately put
+    # a fragment right after ``{``; the argument of a text-like command is
+    # prose, not a corrupted escape. (``\operatorname{arg}`` is not a case:
+    # ``arg`` is no fragment of any ``\[abfnrtv]...`` command.)
+    patterns = corpus_orphan_patterns()
+    for sample in (
+        b"$N_{\\text{ext}}$\n",
+        b"$\\mathrm{vert}$\n",
+        b"$\\text{angle}$\n",
+        b"$\\operatorname{ext}$\n",
+        b"$\\mathbf{eta}$\n",
+        b"$\\mathit{vert}$\n",
+        b"$\\textbf{angle}$\n",
+        b"$$\n\\text{ext}\n$$\n",
+    ):
+        assert orphan_fragment_violations(sample, patterns) == [], sample
+    # A ``{`` that is not the argument of such a command is still an operator:
+    # ``\frac{\theta}{2}`` -> ``\frac{heta}{2}``.
+    assert orphan_fragment_violations(b"$\\frac{heta}{2}$\n", patterns) == [
+        "1: '{heta' in '$\\\\frac{heta}{2}$'"
+    ]
+
+
+def test_fenced_code_blocks_are_not_scanned() -> None:
+    # A code sample may start a line with ``eta`` / ``frac`` / ``vert``; that
+    # is code, not a corrupted ``\beta`` / ``\tfrac`` / ``\rvert``.
+    patterns = corpus_orphan_patterns()
+    for sample in (
+        b"```python\neta = 0.1\n```\n",
+        b"~~~\nfrac = 1\n~~~\n",
+        b"    ```text\n    vert = 2\n    ```\n",  # fence indented inside an admonition
+        b"````md\n```\neta\n```\n````\n",  # a shorter fence inside a longer one
+    ):
+        assert orphan_fragment_violations(sample, patterns) == [], sample
+    # A ``$$`` shown inside a fence must not open a display block for the rest
+    # of the file (the line after the fence is prose).
+    assert orphan_fragment_violations(b"```text\n$$\n```\nx = r\\cos(heta)\n", patterns) == []
+    # Every fence boundary resets the display-math state, even one that
+    # interrupts an unclosed ``$$`` block.
+    assert orphan_fragment_violations(b"$$\nx\n```\n```\nx = r\\cos(heta)\n", patterns) == []
+    # Scanning resumes after the closing fence.
+    assert orphan_fragment_violations(b"```\nx\n```\nabla f$\n", patterns) == [
+        "4: 'abla' in 'abla f$'"
+    ]
+
+
+def test_operator_fragments_tolerate_whitespace_and_every_formula_operator() -> None:
+    # ``\cos(\theta)`` -> TAB + ``heta`` -> a whitespace-normalising editor
+    # turns the TAB into spaces: ``( heta)``, ``=  rac{``. Every character
+    # that precedes a command in a formula counts as an operator.
+    patterns = corpus_orphan_patterns()
+    assert orphan_fragment_violations(b"$x = ( heta)$\n", patterns) == [
+        "1: '( heta' in '$x = ( heta)$'"
+    ]
+    assert orphan_fragment_violations(b"$x =  rac{1}{2}$\n", patterns) == [
+        "1: '=  rac' in '$x =  rac{1}{2}$'"
+    ]
+    for sample in (
+        b"$x + heta$\n",
+        b"$x - heta$\n",
+        b"$f(a, heta)$\n",
+        b"$x^heta$\n",
+        b"$x_heta$\n",
+        b"$heta$\n",
+        b"$x = 2/heta$\n",
+    ):
+        assert orphan_fragment_violations(sample, patterns), sample
+    # Still only in a formula: the same text in prose stays silent.
+    assert orphan_fragment_violations(b"x = ( heta), y - eta\n", patterns) == []
+
+
+def test_inline_code_spans_are_not_scanned() -> None:
+    # ``_`` is an operator, so a snake_case identifier such as
+    # ``test_..._angle_ranges`` on a line that also carries ``$...$`` would
+    # otherwise read as ``_angle``. Inline code is code, like a fenced block.
+    patterns = corpus_orphan_patterns()
+    sample = b"- $\\theta\\in[0,\\pi]$ convention -- `test_documented_angle_ranges`\n"
+    assert orphan_fragment_violations(sample, patterns) == []
+    # A ``$`` or ``$$`` inside a code span is neither a formula marker nor a
+    # display-math delimiter.
+    assert orphan_fragment_violations(b"`$x$` (heta)\n", patterns) == []
+    assert orphan_fragment_violations(b"`$$` opens a block\nx = r\\cos(heta)\n", patterns) == []
+    # Outside the span the line is still scanned.
+    assert orphan_fragment_violations(b"`code` $x = ( heta)$\n", patterns) == [
+        "1: '( heta' in '`code` $x = ( heta)$'"
+    ]
