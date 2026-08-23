@@ -9,7 +9,8 @@ Two modes:
   BROKEN and SUSPECT results fail the run; BLOCKED (a bot filter, see below,
   or a 429 rate limit) is tolerated.
 * ``--changed-since <git-ref>`` probes only the URLs and DOIs *added* to
-  ``references.bib`` and ``docs/`` since the merge base with ``<git-ref>``.
+  ``references.bib`` and ``docs/`` since the merge base with ``<git-ref>``
+  (the bibliography is compared as two parsed files, the docs as a line diff).
   This is the gate ``ci.yml`` runs on every push and pull request: a link
   being introduced has to be shown to work, so in this mode every result
   other than OK fails -- except BLOCKED, which is either a 401/403 from a
@@ -51,11 +52,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from quviz.docs.bibliography import parse_bibtex_file
 from quviz.docs.links import (
     VERDICTS,
     Row,
+    added_bibliography_targets,
     added_urls,
+    bibliography_targets,
     classify,
     fails_run,
     format_row,
@@ -64,8 +66,8 @@ from quviz.docs.links import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-BIB_PATH = ROOT / "references.bib"
-CHANGED_PATHS = ("references.bib", "docs")
+BIB_NAME = "references.bib"
+DOCS_DIR = "docs"
 TIMEOUT = 30
 RETRY_DELAYS = (3, 6)
 USER_AGENT = (
@@ -102,32 +104,43 @@ def _probe(url: str) -> tuple[str, int | None, str]:
     return url, status, detail
 
 
-def _bibliography_targets(include_doi: bool) -> dict[str, str]:
-    """Every cited URL (and optionally DOI) mapped to the first key citing it."""
+def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, check=check, capture_output=True, text=True, encoding="utf-8"
+    )
 
-    bibliography = parse_bibtex_file(BIB_PATH)
-    targets: dict[str, str] = {}
-    for key, entry in bibliography.entries.items():
-        if url := entry.fields.get("url"):
-            targets.setdefault(url, key)
-        if include_doi and (doi := entry.fields.get("doi")):
-            targets.setdefault(f"https://doi.org/{doi}", key)
-    return targets
+
+def _file_at(revision: str, path: str) -> str:
+    """``path`` as committed at ``revision``; empty when it does not exist there."""
+
+    result = _git("show", f"{revision}:{path}", check=False)
+    if result.returncode == 0:
+        return result.stdout
+    if "does not exist in" in result.stderr or "exists on disk, but not in" in result.stderr:
+        return ""
+    raise subprocess.CalledProcessError(
+        result.returncode, result.args, result.stdout, result.stderr
+    )
 
 
 def _changed_targets(git_ref: str) -> dict[str, str]:
-    """URLs/DOIs added since the merge base with ``git_ref``, labelled by bib key."""
+    """URLs/DOIs added since the merge base with ``git_ref``, labelled by bib key.
 
-    diff = subprocess.run(
-        ["git", "diff", f"{git_ref}...HEAD", "--", *CHANGED_PATHS],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout
-    known = _bibliography_targets(include_doi=True)
-    return {url: known.get(url, "docs") for url in sorted(added_urls(diff))}
+    ``references.bib`` is compared as two parsed bibliographies (the merge
+    base's and HEAD's), never as a line diff: a ``doi`` field in a
+    single-line entry, on a line shared with other fields, or with its value
+    wrapped onto the next line is a target like any other. ``docs/`` is prose,
+    so its links are pulled from the line diff.
+    """
+
+    base = _git("merge-base", git_ref, "HEAD").stdout.strip()
+    head_bib = _file_at("HEAD", BIB_NAME)
+    targets = added_bibliography_targets(_file_at(base, BIB_NAME), head_bib)
+    known = bibliography_targets(head_bib)
+    docs_diff = _git("diff", base, "HEAD", "--", DOCS_DIR).stdout
+    for url in added_urls(docs_diff):
+        targets.setdefault(url, known.get(url, "docs"))
+    return dict(sorted(targets.items()))
 
 
 def main() -> int:
@@ -155,7 +168,9 @@ def main() -> int:
             return 0
         print(f"probing {len(targets)} link(s) added since {args.changed_since}")
     else:
-        targets = _bibliography_targets(args.include_doi)
+        targets = bibliography_targets(
+            (ROOT / BIB_NAME).read_text(encoding="utf-8"), include_doi=args.include_doi
+        )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(_probe, targets))
