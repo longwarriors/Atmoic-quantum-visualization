@@ -70,7 +70,7 @@
 ## 前端
 
 - ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
-- ✅ binary parser 单测 — `web/src/api/client.test.ts`，含**跨语言黄金向量**（见下）；
+- ✅ binary parser 单测 — `web/src/api/qvpc.test.ts`，含**跨语言黄金向量**（见下）；
 - ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
 - 🕒 geometry/material 正确 dispose；
 - 🕒 截图视觉回归仅作为辅助；
