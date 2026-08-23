@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { parsePointCloud } from './qvpc'
+import {
+  EXPECTED_MAGIC,
+  EXPECTED_STRIDE,
+  HEADER_BYTES,
+  SUPPORTED_VERSION,
+  parsePointCloud,
+} from './qvpc'
 
 const goldenUrl = new URL('../../../tests/fixtures/qvpc_golden.bin', import.meta.url)
 const specUrl = new URL('../../../tests/fixtures/qvpc_golden.json', import.meta.url)
@@ -32,10 +38,46 @@ function headers(overrides: Record<string, string> = {}): Headers {
   })
 }
 
+describe('qvpc_golden.bin header, pinned field-for-field with tests/test_scene_contract.py', () => {
+  // The Python side unpacks '<4sHHII' and asserts magic/version/flags/count/stride.
+  // Pinning the same five fields here means neither half of the contract can
+  // drift without breaking a test on its own side.
+  const view = new DataView(goldenBuffer())
+
+  it('starts with the QVPC magic', () => {
+    const magic = new TextDecoder().decode(new Uint8Array(goldenBuffer(), 0, 4))
+    expect(magic).toBe(EXPECTED_MAGIC)
+    expect(magic).toBe(spec.magic)
+  })
+
+  it('carries version 1 at byte 4', () => {
+    expect(view.getUint16(4, true)).toBe(SUPPORTED_VERSION)
+    expect(spec.version).toBe(SUPPORTED_VERSION)
+  })
+
+  it('carries reserved flags == 0 at byte 6', () => {
+    expect(view.getUint16(6, true)).toBe(0)
+  })
+
+  it('carries count 4 at byte 8 and stride 5 at byte 12', () => {
+    expect(view.getUint32(8, true)).toBe(4)
+    expect(view.getUint32(12, true)).toBe(EXPECTED_STRIDE)
+    expect(spec.count).toBe(4)
+    expect(spec.stride).toBe(EXPECTED_STRIDE)
+  })
+
+  it('is exactly 16 bytes of header followed by count * stride float32s', () => {
+    expect(HEADER_BYTES).toBe(16)
+    expect(goldenBuffer().byteLength).toBe(HEADER_BYTES + 4 * EXPECTED_STRIDE * 4)
+  })
+})
+
 describe('parsePointCloud, against the Python-generated golden vector', () => {
   it('decodes exactly what the Python encoder wrote', () => {
     const result = parsePointCloud(goldenBuffer(), headers())
 
+    expect(result.version).toBe(spec.version)
+    expect(result.flags).toBe(0)
     expect(result.count).toBe(spec.count)
     expect(result.stride).toBe(spec.stride)
     expect(Array.from(result.positions)).toEqual(spec.positions.flat())
@@ -74,6 +116,15 @@ describe('parsePointCloud rejects malformed payloads', () => {
     const buffer = goldenBuffer()
     new Uint8Array(buffer)[0] = 0x58 // 'X'
     expect(() => parsePointCloud(buffer, headers())).toThrow(/magic/i)
+  })
+
+  it('rejects non-zero reserved flags', () => {
+    // The encoder writes flags=0 and the Python contract test asserts it; a
+    // decoder that never reads the field would accept a payload it does not
+    // understand.
+    const buffer = goldenBuffer()
+    new DataView(buffer).setUint16(6, 0xffff, true)
+    expect(() => parsePointCloud(buffer, headers())).toThrow(/reserved.*flags.*0xffff/i)
   })
 
   it('rejects an unsupported version', () => {

@@ -24,12 +24,22 @@ export function parsePointCloud(
   if (magic !== EXPECTED_MAGIC) {
     throw new Error(`Unexpected point-cloud magic: ${magic}`)
   }
+  // Header layout mirrors struct '<4sHHII' in src/quviz/scene/binary.py:
+  // magic, version, flags, count, stride.
   const view = new DataView(buffer)
   const version = view.getUint16(4, true)
+  const flags = view.getUint16(6, true)
   const count = view.getUint32(8, true)
   const stride = view.getUint32(12, true)
   if (version !== SUPPORTED_VERSION || stride !== EXPECTED_STRIDE) {
     throw new Error(`Unsupported QVPC payload: version=${version}, stride=${stride}`)
+  }
+  if (flags !== 0) {
+    // The encoder writes 0 and the Python contract test pins it. Any set bit
+    // would mean a format feature this decoder does not know how to honour.
+    throw new Error(
+      `Unsupported QVPC payload: reserved header flags must be 0, got 0x${flags.toString(16).padStart(4, '0')}`,
+    )
   }
   const expectedBytes = HEADER_BYTES + count * stride * Float32Array.BYTES_PER_ELEMENT
   if (buffer.byteLength !== expectedBytes) {
@@ -50,6 +60,8 @@ export function parsePointCloud(
     phase[index] = interleaved[source + 4]
   }
   return {
+    version,
+    flags,
     count,
     stride,
     positions,
