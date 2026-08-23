@@ -6,9 +6,10 @@
 
 !!! warning "状态标记是本页的强制格式"
 
-    本页第 49 行要求“已实现”“已验证”“计划中”不得混写，因此每一条目必须带状态：
+    [文档与引用](#docs-and-citations)一节要求“已实现”“已验证”“计划中”不得混写，因此每一条目必须带状态：
 
     - ✅ **已门禁**：由 `make check` / `check.ps1` 在每次提交上自动强制，并指明测试位置；
+    - 🌐 **仅 CI、需网络**：只由 GitHub Actions 执行（push 与 pull request 都运行），因为要访问网络，**不在** `make check` / `check.ps1` 内，本地提交不会触发；
     - 🧑 **人工门禁**：必须人工复核，无法自动化，评审时逐条确认；
     - 🕒 **计划中**：已列入[路线图](../project/roadmap.md)，当前**没有**任何自动检查。
 
@@ -83,13 +84,13 @@
 
     单方面修改 wire format 会同时打破两侧——已验证：把 `POINT_CLOUD_STRIDE` 从 5 改成 6，Python 立刻 2 个测试变红；即使有人重新生成黄金字节把 Python 弄绿，TypeScript 仍有 5 个测试变红。
 
-## 文档与引用
+## 文档与引用 { #docs-and-citations }
 
 - ✅ `mkdocs build --strict`；
 - ✅ 所有 `[\@key]` 存在 — `tests/test_bibliography.py::test_all_documentation_citation_keys_exist`；
 - ✅ 生成索引与 `references.bib` 同步 — `scripts/render_reference_index.py --check`；
-- ✅ Markdown 不含换页符等意外 C0 控制字符 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown：除 TAB/LF 外的任何 C0 字节（孤立或成对的 CR 也算）、转义损坏留下的孤儿 LaTeX 片段（如行首的 `ho$`、`abla`）、表格行 `$...$` 内未转义的 `|`，三者任一出现即变红；
-- ✅ pull request **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since`，任何非 OK 结果都失败；已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败），不在 `make check` 内；
+- ✅ Markdown 字节级完整性 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown，下列三者任一出现即变红：(1) 除 LF 外的任何 C0 字节——孤立或成对的 CR、TAB、换页符都算，因为它们正是 `\rho`、`\theta` 这类转义被解释后留下的指纹；(2) 转义损坏留下的孤儿 LaTeX 片段（如行首的 `abla`、`ightarrow`）——片段集合不是固定清单，而是在测试时从语料中每个 `\[abfnrtv]...` 命令推导并与静态种子取并集，另有测试断言语料中每个此类命令都被覆盖；行首片段无条件检查，`/ { = (` 之后的片段只在含 `$` 的行和 `$$ ... $$` 块内检查；1–2 字母片段（`\nu`、`\ne`、`\rho` 留下的 `u`、`e`、`ho`）只在紧跟 `$ } _ ^ \` 或数字时才报，其余情形依赖 (1) 的字节检查兜底；(3) 表格行 `$...$` 内未转义的 `|`；
+- 🌐 **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since`，任何非 OK 结果都失败；已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败）；两者都需要网络，不在 `make check` / `check.ps1` 内；
 - 🕒 引用内容漂移检查（当前没有任何门禁比对页面内容）；
 - ✅ `references.bib` 中未被正文引用的孤儿键 — `tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`；代码块、行内代码与 HTML 注释里的引用不算正文（`tests/test_citation_gates.py`）；
 - ✅ `source-audit` 条目的 `commit` 与 URL 中 SHA 一致、tag/branch URL 带 `version`、非代码托管来源带访问日期 — `test_repository_bibliography_has_coherent_source_pins`；
