@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from quviz.docs.bibliography import BibEntry, Bibliography, Person, parse_bibtex_file
+from quviz.docs.pins import validate_source_pins
 from quviz.docs.scan import cited_keys_in_tree
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +151,10 @@ def main() -> int:
             f"orphan bibliography entries (cited nowhere, tag `keywords = {{tooling}}` "
             f"if that is intended): {orphans}"
         )
+    pin_problems = validate_source_pins(bibliography.entries.values())
+    if pin_problems:
+        details = "\n  ".join(pin_problems)
+        raise SystemExit(f"source-audit pins are missing or incoherent:\n  {details}")
 
     rendered = render(bibliography)
     if args.check:

@@ -83,15 +83,7 @@ def test_every_bibliography_entry_is_cited_or_marked_tooling() -> None:
     assert not orphans, f"bibliography entries nobody cites: {orphans}"
 
 
-def test_audited_source_code_entries_are_pinned_to_a_revision() -> None:
-    # source-policy.md requires source-code audits to record a commit. Without
-    # a pin the audited bytes and the cited URL can silently diverge.
-    bibliography = parse_bibtex_file(ROOT / "references.bib")
-    unpinned = [
-        key
-        for key, entry in bibliography.entries.items()
-        if "source-audit" in {v.strip() for v in entry.fields.get("keywords", "").split(",")}
-        and "github.com" in entry.fields.get("url", "")
-        and not (entry.fields.get("commit") or entry.fields.get("version"))
-    ]
-    assert not unpinned, f"audited GitHub sources without a commit/version pin: {unpinned}"
+# Commit-pin coherence for source-audit entries lives in
+# tests/test_citation_gates.py (quviz.docs.pins.validate_source_pins); the
+# github-only "non-empty commit or version" check that used to sit here let
+# ``commit = {latest}`` through.

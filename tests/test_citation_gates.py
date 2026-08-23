@@ -15,6 +15,8 @@ from pathlib import Path
 import markdown  # the docs dependency group; deliberately not importorskip
 import pytest
 
+from quviz.docs.bibliography import BibEntry, parse_bibtex_file
+from quviz.docs.pins import validate_source_pins
 from quviz.docs.scan import cited_keys_in, strip_non_prose
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,3 +130,95 @@ def test_orphan_check_reports_an_entry_cited_only_inside_a_code_block(tmp_path: 
     assert "orphan" in result.stderr
     assert "only-fenced" in result.stderr
     assert "cited-for-real" not in result.stderr
+
+
+# --- C2: source-audit entries must be pinned, and the pin must be coherent ---
+
+SHA = "a351de1adbcdd14bb4d12dd50dff534fd0cb595f"
+OTHER_SHA = "ed6684735f63f3678a1538790de9bc342ac8d799"
+
+
+def _entry(key: str, **fields: str) -> BibEntry:
+    fields.setdefault("keywords", "source-audit,software")
+    return BibEntry(entry_type="software", key=key, fields=fields, authors=())
+
+
+def test_commit_placeholder_is_rejected() -> None:
+    entry = _entry("x", url=f"https://github.com/o/r/blob/{SHA}/f.py", commit="{latest}")
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1
+    assert "x" in messages[0] and "hex" in messages[0]
+
+
+def test_url_sha_must_match_commit_field() -> None:
+    entry = _entry("x", url=f"https://github.com/o/r/blob/{SHA}/f.py", commit=OTHER_SHA)
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1
+    assert SHA[:12] in messages[0] and OTHER_SHA[:12] in messages[0]
+
+
+def test_gitlab_entry_without_commit_is_rejected() -> None:
+    entry = _entry("x", url="https://gitlab.com/o/r/-/blob/main/f.py")
+    messages = validate_source_pins([entry])
+    assert any("commit" in message for message in messages)
+
+
+def test_blob_url_with_matching_sha_passes() -> None:
+    entry = _entry("x", url=f"https://github.com/o/r/blob/{SHA}/f.py", commit=SHA)
+    assert validate_source_pins([entry]) == []
+
+
+def test_abbreviated_commit_consistent_with_url_sha_passes() -> None:
+    entry = _entry("x", url=f"https://github.com/o/r/tree/{SHA}", commit=SHA[:12])
+    assert validate_source_pins([entry]) == []
+
+
+def test_tag_url_requires_a_version_field_naming_the_tag() -> None:
+    url = "https://github.com/o/r/releases/tag/2.0.0"
+    assert any("version" in m for m in validate_source_pins([_entry("x", url=url, commit=SHA)]))
+    mismatched = _entry("x", url=url, commit=SHA, version="1.0.0")
+    assert any("version" in m for m in validate_source_pins([mismatched]))
+    assert validate_source_pins([_entry("x", url=url, commit=SHA, version="2.0.0")]) == []
+
+
+def test_branch_url_is_treated_like_a_tag_and_needs_version() -> None:
+    entry = _entry("x", url="https://github.com/o/r/tree/main", commit=SHA)
+    assert any("version" in m for m in validate_source_pins([entry]))
+
+
+def test_gitlab_tag_and_codeberg_commit_urls_are_understood() -> None:
+    gitlab = _entry("g", url="https://gitlab.com/o/r/-/tags/v1.2", commit=SHA, version="v1.2")
+    codeberg = _entry("c", url=f"https://codeberg.org/o/r/src/commit/{SHA}/f.py", commit=SHA)
+    assert validate_source_pins([gitlab, codeberg]) == []
+    wrong = _entry("c", url=f"https://codeberg.org/o/r/src/commit/{SHA}/f.py", commit=OTHER_SHA)
+    assert validate_source_pins([wrong]) != []
+
+
+def test_non_code_host_source_audit_needs_an_access_date() -> None:
+    article = _entry("a", url="https://example.org/post", keywords="source-audit,teaching")
+    assert any("urldate" in m for m in validate_source_pins([article]))
+    dated = _entry(
+        "a", url="https://example.org/post", urldate="2026-08-22", keywords="source-audit"
+    )
+    assert validate_source_pins([dated]) == []
+    malformed = _entry(
+        "a", url="https://example.org/post", urldate="Aug 2026", keywords="source-audit"
+    )
+    assert any("urldate" in m for m in validate_source_pins([malformed]))
+
+
+def test_source_audit_without_url_needs_a_doi() -> None:
+    bare = _entry("p", keywords="source-audit,chemistry")
+    assert any("doi" in m for m in validate_source_pins([bare]))
+    paper = _entry("p", keywords="source-audit,chemistry", doi="10.1021/ed084p1882")
+    assert validate_source_pins([paper]) == []
+
+
+def test_entries_not_tagged_source_audit_are_ignored() -> None:
+    entry = _entry("x", url="https://github.com/o/r", keywords="software,visualization")
+    assert validate_source_pins([entry]) == []
+
+
+def test_repository_bibliography_has_coherent_source_pins() -> None:
+    bibliography = parse_bibtex_file(ROOT / "references.bib")
+    assert validate_source_pins(bibliography.entries.values()) == []
