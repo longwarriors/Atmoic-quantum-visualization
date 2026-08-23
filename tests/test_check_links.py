@@ -16,6 +16,7 @@ from quviz.docs.links import (
     extract_urls,
     fails_run,
     format_row,
+    is_bot_host,
     probe_target,
     step_summary,
 )
@@ -142,6 +143,49 @@ def test_changed_links_mode_tolerates_blocked_on_every_host() -> None:
     assert fails_run("SUSPECT", "https://github.com/o/r", strict=True)
     assert fails_run("BROKEN", "https://www.zhihu.com/question/1", strict=True)
     assert not fails_run("OK", "https://github.com/o/r", strict=True)
+
+
+def test_bot_host_is_decided_by_the_hostname_not_by_a_substring_of_the_url() -> None:
+    # The decision used to be ``any(host in url for host in BOT_HOSTS)``: a 403
+    # from any URL whose path, query or a longer hostname merely *contained*
+    # a bot-filter host was BLOCKED and tolerated, which let an unverified
+    # link through the pull-request gate.
+    smuggled = (
+        "https://evil.example/x?u=doi.org",
+        "https://doi.org.evil.example/",
+        "https://evil.example/journals.aps.org/paper",
+        "https://notzhihu.com/q",
+        "https://doi.org@evil.example/",
+        "https://evil.example/#doi.org",
+    )
+    for url in smuggled:
+        assert not is_bot_host(url), url
+        assert classify(url, 403) == "SUSPECT", url
+        assert fails_run(classify(url, 403), url, strict=True), url
+        assert fails_run(classify(url, 403), url, strict=False), url
+    # The listed hosts, their subdomains, and trivial hostname variants still match.
+    legitimate = (
+        "https://doi.org/10.1021/ed072p505",
+        "https://dx.doi.org/10.1021/ed072p505",
+        "https://journals.aps.org/prl/abstract/10.1103/x",
+        "https://link.aps.org/doi/10.1103/x",
+        "https://www.zhihu.com/question/1",
+        "https://zhuanlan.zhihu.com/p/1",
+        "https://www.sciencedirect.com/science/article/x",
+        "https://pubs.acs.org/doi/10.1021/x",
+        "https://www.cambridge.org/core/x",
+        "https://DOI.ORG/10.1/x",
+        "https://doi.org./10.1/x",
+        "http://doi.org:80/10.1/x",
+    )
+    for url in legitimate:
+        assert is_bot_host(url), url
+        assert classify(url, 403) == "BLOCKED", url
+    # A ``BOT_HOSTS`` entry is a bare hostname; a subdomain match needs the dot
+    # boundary, so the registered host is never a suffix of an unrelated one.
+    assert not is_bot_host("https://fakecambridge.org/")
+    assert not is_bot_host("not a url")
+    assert not is_bot_host("")
 
 
 def test_a_403_off_the_bot_filter_hosts_is_suspect_so_it_still_fails_strict_mode() -> None:

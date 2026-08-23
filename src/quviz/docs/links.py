@@ -20,6 +20,7 @@ host is SUSPECT and fails either mode.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from collections.abc import Mapping, Sequence
 
 # A URL ends at whitespace, a non-ASCII character (in Chinese prose the
@@ -99,8 +100,28 @@ def probe_target(url: str) -> str:
     return url
 
 
+def _hostname(url: str) -> str | None:
+    """The normalised hostname of ``url``: lowercase, no trailing dot, no port/userinfo."""
+
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+    except ValueError:
+        return None
+    return host.rstrip(".").lower() if host else None
+
+
 def is_bot_host(url: str) -> bool:
-    return any(host in url for host in BOT_HOSTS)
+    """Whether ``url`` is served by a host in ``BOT_HOSTS`` or one of its subdomains.
+
+    Only the hostname counts. This used to be a substring test over the whole
+    URL, so a 403 from ``https://evil.example/x?u=doi.org`` or
+    ``https://doi.org.evil.example/`` was BLOCKED and tolerated by the gate.
+    """
+
+    host = _hostname(url)
+    if host is None:
+        return False
+    return any(host == bot or host.endswith("." + bot) for bot in BOT_HOSTS)
 
 
 def classify(url: str, status: int | None) -> str:
