@@ -17,7 +17,7 @@
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser 与相位色轮的 vitest 单测（24 项）带强制覆盖率门槛；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser 与相位色轮的 vitest 单测（61 项）带强制覆盖率门槛；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；push 与 pull request 新增链接由 CI 探测 | 已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -65,24 +65,24 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 - `source-audit` 条目的 `commit` 字段必须与 URL 中的 SHA 一致，`{latest}` 之类占位符、tag/branch URL 缺 `version`、非代码托管来源缺访问日期都会失败（`tests/test_citation_gates.py`）；
 - push 与 pull request **新增**的 URL/DOI 由 CI 的 `changed-links` 作业探测，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 外任何非 OK 结果都失败；每周全量扫描对 SUSPECT 不再放行；
 - QVPC/1 parser 拒绝非零保留 flag，对缺失、为空或非数值的响应头明确抛错，并钉住黄金字节流的头部；
-- `npm run test` 执行 `vitest run --coverage`，`vitest.config.ts` 的覆盖率门槛（语句/函数/行 90%，分支 85%）被真正评估——用 `--coverage.thresholds.lines=101` 探针确认会以 exit 1 失败；
+- `npm run test` 执行 `vitest run --coverage`，`vitest.config.ts` 的覆盖率门槛（语句/函数/行 90%，分支 85%，按文件评估）被真正评估——用 `--coverage.thresholds.lines=101` 探针确认会以 exit 1 失败；
 - `*.test.tsx` 与 `*.test.ts` 一样被 vitest 收集，并由 `tsconfig.test.json` 做类型检查；
 - `check.ps1`、`Makefile` 与 CI 一律以 `uv run --group docs pytest` 运行测试，`tests/conftest.py` 把任何 skipped 测试变成会话失败（`QUVIZ_ALLOW_SKIPS=1` 才能显式放行），引用门禁不能再因缺少依赖组而自行跳过；
 - 生成的 `web/coverage/` 不再入库（`git ls-files web/coverage` 为 0）。
 
 ### 本树实测结果
 
-在提交 `21a0fed` 上从干净工作树依次执行；`& .\scripts\check.ps1` 端到端再跑一遍得到相同数字：
+在提交 `8c34330` 上从干净工作树依次执行；`& .\scripts\check.ps1` 端到端再跑一遍得到相同数字：
 
 | 检查 | 当前结果 |
 |---|---|
-| `ruff check .` / `ruff format --check .` | 通过；93 个文件已格式化 |
+| `ruff check .` / `ruff format --check .` | 通过；94 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 234 passed，0 failed，0 skipped，68 warnings；总覆盖率 90.11%（门槛 85%）——该数字在 `web/dist` 存在时测得，干净克隆上为 89.95%，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `uv run --group docs pytest --cov=quviz` | 343 passed，0 failed，0 skipped，68 warnings；总覆盖率 90.74%（门槛 85%）——该数字在 `web/dist` 存在时测得，干净克隆上为 90.64%，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
-| `mkdocs build --strict` | 通过（1.8 s；仅上游 mkdocs-material 2.0 提示） |
-| `npm run test` | 2 个文件 24 tests passed（`qvpc.test.ts` 20、`color.test.ts` 4）；`qvpc.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
-| `npm run build` | 通过；`index-*.js` 1,203.25 kB（gzip 328.93 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
+| `mkdocs build --strict` | 通过（2.2 s；仅上游 mkdocs-material 2.0 提示） |
+| `npm run test` | 2 个文件 61 tests passed（`qvpc.test.ts` 57、`color.test.ts` 4）；`qvpc.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
+| `npm run build` | 通过；`index-*.js` 1,203.66 kB（gzip 329.07 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
 | 工作树 | `git status --short` 为空；`git ls-files --eol` 无 CRLF 工作副本 |
 
 68 条 pytest 警告来自 FastAPI/TestClient 与 scikit-image 的上游弃用提示，与 M0R 时相同，未被处理。
