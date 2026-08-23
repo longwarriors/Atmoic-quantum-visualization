@@ -60,8 +60,8 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 外部审计指出若干门禁只在文档里“存在”。本次逐项写出先变红、再修复变绿的测试后，以下检查现在会真正失败：
 
-- Markdown **字节级**完整性：`tests/test_docs_integrity.py` 读取原始字节，孤立或成对的 CR、转义损坏留下的孤儿 LaTeX 片段（如行首的 `ho$`、`abla`）、表格行 `$...$` 内未转义的 `|` 三者任一出现即失败；借此修复了 `scene-contract.md`、`semantics.md`、`model-map.md` 中已损坏的 `\rho`/`\nabla`；
-- 引用扫描只看 **Markdown 正文**：围栏代码块、行内代码和 HTML 注释里的 `[@key]` 既不算引用，也不能把 orphan 条目“救活”；
+- Markdown **字节级**完整性：`tests/test_docs_integrity.py` 读取原始字节，除 LF 外的任何 C0 字节（孤立或成对的 CR、TAB）、转义损坏留下的孤儿 LaTeX 片段（如行首的 `ho$`、`abla`、`ightarrow`；片段集合从语料中的 `\[abfnrtv]...` 命令推导）、表格行 `$...$` 内未转义的 `|` 三者任一出现即失败；借此修复了 `scene-contract.md`、`semantics.md`、`model-map.md` 中已损坏的 `\rho`/`\nabla`；
+- 引用扫描只看 **Markdown 正文**：围栏代码块、行内 code、块级 HTML 注释与块级原始 HTML 里的 `[@key]` 既不算引用，也不能把 orphan 条目“救活”；行内注释按 python-markdown 的行为计入正文；
 - `source-audit` 条目的 `commit` 字段必须与 URL 中的 SHA 一致，`{latest}` 之类占位符、tag/branch URL 缺 `version`、非代码托管来源缺访问日期都会失败（`tests/test_citation_gates.py`）；
 - pull request **新增**的 URL/DOI 由 CI 的 `changed-links` 作业探测，任何非 OK 结果都失败；每周全量扫描对 SUSPECT 不再放行；
 - QVPC/1 parser 拒绝非零保留 flag，对缺失、为空或非数值的响应头明确抛错，并钉住黄金字节流的头部；
@@ -78,7 +78,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；93 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 234 passed，0 failed，0 skipped，68 warnings；总覆盖率 90.11%（门槛 85%） |
+| `uv run --group docs pytest --cov=quviz` | 234 passed，0 failed，0 skipped，68 warnings；总覆盖率 90.11%（门槛 85%）——该数字在 `web/dist` 存在时测得，干净克隆上为 89.95%，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过（1.8 s；仅上游 mkdocs-material 2.0 提示） |
 | `npm run test` | 2 个文件 24 tests passed（`qvpc.test.ts` 20、`color.test.ts` 4）；`qvpc.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
