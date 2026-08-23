@@ -13,6 +13,30 @@ export const EXPECTED_MAGIC = 'QVPC'
 export const SUPPORTED_VERSION = 1
 export const EXPECTED_STRIDE = 5
 
+/**
+ * Read a numeric transport header and refuse to guess.
+ *
+ * `Number(headers.get(name) ?? 'NaN')` looked defensive but was not: a missing
+ * header became NaN and an empty one became 0 (`Number('') === 0`), and both
+ * flowed silently into the Inspector and the fog scale. A header the server
+ * promised but did not deliver is a broken response, so surface it the same
+ * way a bad payload is surfaced: by throwing.
+ */
+export function readFiniteHeader(headers: Headers, name: string): number {
+  const raw = headers.get(name)
+  if (raw === null) {
+    throw new Error(`Point-cloud response header ${name} is missing.`)
+  }
+  if (raw.trim() === '') {
+    throw new Error(`Point-cloud response header ${name} is empty.`)
+  }
+  const value = Number(raw)
+  if (!Number.isFinite(value)) {
+    throw new Error(`Point-cloud response header ${name} is "${raw}", not a finite number.`)
+  }
+  return value
+}
+
 export function parsePointCloud(
   buffer: ArrayBuffer,
   headers: Headers,
@@ -24,12 +48,21 @@ export function parsePointCloud(
   if (magic !== EXPECTED_MAGIC) {
     throw new Error(`Unexpected point-cloud magic: ${magic}`)
   }
+  // Header layout mirrors struct '<4sHHII' in src/quviz/scene/binary.py:
+  // magic, version, flags, count, stride.
   const view = new DataView(buffer)
   const version = view.getUint16(4, true)
+  const flags = view.getUint16(6, true)
   const count = view.getUint32(8, true)
   const stride = view.getUint32(12, true)
   if (version !== SUPPORTED_VERSION || stride !== EXPECTED_STRIDE) {
     throw new Error(`Unsupported QVPC payload: version=${version}, stride=${stride}`)
+  }
+  if (flags !== 0) {
+    // The encoder writes 0 and the Python contract test pins it. Any set bit
+    // would mean a format feature this decoder does not know how to honour.
+    const hex = `0x${flags.toString(16).padStart(4, '0')}`
+    throw new Error(`Unsupported QVPC payload: reserved header flags must be 0, got ${hex}`)
   }
   const expectedBytes = HEADER_BYTES + count * stride * Float32Array.BYTES_PER_ELEMENT
   if (buffer.byteLength !== expectedBytes) {
@@ -50,12 +83,14 @@ export function parsePointCloud(
     phase[index] = interleaved[source + 4]
   }
   return {
+    version,
+    flags,
     count,
     stride,
     positions,
     intensity,
     phase,
-    radialMass: Number(headers.get('X-QuViz-Radial-Mass') ?? 'NaN'),
-    extentBohr: Number(headers.get('X-QuViz-Extent-Bohr') ?? 'NaN'),
+    radialMass: readFiniteHeader(headers, 'X-QuViz-Radial-Mass'),
+    extentBohr: readFiniteHeader(headers, 'X-QuViz-Extent-Bohr'),
   }
 }

@@ -9,7 +9,9 @@
   },
   "include": [
     "src/**/*.test.ts",
+    "src/**/*.test.tsx",
     "src/**/*.ts",
+    "src/**/*.tsx",
     "vitest.config.ts"
   ],
   "exclude": []
