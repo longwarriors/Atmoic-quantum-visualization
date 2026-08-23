@@ -19,9 +19,9 @@
 - ✅ $\int|\psi|^2dV=1$ — `tests/test_hydrogenic.py::test_radial_functions_are_normalized`；
 - ✅ 正交性（径向、角向、跨 $n$ 跨 $\ell$ 全波函数） — `tests/test_analytic_gates.py` 三项 `*_orthonormal_*`；
 - ✅ 节点数 $N_{\text{radial}}=n-\ell-1$（$n\le6$ 全部 $(n,\ell)$） — `test_radial_node_count_matches_n_minus_l_minus_one`；
-- ✅ $H\psi-E\psi$ 残差 — `test_radial_hamiltonian_residual_vanishes_for_eigenstates`；
+- ✅ $H\psi-E\psi$ 残差 — `test_radial_hamiltonian_residual_vanishes_for_eigenstates`；已验证的参数盒仅 $Z=1$、$n\le4$——固定差分步长下 $n=6$ 或 $Z=0.05$ 会超出容差（PR-7 事项）；
 - ✅ $\langle L^2\rangle$ 与 $\langle L_z\rangle$ — `test_spherical_harmonics_are_angular_momentum_eigenfunctions`；
-- ✅ 已知 $\langle r\rangle$、$\langle1/r\rangle$ — `test_expectation_radial_matches_known_closed_forms`；
+- ✅ 已知 $\langle r\rangle$、$\langle1/r\rangle$ — `test_expectation_radial_matches_known_closed_forms`；仅验证 $p\in\{1,-1\}$、$Z=1$——$p\ge31$ 起径向尾部截断误差不会触发任何报错；
 - ✅ 约化质量比进入能量而非写死电子质量 — `test_energy_scales_with_reduced_mass_ratio`；
 - ✅ $\theta\in[0,\pi]$、$\phi\in[0,2\pi)$ 角度范围约定 — `test_cartesian_to_spherical_uses_documented_angle_ranges`；
 - ✅ Condon–Shortley 相位与实轨道 Cartesian 形式（$\ell=1,2$） — `test_real_p_harmonics_match_cartesian_directions`、`test_real_d_harmonics_match_cartesian_closed_forms`。
@@ -50,10 +50,10 @@
 
 ## 概率流
 
-- ✅ 与第一性原理 $\mathbf j=\operatorname{Im}(\psi^*\nabla\psi)$ 一致 — `test_current_matches_im_psi_star_grad_psi`；
+- ✅ 与第一性原理 $\mathbf j=\operatorname{Im}(\psi^*\nabla\psi)$ 一致 — `test_current_matches_im_psi_star_grad_psi`；本节的概率流 oracle 测试（含下两项）均仅在 $Z=1$ 下验证；
 - ✅ 定态连续性残差 $\nabla\cdot\mathbf j=0$ — `test_stationary_current_satisfies_continuity`；
 - ✅ $\pm m$ 密度相同而流反向 — `test_current_reverses_sign_with_m_while_density_is_unchanged`；
-- ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`；
+- ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`，同样仅在 $Z=1$ 下验证；
 - ✅ payload 报告实测 $\nabla\cdot\mathbf j$ 残差而非宣称该性质 — `CurrentFieldPayload.continuity_residual`；
 - ✅ 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$ — `tests/test_superposition.py`；$\partial\rho/\partial t$ 取闭式而非差分，因此该检验衡量的是电流，而不是时间差分格式的误差；
 - ✅ 叠加态范数与 $\langle H\rangle$ 守恒（依赖上面的正交性门禁）；
@@ -87,7 +87,7 @@
 - ✅ `mkdocs build --strict`；
 - ✅ 所有 `[\@key]` 存在 — `tests/test_bibliography.py::test_all_documentation_citation_keys_exist`；
 - ✅ 生成索引与 `references.bib` 同步 — `scripts/render_reference_index.py --check`；
-- ✅ Markdown 不含换页符等意外 C0 控制字符；
+- ✅ Markdown 不含换页符等意外 C0 控制字符 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown：除 TAB/LF 外的任何 C0 字节（孤立或成对的 CR 也算）、转义损坏留下的孤儿 LaTeX 片段（如行首的 `ho$`、`abla`）、表格行 `$...$` 内未转义的 `|`，三者任一出现即变红；
 - 🕒 外链存活与内容漂移检查（当前**没有**任何门禁发起 HTTP 请求）；
 - 🕒 `references.bib` 中未被正文引用的孤儿键检查（当前只校验 used ⊆ known 单向）；
 - 🧑 Mermaid、数学公式和 API 文档在生成 HTML 中真正渲染，而非只通过构建；
