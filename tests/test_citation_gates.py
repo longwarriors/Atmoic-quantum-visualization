@@ -273,6 +273,51 @@ def test_prose_in_the_tail_of_a_closed_raw_block_is_cited(text: str) -> None:
     assert cited_keys_in(text) == {"k"}
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # ``MarkdownInHtmlProcessor`` parses a stashed ``markdown`` element
+        # only when its placeholder starts its block. Anything in front of it
+        # in the same block -- the tail of a raw block, a comment, an <hr>,
+        # a void tag or another markdown element; text on its line; even the
+        # indentation of the line it starts -- leaves the element raw.
+        '<div>a</div> <div markdown="1">[@k]</div>\n',
+        '<div>a</div> x <div markdown="1">[@k]</div>\n',
+        '<div>a</div> <div markdown="span">[@k]</div>\n',
+        '<div>a</div> <div markdown="block">[@k]</div>\n',
+        '<!-- c --> <div markdown="1">[@k]</div>\n',
+        '<!-- c -->\n <div markdown="1">[@k]</div>\n',
+        '<hr> <div markdown="1">[@k]</div>\n',
+        '<div/> <div markdown="1">[@k]</div>\n',
+        '<div markdown="1">a</div> <div markdown="1">[@k]</div>\n',
+        ' <div markdown="1">[@k]</div>\n',
+        'text\n <div markdown="1">[@k]</div>\n',
+        '<div>a</div> <div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n',
+        '<div>a</div> <div markdown="1">\n[@k]\n',
+    ],
+)
+def test_key_in_a_markdown_element_that_does_not_start_its_block_is_not_cited(text: str) -> None:
+    assert cited_keys_in(text) == set()
+
+
+def test_orphan_check_reports_an_entry_cited_only_in_a_tail_markdown_element(
+    tmp_path: Path,
+) -> None:
+    bibliography = parse_bibtex(
+        "@online{tail-only, title={A}, url={https://example.invalid/a}}\n"
+        "@online{cited-for-real, title={B}, url={https://example.invalid/b}}\n"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text(
+        'Prose cites [@cited-for-real].\n\n<div>a</div> <div markdown="1">[@tail-only]</div>\n',
+        encoding="utf-8",
+    )
+    used = cited_keys_in_tree(docs)
+    assert used == {"cited-for-real"}
+    assert orphan_keys(bibliography, used) == ["tail-only"]
+
+
 def test_orphan_check_reports_an_entry_cited_only_in_a_tail_raw_block(tmp_path: Path) -> None:
     # The bypass end to end: the build never renders this citation, so the
     # entry is an orphan and the gate must say so.
@@ -450,6 +495,47 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ("<div>a</div>\n$$\n[@k]\n$$\n", False),
         ("<div>a</div> `[@k]`\n", False),
         ("<div>a</div> `x</div>` [@k]\n", True),
+        # A ``markdown`` element is parsed only when its stashed placeholder
+        # *starts* its block (MarkdownInHtmlProcessor.run matches it at
+        # position 0). Opened in the tail of a raw block, after any text on
+        # its line, or merely indented at the start of a line, the text in
+        # front of it shares the block and the element is emitted raw, its
+        # content never reaching the inline patterns.
+        ('<div>a</div> <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div><div markdown="1">[@k]</div>\n', True),
+        ('<div>a</div> x <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div> `x` <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div> <div markdown="span">[@k]</div>\n', False),
+        ('<div>a</div> <div markdown="block">[@k]</div>\n', False),
+        ('<p>a</p>  <div markdown="block">[@k]</div>\n', False),
+        ('<!-- c --> <div markdown="span">[@k]</div>\n', False),
+        ('<!-- c -->\n <div markdown="1">[@k]</div>\n', False),
+        ('<!-- c -->\n<div markdown="1">[@k]</div>\n', True),
+        ('<textarea>a</textarea> <div markdown="span">[@k]</div>\n', False),
+        ('<hr> <div markdown="1">[@k]</div>\n', False),
+        ('<hr><div markdown="1">[@k]</div>\n', True),
+        ('<div/> <div markdown="1">[@k]</div>\n', False),
+        ('<div markdown="1">a</div> <div markdown="1">[@k]</div>\n', False),
+        ('<div markdown="1">a</div>\n<div markdown="1">[@k]</div>\n', True),
+        (' <div markdown="1">[@k]</div>\n', False),
+        ('   <div markdown="1">[@k]</div>\n', False),
+        ('text\n<div markdown="1">[@k]</div>\n', True),
+        ('text\n <div markdown="1">[@k]</div>\n', False),
+        ('<div>a</div>\n\n<div markdown="1">[@k]</div>\n', True),
+        ('<div>a</div> <div markdown="1">\n[@k]\n</div>\n', False),
+        ('<div>a</div> <div markdown="1">\n\n[@k]\n\n</div>\n', False),
+        ('<div>a</div> <div markdown="1"><p markdown="1">[@k]</p></div>\n', False),
+        ('<div>a</div> <div markdown="1">\n<div markdown="1">[@k]</div>\n</div>\n', False),
+        ('<div>a</div> <div markdown="1">\n[@k]\n', False),
+        ('<div>a</div> <div markdown="1">x</div> [@k]\n', True),
+        ('<div>a</div> <div markdown="1">x</div>\n[@k]\n', True),
+        ('<div>a</div> <div markdown="1">[@k]</div> more [@k]\n', True),
+        (
+            '<div markdown="1">\n<div markdown="1">a</div> <div markdown="1">[@k]</div>\n</div>\n',
+            True,
+        ),
+        ('> <div markdown="1">[@k]</div>\n', True),
+        ('- <div markdown="1">[@k]</div>\n', True),
         # pymdownx.arithmatex, generic mode with smart dollars: inline math.
         ("$[@k]$\n", False),
         ("a $x [@k]$ b\n", False),
