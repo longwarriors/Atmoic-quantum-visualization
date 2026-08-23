@@ -1,5 +1,5 @@
 {
-  "_comment": "Cross-language contract fixture for the QVPC/1 point-cloud format. Hand-authored source of truth, consumed by BOTH tests/test_scene_contract.py (encoder) and web/src/api/client.test.ts (decoder). Every value is exactly representable in float32, so any mismatch is a real contract break rather than rounding noise. Regenerate qvpc_golden.bin with: uv run python scripts/write_qvpc_golden.py",
+  "_comment": "Cross-language contract fixture for the QVPC/1 point-cloud format. Hand-authored source of truth, consumed by BOTH tests/test_scene_contract.py (encoder) and web/src/api/qvpc.test.ts (decoder). Every value is exactly representable in float32, so any mismatch is a real contract break rather than rounding noise. Regenerate qvpc_golden.bin with: uv run python scripts/write_qvpc_golden.py",
   "magic": "QVPC",
   "version": 1,
   "stride": 5,

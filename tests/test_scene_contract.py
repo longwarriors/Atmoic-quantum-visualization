@@ -174,7 +174,7 @@ def test_isosurface_normals_point_away_from_higher_density(
 
 
 def test_encoder_reproduces_the_committed_qvpc_golden_bytes() -> None:
-    # Half of a cross-language contract: web/src/api/client.test.ts decodes the
+    # Half of a cross-language contract: web/src/api/qvpc.test.ts decodes the
     # same file. Changing POINT_CLOUD_STRIDE or the header layout on one side
     # alone must break both, so the wire format cannot drift silently.
     import json
