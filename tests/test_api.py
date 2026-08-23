@@ -69,3 +69,38 @@ def test_openapi_describes_metadata_and_isosurface_contracts() -> None:
     properties = schemas["IsosurfacePayload"]["properties"]
     assert "finite_grid_density_integral" in properties
     assert "grid_spacing_bohr" in properties
+
+
+def test_current_field_route_returns_streamlines_of_the_current_observable() -> None:
+    response = client.get("/api/orbitals/current-field?n=3&l=2&m=2&basis=complex&seed_count=12")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["metadata"]["observable"] == "probability_current"
+    assert payload["metadata"]["representation"] == "streamlines"
+    assert len(payload["lines"]) == len(payload["speed"]) > 0
+    assert payload["max_speed"] > 0.0
+    assert payload["continuity_residual"] < 1e-3
+
+
+def test_current_field_route_reports_zero_flow_for_a_real_orbital() -> None:
+    response = client.get("/api/orbitals/current-field?n=2&l=1&m=1&basis=real&seed_count=8")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["lines"] == []
+    assert payload["max_speed"] == 0.0
+    assert any("real" in warning.lower() for warning in payload["metadata"]["warnings"])
+
+
+def test_current_field_route_rejects_invalid_quantum_numbers() -> None:
+    response = client.get("/api/orbitals/current-field?n=2&l=1&m=2")
+    assert response.status_code == 422
+
+
+def test_openapi_describes_the_current_field_contract() -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "CurrentFieldPayload" in schemas
+    properties = schemas["CurrentFieldPayload"]["properties"]
+    for field in ("lines", "speed", "continuity_residual", "arc_step_bohr", "seed_density_floor"):
+        assert field in properties

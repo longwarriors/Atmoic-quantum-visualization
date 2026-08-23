@@ -11,8 +11,8 @@ from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
 from quviz.physics.hydrogenic import validate_quantum_numbers
 from quviz.sampling.point_cloud import sample_orbital_point_cloud
 from quviz.scene.binary import encode_point_cloud
-from quviz.scene.builders import build_isosurface, orbital_metadata
-from quviz.scene.models import IsosurfacePayload, OrbitalMetadata
+from quviz.scene.builders import build_current_field, build_isosurface, orbital_metadata
+from quviz.scene.models import CurrentFieldPayload, IsosurfacePayload, OrbitalMetadata
 
 router = APIRouter(prefix="/api", tags=["QuViz"])
 
@@ -152,3 +152,40 @@ def isosurface(
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return result
+
+
+@lru_cache(maxsize=16)
+def _cached_current_field(
+    n: int,
+    l: int,
+    m: int,
+    z: float,
+    basis: BasisKind,
+    seed_count: int,
+    arc_step: float,
+) -> CurrentFieldPayload:
+    return build_current_field(n, l, m, z=z, basis=basis, seed_count=seed_count, arc_step=arc_step)
+
+
+@router.get("/orbitals/current-field")
+def current_field(
+    n: int = Query(3, ge=1, le=6),
+    l: int = Query(2, ge=0, le=5),
+    m: int = Query(2, ge=-5, le=5),
+    z: float = Query(1.0, gt=0.0, le=20.0),
+    basis: BasisKind = BasisKind.COMPLEX,
+    seed_count: int = Query(48, ge=1, le=256),
+    arc_step: float = Query(0.12, gt=0.01, le=1.0),
+) -> CurrentFieldPayload:
+    """Probability-flow streamlines.
+
+    Real stationary orbitals have zero current; the payload is then empty and
+    carries a warning rather than an error, because "no flow" is the physically
+    correct answer rather than a failure.
+    """
+
+    _validate_or_422(n, l, m)
+    try:
+        return _cached_current_field(n, l, m, z, basis, seed_count, arc_step)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

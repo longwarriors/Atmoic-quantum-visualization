@@ -45,6 +45,16 @@ Little-endian：
 
 `intensity` 是向后兼容的渲染辅助字段。当前值恒为 1：位置分布本身已经编码抽样密度，不能再用局部 $|\psi|^2$ 改变点大小、亮度或 alpha。
 
+## 概率流字段 `CurrentFieldPayload`
+
+- `lines` / `speed`：逐条流线的顶点与逐顶点 $|\mathbf j|/ho$。顶点按**弧长**等间距，速度只由 `speed` 承载——不得再用顶点疏密表示速度，否则同一个量被编码两次；
+- `continuity_residual`：实测的 $\max|
+abla\cdot\mathbf j|/\max|\mathbf j|$。定态要求它为零，payload 报告实测值而不是宣称该性质；
+- `seed_count` / `seed_density_floor` / `arc_step_bohr` / `integration_rule`：复现流线所需的全部离散化参数；
+- `max_speed`：着色归一化基准，使颜色在不同状态间可比。
+
+实基或 $m=0$ 时 `lines` 为空且 `max_speed` 为 0，并附 warning。这是**物理上正确的答案**（实定态概率流恒为零），不是错误。
+
 ## 等值面质量字段
 
 - `requested_probability_mass`：用户要求的绝对 superlevel-set 质量；

@@ -53,6 +53,8 @@
 - ✅ 与第一性原理 $\mathbf j=\operatorname{Im}(\psi^*\nabla\psi)$ 一致 — `test_current_matches_im_psi_star_grad_psi`；
 - ✅ 定态连续性残差 $\nabla\cdot\mathbf j=0$ — `test_stationary_current_satisfies_continuity`；
 - ✅ $\pm m$ 密度相同而流反向 — `test_current_reverses_sign_with_m_while_density_is_unchanged`；
+- ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`；
+- ✅ payload 报告实测 $\nabla\cdot\mathbf j$ 残差而非宣称该性质 — `CurrentFieldPayload.continuity_residual`；
 - 🕒 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$（M1）。
 
 ## 几何与等值面

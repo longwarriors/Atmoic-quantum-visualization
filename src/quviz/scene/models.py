@@ -63,3 +63,23 @@ class IsosurfacePayload(BaseModel):
     grid_spacing_bohr: float = Field(gt=0.0)
     integration_rule: str = "tensor_product_simpson"
     extent_bohr: float = Field(gt=0.0)
+
+
+class CurrentFieldPayload(BaseModel):
+    """Probability-flow streamlines with the numbers needed to judge them.
+
+    Geometry and magnitude stay separate: vertices are evenly spaced in arc
+    length, and ``speed`` carries |j|/rho per vertex. Rendering must not encode
+    speed as spacing, or the picture would show the same quantity twice.
+    """
+
+    metadata: OrbitalMetadata
+    lines: list[list[list[float]]]
+    speed: list[list[float]]
+    seed_count: int = Field(ge=0)
+    max_speed: float = Field(ge=0.0)
+    arc_step_bohr: float = Field(gt=0.0)
+    seed_density_floor: float = Field(ge=0.0)
+    extent_bohr: float = Field(gt=0.0)
+    continuity_residual: float = Field(ge=0.0)
+    integration_rule: str = "rk4_arc_length"

@@ -192,6 +192,12 @@ h1, h2, p { margin: 0; }
 .phase-dot.cyan { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
 .phase-dot.red { background: #fa4646; box-shadow: 0 0 8px #fa4646; }
 .phase-wheel { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #47fafa, #4747fa, #fa47fa, #fa4747, #fafa47, #47fa47, #47fafa); }
+
+.speed-ramp {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2b6cff 0%, #7a5bd6 50%, #ff4d6d 100%);
+}
 .phase-labels { display: flex; justify-content: space-between; margin-top: 3px; color: #6f879a; font-size: 8px; }
 .legend p { margin-top: 8px; color: #71889c; font-size: 8.5px; line-height: 1.45; }
 

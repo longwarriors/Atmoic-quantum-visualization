@@ -42,7 +42,12 @@ export function Inspector({ status }: InspectorProps) {
           <strong>
             {status.pointCount !== undefined ? `${status.pointCount.toLocaleString()} pts` : null}
             {status.triangleCount !== undefined ? `${status.triangleCount.toLocaleString()} tris` : null}
-            {status.pointCount === undefined && status.triangleCount === undefined ? '—' : null}
+            {status.lineCount !== undefined ? `${status.lineCount.toLocaleString()} lines` : null}
+            {status.pointCount === undefined &&
+            status.triangleCount === undefined &&
+            status.lineCount === undefined
+              ? '—'
+              : null}
           </strong>
         </div>
         <div className="metric-card">
@@ -69,6 +74,15 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.gridResolution !== undefined ? (
           <div><dt>Grid</dt><dd>{status.gridResolution}³ · Δ={status.gridSpacingBohr?.toFixed(3)} bohr</dd></div>
+        ) : null}
+        {status.lineCount !== undefined ? (
+          <div><dt>Streamlines</dt><dd>{status.lineCount}</dd></div>
+        ) : null}
+        {status.maxSpeed !== undefined ? (
+          <div><dt>Max |j|/ρ</dt><dd>{status.maxSpeed.toExponential(3)} a.u.</dd></div>
+        ) : null}
+        {status.continuityResidual !== undefined ? (
+          <div><dt>∇·j residual</dt><dd>{status.continuityResidual.toExponential(2)}</dd></div>
         ) : null}
         {status.densityLevel !== undefined ? (
           <div><dt>Density level</dt><dd>{status.densityLevel.toExponential(3)}</dd></div>

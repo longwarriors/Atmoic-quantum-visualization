@@ -10,6 +10,7 @@
 | 概率流 | $\mathbf j$ | 箭头、流线、流管 | 默认等同实测轨迹 |
 | 等值面 | $\rho=c$ 或 $\psi=c$ | 三维网格 | 唯一的轨道边界 |
 | 随机样本 | $\mathbf r_i\sim|\psi|^2d^3r$ | 点云 | 单电子的历史路径 |
+| 概率流线 | $\mathbf v=\mathbf j/ho$ 的积分曲线 | 弧长等距折线，颜色表速度 | 电子的实测轨迹 |
 | 实验图样 | $I=|\mathcal M[\psi]|^2$ | 探测器强度 | 原空间三维密度照片 |
 
 ## Observable 与 representation 的正交关系
@@ -21,3 +22,12 @@
 - 点云天然编码概率密度，却不能单靠点的位置显示连续相位。
 
 因此，前端的“显示模式”不能只是换材质；有些切换必须重新请求不同的科学资产。
+
+当前已实现的 observable × representation 组合：
+
+| | point cloud | isosurface | streamlines |
+|---|---|---|---|
+| `probability_density` | ✅ | ✅ | — |
+| `probability_current` | — | — | ✅ |
+
+`wavefunction`、`phase` 作为独立 observable，以及 `slice` representation 仍是枚举中的占位，尚未实现。

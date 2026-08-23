@@ -9,6 +9,7 @@ interface SceneStore {
   seed: number
   resolution: number
   probabilityMass: number
+  seedCount: number
   pointSize: number
   opacity: number
   bloom: number
@@ -22,6 +23,7 @@ interface SceneStore {
   setSeed: (value: number) => void
   setResolution: (value: number) => void
   setProbabilityMass: (value: number) => void
+  setSeedCount: (value: number) => void
   setPointSize: (value: number) => void
   setOpacity: (value: number) => void
   setBloom: (value: number) => void
@@ -45,6 +47,23 @@ function minimumSurfaceResolution(n: number): number {
   return Math.max(49, 16 * n + 17)
 }
 
+/**
+ * Not every representation exists for every state. An isosurface is only
+ * validated to n <= 4, and a real stationary orbital has identically zero
+ * probability current, so streamlines would be an empty picture rather than a
+ * physical statement. Fall back rather than render something meaningless.
+ */
+export function supportedRepresentation(
+  orbital: OrbitalParameters,
+  requested: RepresentationKind,
+): RepresentationKind {
+  if (requested === 'isosurface' && orbital.n > 4) return 'point_cloud'
+  if (requested === 'streamlines' && (orbital.basis !== 'complex' || orbital.m === 0)) {
+    return 'point_cloud'
+  }
+  return requested
+}
+
 export const useSceneStore = create<SceneStore>()((set) => ({
   orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
   representation: 'point_cloud',
@@ -52,6 +71,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   seed: 7,
   resolution: 65,
   probabilityMass: 0.9,
+  seedCount: 48,
   pointSize: 2.8,
   opacity: 1.0,
   bloom: 0.12,
@@ -64,15 +84,17 @@ export const useSceneStore = create<SceneStore>()((set) => ({
       const orbital = normalizeOrbital(state.orbital, patch)
       return {
         orbital,
-        representation: orbital.n > 4 ? 'point_cloud' : state.representation,
+        representation: supportedRepresentation(orbital, state.representation),
         resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
       }
     }),
-  setRepresentation: (representation) => set({ representation }),
+  setRepresentation: (representation) =>
+    set((state) => ({ representation: supportedRepresentation(state.orbital, representation) })),
   setSamples: (samples) => set({ samples }),
   setSeed: (seed) => set({ seed }),
   setResolution: (resolution) => set({ resolution }),
   setProbabilityMass: (probabilityMass) => set({ probabilityMass }),
+  setSeedCount: (seedCount) => set({ seedCount }),
   setPointSize: (pointSize) => set({ pointSize }),
   setOpacity: (opacity) => set({ opacity }),
   setBloom: (bloom) => set({ bloom }),
@@ -85,7 +107,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
       const orbital = normalizeOrbital(state.orbital, preset)
       return {
         orbital,
-        representation: orbital.n > 4 ? 'point_cloud' : state.representation,
+        representation: supportedRepresentation(orbital, state.representation),
         resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
       }
     }),

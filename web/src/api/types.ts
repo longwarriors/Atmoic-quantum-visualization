@@ -1,5 +1,5 @@
 export type BasisKind = 'real' | 'complex'
-export type RepresentationKind = 'point_cloud' | 'isosurface'
+export type RepresentationKind = 'point_cloud' | 'isosurface' | 'streamlines'
 
 export interface OrbitalParameters {
   n: number
@@ -60,6 +60,19 @@ export interface IsosurfacePayload {
   extent_bohr: number
 }
 
+export interface CurrentFieldPayload {
+  metadata: OrbitalMetadata
+  lines: number[][][]
+  speed: number[][]
+  seed_count: number
+  max_speed: number
+  arc_step_bohr: number
+  seed_density_floor: number
+  extent_bohr: number
+  continuity_residual: number
+  integration_rule: string
+}
+
 export interface OrbitalPreset extends OrbitalParameters {
   id: string
   label: string
@@ -77,6 +90,9 @@ export interface SceneStatus {
   finiteGridDensityIntegral?: number
   gridResolution?: number
   gridSpacingBohr?: number
+  lineCount?: number
+  maxSpeed?: number
+  continuityResidual?: number
   metadata?: OrbitalMetadata
   warnings?: string[]
 }

@@ -23,6 +23,13 @@
 - 控件变化若改变物理资产，必须重新请求后端；
 - 释放旧 geometry/material，避免 GPU 内存泄漏。
 
+## 已实现的两个范例
+
+- `probability_density` + `isosurface`：`build_isosurface` 返回目标包围质量、阈值与网格参数；
+- `probability_current` + `streamlines`：`build_current_field` 返回弧长等距折线、逐顶点速度与实测连续性残差。
+
+后者说明了本页第一句的要求：切换到概率流**不是换材质**，而是换 observable，所以前端必须重新请求 `/api/orbitals/current-field`。它也说明了“不存在”与“出错”的区别——实轨道的概率流恒为零，返回空 payload 加 warning，而不是 4xx。
+
 ## 验证
 
 - 几何顶点有限；

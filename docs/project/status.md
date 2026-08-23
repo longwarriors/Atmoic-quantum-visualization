@@ -9,8 +9,9 @@
 | 能力 | 实现与验证 | 当前边界 |
 |---|---|---|
 | 氢与类氢解析波函数 | [质量门禁](../reference/quality-gates.md)“解析态”九项全部 ✅：归一化、正交性、通式节点数、$H\psi-E\psi$、$L^2$/$L_z$、$\langle r\rangle$/$\langle1/r\rangle$、约化质量、角度范围、Condon–Shortley | 解析 Coulomb 单电子态 |
-| 概率密度、相位与定态概率流 | 概率流对照 $\operatorname{Im}(\psi^*\nabla\psi)$、定态连续性残差与 $\pm m$ 反向性测试通过 | 概率流尚无 API/前端 representation |
+| 概率密度、相位与定态概率流 | 概率流对照 $\operatorname{Im}(\psi^*\nabla\psi)$、定态连续性残差与 $\pm m$ 反向性测试通过 | 含时概率流属 M1 |
 | 分离逆 CDF 点采样 | 径向/极角/方位角 KS 检验、三维矩、seed 重现测试通过；marker 统一权重 | 单一可分离氢样态，不是一般线性组合 sampler |
+| 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像与轴上遮罩测试通过；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 播种利用定态方位对称性，M1 需改三维加权播种 |
 | 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性、按面计数的绕向一致率和法向朝外测试通过 | API 保守限制为 $n\le4$；拓扑回归覆盖 1s、2p、3p 与复 2p，并未穷举全部轨道 |
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |

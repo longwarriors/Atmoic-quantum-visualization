@@ -4,9 +4,15 @@ import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing'
 import { type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
 import * as THREE from 'three'
 
-import { fetchIsosurface, fetchPointCloud } from '../api/client'
-import type { IsosurfacePayload, PointCloudData, SceneStatus } from '../api/types'
+import { fetchCurrentField, fetchIsosurface, fetchPointCloud } from '../api/client'
+import type {
+  CurrentFieldPayload,
+  IsosurfacePayload,
+  PointCloudData,
+  SceneStatus,
+} from '../api/types'
 import { Atmosphere } from '../scene/Atmosphere'
+import { CurrentStreamlines } from '../scene/CurrentStreamlines'
 import { ElectronCloud } from '../scene/ElectronCloud'
 import { OrbitalSurface } from '../scene/OrbitalSurface'
 import { useSceneStore } from '../state/useSceneStore'
@@ -21,7 +27,7 @@ function FitOnAssetChange({ asset, children }: { asset: object | null; children:
 
   const state =
     'metadata' in (asset ?? {})
-      ? (asset as PointCloudData | IsosurfacePayload).metadata.state
+      ? (asset as PointCloudData | IsosurfacePayload | CurrentFieldPayload).metadata.state
       : undefined
 
   useLayoutEffect(() => {
@@ -84,6 +90,7 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
     seed,
     resolution,
     probabilityMass,
+    seedCount,
     pointSize,
     opacity,
     bloom,
@@ -94,12 +101,14 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
   } = useSceneStore()
   const [pointData, setPointData] = useState<PointCloudData | null>(null)
   const [surfaceData, setSurfaceData] = useState<IsosurfacePayload | null>(null)
+  const [currentData, setCurrentData] = useState<CurrentFieldPayload | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
     onStatus({ loading: true })
     setPointData(null)
     setSurfaceData(null)
+    setCurrentData(null)
     if (representation === 'point_cloud') {
       fetchPointCloud(orbital, samples, seed, controller.signal)
         .then((data) => {
@@ -109,6 +118,25 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
             pointCount: data.count,
             radialMass: data.radialMass,
             extentBohr: data.extentBohr,
+            metadata: data.metadata,
+            warnings: data.metadata.warnings,
+          })
+        })
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) {
+            onStatus({ loading: false, error: error instanceof Error ? error.message : String(error) })
+          }
+        })
+    } else if (representation === 'streamlines') {
+      fetchCurrentField(orbital, seedCount, controller.signal)
+        .then((data) => {
+          setCurrentData(data)
+          onStatus({
+            loading: false,
+            lineCount: data.lines.length,
+            maxSpeed: data.max_speed,
+            continuityResidual: data.continuity_residual,
+            extentBohr: data.extent_bohr,
             metadata: data.metadata,
             warnings: data.metadata.warnings,
           })
@@ -150,9 +178,10 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
     resolution,
     samples,
     seed,
+    seedCount,
   ])
 
-  const extent = pointData?.extentBohr ?? surfaceData?.extent_bohr
+  const extent = pointData?.extentBohr ?? surfaceData?.extent_bohr ?? currentData?.extent_bohr
 
   return (
     <Canvas
@@ -174,9 +203,10 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
       <RendererSettings exposure={exposure} fogStrength={fogStrength} extent={extent} />
       <Atmosphere showGrid={showGrid} extent={extent} />
       <Bounds fit clip observe margin={1.35} maxDuration={0.8}>
-        <FitOnAssetChange asset={pointData ?? surfaceData}>
+        <FitOnAssetChange asset={pointData ?? surfaceData ?? currentData}>
           {pointData ? <ElectronCloud data={pointData} pointSize={pointSize} opacity={opacity} /> : null}
           {surfaceData ? <OrbitalSurface data={surfaceData} opacity={opacity} /> : null}
+          {currentData ? <CurrentStreamlines data={currentData} opacity={opacity} /> : null}
         </FitOnAssetChange>
       </Bounds>
       <OrbitControls

@@ -1,4 +1,4 @@
-import { Atom, Cloud, Layers3, Pause, Play, RotateCcw } from 'lucide-react'
+import { Atom, Cloud, Layers3, Pause, Play, RotateCcw, Waves } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { fetchCatalog } from '../api/client'
@@ -51,6 +51,9 @@ export function ControlPanel() {
   )
   const minimumResolution = Math.max(49, 16 * store.orbital.n + 17)
   const surfaceAvailable = store.orbital.n <= 4
+  // A real stationary orbital carries identically zero current, so offering
+  // the flow view there would promise a picture that cannot exist.
+  const currentAvailable = store.orbital.basis === 'complex' && store.orbital.m !== 0
 
   useEffect(() => {
     const controller = new AbortController()
@@ -163,6 +166,19 @@ export function ControlPanel() {
           >
             <Layers3 size={17} /> Density surface
           </button>
+          <button
+            type="button"
+            className={store.representation === 'streamlines' ? 'active' : ''}
+            disabled={!currentAvailable}
+            title={
+              currentAvailable
+                ? 'Probability-flow streamlines (not electron trajectories)'
+                : 'Stationary current is zero unless the basis is complex and m ≠ 0'
+            }
+            onClick={() => setRepresentation('streamlines')}
+          >
+            <Waves size={17} /> Probability flow
+          </button>
         </div>
 
         {store.representation === 'point_cloud' ? (
@@ -170,6 +186,8 @@ export function ControlPanel() {
             <RangeRow label="Samples" value={store.samples} min={4000} max={80000} step={2000} onChange={store.setSamples} />
             <RangeRow label="Point size" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
           </>
+        ) : store.representation === 'streamlines' ? (
+          <RangeRow label="Seeds" value={store.seedCount} min={8} max={160} step={8} onChange={store.setSeedCount} />
         ) : (
           <>
             <RangeRow label="Grid" value={store.resolution} min={minimumResolution} max={81} step={8} onChange={store.setResolution} />

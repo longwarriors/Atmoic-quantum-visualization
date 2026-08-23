@@ -1,4 +1,5 @@
 import type {
+  CurrentFieldPayload,
   IsosurfacePayload,
   OrbitalMetadata,
   OrbitalParameters,
@@ -92,6 +93,19 @@ export async function fetchIsosurface(
     throw new Error(await response.text())
   }
   return (await response.json()) as IsosurfacePayload
+}
+
+export async function fetchCurrentField(
+  params: OrbitalParameters,
+  seedCount: number,
+  signal?: AbortSignal,
+): Promise<CurrentFieldPayload> {
+  const query = queryString({ ...params, seed_count: seedCount })
+  const response = await fetch(`/api/orbitals/current-field?${query}`, { signal })
+  if (!response.ok) {
+    throw new Error(await response.text())
+  }
+  return (await response.json()) as CurrentFieldPayload
 }
 
 export async function fetchMetadata(

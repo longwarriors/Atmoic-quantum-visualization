@@ -22,9 +22,15 @@ from quviz.physics.hydrogenic import (
     radial_wavefunction,
     validate_quantum_numbers,
 )
-from quviz.physics.observables import phase, probability_density
+from quviz.physics.observables import phase, probability_current_hydrogenic, probability_density
 from quviz.sampling.inverse_cdf import normalized_cdf
-from quviz.scene.models import IsosurfacePayload, OrbitalMetadata, QuantumStateSpec
+from quviz.scene.models import (
+    CurrentFieldPayload,
+    IsosurfacePayload,
+    OrbitalMetadata,
+    QuantumStateSpec,
+)
+from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamlines
 
 
 def orbital_metadata(
@@ -42,16 +48,27 @@ def orbital_metadata(
 
     basis_kind = BasisKind(basis)
     validate_quantum_numbers(n, l, m)
-    geometry_semantics = (
-        "independent samples from |psi|^2 dV; marker weight is uniform"
-        if representation is RepresentationKind.POINT_CLOUD
-        else "level set of probability density |psi|^2"
-    )
-    color_semantics = (
-        "wavefunction sign encoded as phase 0 or pi"
-        if basis_kind is BasisKind.REAL
-        else "principal wavefunction phase in [-pi, pi]"
-    )
+    # One branch per representation. A default that silently reuses another
+    # asset's wording makes the Scene Contract describe a picture that is not
+    # on screen, which is worse than having no description at all.
+    geometry_by_representation = {
+        RepresentationKind.POINT_CLOUD: (
+            "independent samples from |psi|^2 dV; marker weight is uniform"
+        ),
+        RepresentationKind.ISOSURFACE: "level set of probability density |psi|^2",
+        RepresentationKind.STREAMLINES: (
+            "streamlines of probability flow v = j / rho, sampled at equal arc length; "
+            "these are flow lines, not electron trajectories"
+        ),
+        RepresentationKind.SLICE: "plane section of the scalar field",
+    }
+    geometry_semantics = geometry_by_representation[representation]
+    if representation is RepresentationKind.STREAMLINES:
+        color_semantics = "flow speed |j|/rho normalized to the reported maximum"
+    elif basis_kind is BasisKind.REAL:
+        color_semantics = "wavefunction sign encoded as phase 0 or pi"
+    else:
+        color_semantics = "principal wavefunction phase in [-pi, pi]"
     return OrbitalMetadata(
         state=QuantumStateSpec(n=n, l=l, m=m, z=z, basis=basis_kind),
         label=orbital_label(n, l, m, basis=basis_kind),
@@ -242,4 +259,148 @@ def build_isosurface(
         grid_resolution=resolution,
         grid_spacing_bohr=spacing,
         extent_bohr=extent,
+    )
+
+
+def _continuity_residual(velocity_state: tuple[int, int, int, float, BasisKind]) -> float:
+    r"""Return :math:`\max|\nabla\cdot\mathbf j| / \max|\mathbf j|` on a probe set.
+
+    A stationary state has :math:`\partial\rho/\partial t=0`, so continuity
+    demands a divergence-free current. The payload reports the measured value
+    instead of claiming the property.
+    """
+
+    n, l, m, z, basis_kind = velocity_state
+    if basis_kind is BasisKind.REAL or m == 0:
+        return 0.0
+
+    probes = np.asarray([[1.7, 0.9, 2.2], [-2.4, 1.3, -0.8], [0.6, -3.1, 1.9], [2.8, 2.1, -1.2]])
+    step = 1e-4
+
+    def current_at(points: np.ndarray) -> np.ndarray:
+        radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
+        return probability_current_hydrogenic(
+            n, l, m, radius, polar, azimuth, z=z, basis=basis_kind
+        )
+
+    divergence = np.zeros(probes.shape[0], dtype=np.float64)
+    for axis in range(3):
+        offset = np.zeros(3)
+        offset[axis] = step
+        forward = current_at(probes + offset)[:, axis]
+        backward = current_at(probes - offset)[:, axis]
+        divergence += (forward - backward) / (2.0 * step)
+
+    magnitude = np.linalg.norm(current_at(probes), axis=1)
+    scale = float(np.max(magnitude))
+    if scale <= 0.0:
+        return 0.0
+    return float(np.max(np.abs(divergence)) / scale)
+
+
+def build_current_field(
+    n: int,
+    l: int,
+    m: int,
+    *,
+    z: float = 1.0,
+    basis: BasisKind | str = BasisKind.COMPLEX,
+    seed_count: int = 48,
+    arc_step: float = 0.12,
+    seed_density_fraction: float = 1e-3,
+) -> CurrentFieldPayload:
+    r"""Build probability-flow streamlines for one hydrogenic state.
+
+    Seeds are placed on a deterministic lattice in the :math:`(s,z)` half-plane
+    at :math:`\phi=0`, keeping only points whose density exceeds
+    ``seed_density_fraction`` of the lattice maximum.
+
+    That seeding exploits the azimuthal symmetry of a *stationary* state, where
+    every flow line is a circle of constant :math:`s` and :math:`z` and so one
+    azimuth already enumerates all distinct lines. Time-dependent states in M1
+    break that symmetry and will need density-weighted seeding in three
+    dimensions; the integrator itself makes no such assumption.
+    """
+
+    validate_quantum_numbers(n, l, m)
+    if z <= 0.0:
+        raise ValueError("z must be positive")
+    if seed_count < 1:
+        raise ValueError("seed_count must be positive")
+    if arc_step <= 0.0:
+        raise ValueError("arc_step must be positive")
+    basis_kind = BasisKind(basis)
+
+    extent = _radial_extent_for_mass(n, l, z)
+    warnings: list[str] = []
+    if basis_kind is BasisKind.REAL:
+        warnings.append(
+            "real stationary orbitals carry zero probability current; "
+            "switch to the complex basis to see flow"
+        )
+    elif m == 0:
+        warnings.append("m = 0 states carry zero probability current")
+
+    lines: list[list[list[float]]] = []
+    speeds: list[list[float]] = []
+    max_speed = 0.0
+    density_floor = 0.0
+
+    if basis_kind is BasisKind.COMPLEX and m != 0:
+        lattice = max(8, int(np.sqrt(seed_count * 4)))
+        cylindrical = np.linspace(extent / (2 * lattice), extent, lattice)
+        heights = np.linspace(-extent, extent, lattice)
+        grid_s, grid_z = np.meshgrid(cylindrical, heights, indexing="ij")
+        candidates = np.column_stack((grid_s.ravel(), np.zeros(grid_s.size), grid_z.ravel()))
+        radius, polar, azimuth = cartesian_to_spherical(
+            candidates[:, 0], candidates[:, 1], candidates[:, 2]
+        )
+        density = probability_density(
+            hydrogenic_wavefunction(n, l, m, radius, polar, azimuth, z=z, basis=basis_kind)
+        )
+        density_floor = float(np.max(density)) * seed_density_fraction
+        keep = np.flatnonzero(density > density_floor)
+        # Highest density first, so a small seed_count still shows the core flow.
+        keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
+        keep = keep[np.argsort(radius[keep])]
+
+        seeds = candidates[keep]
+        velocity = hydrogenic_flow_velocity(n, l, m, z=z, basis=basis_kind)
+        # One budget for the bundle: the widest orbit sets it, and closure
+        # retires the tighter ones early.
+        widest = float(np.max(np.hypot(seeds[:, 0], seeds[:, 1])))
+        budget = min(int(2.0 * pi * widest / arc_step) + 8, 4_096)
+        for line in integrate_streamlines(
+            velocity,
+            seeds,
+            arc_step=arc_step,
+            max_points=budget,
+            close_tolerance=0.5 * arc_step,
+        ):
+            if line.vertices.shape[0] < 4:
+                continue
+            lines.append(np.round(line.vertices, 6).tolist())
+            speeds.append(np.round(line.speed, 6).tolist())
+            max_speed = max(max_speed, float(np.max(line.speed)))
+
+    metadata = orbital_metadata(
+        n,
+        l,
+        m,
+        z=z,
+        basis=basis_kind,
+        observable=ObservableKind.PROBABILITY_CURRENT,
+        representation=RepresentationKind.STREAMLINES,
+        warnings=warnings,
+    )
+    return CurrentFieldPayload(
+        metadata=metadata,
+        lines=lines,
+        speed=speeds,
+        seed_count=len(lines),
+        max_speed=max_speed,
+        arc_step_bohr=arc_step,
+        seed_density_floor=density_floor,
+        extent_bohr=extent,
+        continuity_residual=_continuity_residual((n, l, m, z, basis_kind)),
     )
