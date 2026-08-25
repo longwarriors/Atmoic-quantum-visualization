@@ -43,6 +43,11 @@ import { minimatch } from 'minimatch'
 import { describe, expect, it } from 'vitest'
 
 import {
+  auditCoverageScope,
+  readCoverageScope,
+  toWebRelative,
+} from '../scripts/assert-coverage-scope.mjs'
+import {
   auditRun,
   listSpecFiles,
   type VitestAssertionResult,
@@ -50,14 +55,26 @@ import {
   type VitestJsonResults,
 } from '../scripts/assert-no-skips.mjs'
 // `defineConfig` (vitest/dist/config.cjs) is the identity function for a
-// plain-object argument, and vitest.config.ts calls it with one: this import
-// IS the resolved config, not a copy or a default-merged approximation. The
-// "coverage scope binding" test below, and the config-shape assertions
-// inside it, depend on this staying true: if a future PR switches
-// vitest.config.ts to a config FUNCTION or to `projects`, this import stops
-// reflecting the real, resolved coverage settings and the whole binding
-// (this import, EXPECTED_COVERAGE_INCLUDE / EXPECTED_COVERAGE_EXCLUDE below,
-// and the two predicates derived from them) must be redone.
+// plain-object argument, and vitest.config.ts calls it with one, so this
+// import is that file's declared config verbatim -- not a copy, not a
+// default-merged approximation.
+//
+// It is NOT vitest's RESOLVED config, and the difference is a hole this file
+// cannot see on its own. A CLI flag (`--coverage.include=src/scene/color.ts`),
+// a Vite plugin `config()` hook, or an env-driven override changes what
+// vitest actually measures while leaving the arrays below untouched: every
+// assertion in this file stays green and the coverage table quietly lists one
+// module. What closes that is scripts/assert-coverage-scope.mjs, which reads
+// the coverage report the run WROTE and checks it against coverage-scope.json
+// after vitest exits. Treat the two as a pair -- this import binds the
+// derivation to the config source, that script binds the run to the manifest
+// -- and do not let either stand alone.
+//
+// If a future PR switches vitest.config.ts to a config FUNCTION, this import
+// becomes a function, `.test` is undefined, and the shape guards in the
+// "coverage scope binding" test hard-fail. That is intended. A `projects`
+// config does NOT hard-fail them (see that test), which is why their absence
+// is asserted explicitly there.
 import vitestConfig from '../vitest.config'
 
 const SRC_ROOT = fileURLToPath(new URL('.', import.meta.url))
@@ -112,27 +129,76 @@ const EXPECTED_COVERAGE_EXCLUDE = [
  * vitest.config.ts -- which is what the deep-equal test below compares.
  */
 const toConfigPath = (path: string): string => `src/${path}`
+
+/**
+ * `dot: true` is not a preference here, it is what the provider does.
+ * @vitest/coverage-v8 decides instrumentation through test-exclude@7.0.2,
+ * which matches every include / exclude pattern with `{ dot: true }`
+ * (node_modules/test-exclude/index.js:97-98) and sweeps the tree for
+ * `coverage.all` with `dot: true` as well (ibid. 107, 121). minimatch
+ * defaults to `dot: false`, under which a leading-dot segment matches no `*`
+ * or globstar -- so with the default this derivation disagreed with the
+ * provider on precisely the paths an author chooses freely: `src/api/
+ * .hidden.ts` was instrumented and held to a per-file threshold by vitest,
+ * yet fell outside `pragmaScannedSources` here and so was never scanned for
+ * coverage-ignore pragmas. A pragma parked in such a file carved lines out of
+ * its threshold with nothing going red. Do not "simplify" this back to a bare
+ * `minimatch(path, pattern)`; the hidden-path regressions in "scan scope"
+ * below pin it.
+ *
+ * `nocase: false` is already minimatch's default and is stated only to keep
+ * it that way: test-exclude passes no case option either, so matching is
+ * case-sensitive on every platform, and this derivation must never end up
+ * more permissive than the provider it models.
+ */
+const MINIMATCH_OPTIONS = { dot: true, nocase: false } as const
 const matchesAnyPattern = (patterns: string[], path: string): boolean =>
-  patterns.some((pattern) => minimatch(path, pattern))
+  patterns.some((pattern) => minimatch(path, pattern, MINIMATCH_OPTIONS))
+
+/**
+ * A pattern with no glob metacharacter whose last segment carries no
+ * extension -- i.e. one that reads as a bare directory. test-exclude rewrites
+ * those (`prepGlobPatterns`, index.js:133-147) into the pattern PLUS the
+ * pattern with a globstar appended, so files inside the directory match; a
+ * plain `some(minimatch)` over the literal pattern, which is all this file
+ * does, matches only the directory entry itself. Asserted against below so an
+ * unsupported form goes red instead of being silently mis-derived.
+ */
+const looksLikeBareDirectory = (pattern: string): boolean => {
+  if (/[*?[\]{}]/.test(pattern)) {
+    return false
+  }
+  const lastSegment = pattern.split('/').pop() ?? ''
+  return !lastSegment.includes('.')
+}
 
 /**
  * A .ts module that vitest's coverage instruments and holds to its per-file
- * threshold: matches some EXPECTED_COVERAGE_INCLUDE pattern, matches no
- * EXPECTED_COVERAGE_EXCLUDE pattern, and is not a test file. (Test files are
- * already excluded by EXPECTED_COVERAGE_EXCLUDE's `*.{test,spec}.{ts,tsx}` /
- * `__tests__/**` patterns; `isTestFile` is kept as an independent check so a
- * future edit to that exclude pattern alone cannot silently let a spec file
- * back into the gated set.) Verified below against the literal expected set
- * of files, not just spot-checked, so a glob-semantics surprise (globstar
- * matching zero segments, brace expansion, dotfile handling) is caught
- * in-suite rather than silently mis-gating.
+ * threshold: matches some EXPECTED_COVERAGE_INCLUDE pattern and no
+ * EXPECTED_COVERAGE_EXCLUDE pattern. EXACTLY include-minus-exclude, and
+ * deliberately nothing more -- this predicate has to be able to go wrong the
+ * same way the provider would.
+ *
+ * It used to carry a third term, `&& !isTestFile(path)`. That looked like
+ * defence in depth and worked as a mask: had the spec-file exclude pattern
+ * been narrowed (say to `.spec.` only), the provider would have started
+ * instrumenting every `.test.ts`, while this predicate went on producing the
+ * correct gated set because the extra term re-excluded them behind its back.
+ * The check is kept, promoted to an INDEPENDENT invariant: "excludes every
+ * committed spec file through a canonical exclude pattern" below asserts each
+ * path in `testFiles` is caught by one of EXPECTED_COVERAGE_EXCLUDE's own
+ * patterns. Same depth, but a broken glob now fails loudly there instead of
+ * being absorbed here.
+ *
+ * Verified below against coverage-scope.json, not just spot-checked, so a
+ * glob-semantics surprise (globstar matching zero segments, brace expansion,
+ * dotfile handling) is caught in-suite rather than silently mis-gating.
  */
 const isCoverageGatedSource = (path: string): boolean => {
   const configPath = toConfigPath(path)
   return (
     matchesAnyPattern(EXPECTED_COVERAGE_INCLUDE, configPath) &&
-    !matchesAnyPattern(EXPECTED_COVERAGE_EXCLUDE, configPath) &&
-    !isTestFile(path)
+    !matchesAnyPattern(EXPECTED_COVERAGE_EXCLUDE, configPath)
   )
 }
 
@@ -221,6 +287,30 @@ function scan(files: string[], matches: (line: string) => boolean): Hit[] {
 
 const describeHits = (hits: Hit[]): string =>
   hits.map((h) => `${h.file}:${h.line}: ${h.text}`).join('\n')
+
+/**
+ * The expected file lists, read from coverage-scope.json -- the ONE manifest
+ * two independent checks hold themselves to:
+ *
+ *   - this file asserts the minimatch derivation above produces exactly
+ *     `coverageGated` / `pragmaScanned` (derivation vs manifest);
+ *   - scripts/assert-coverage-scope.mjs, run by `npm test` after vitest,
+ *     asserts the coverage report that run actually WROTE lists exactly
+ *     `coverageGated` (runtime vs manifest).
+ *
+ * Deliberately not a second hand-maintained array in this file: two mirrors
+ * of the same list drift, and the one that drifts is never the one anybody
+ * reads. Read with the gate script's own shape-checking reader rather than a
+ * JSON import, so the manifest cannot be malformed or empty in a way that
+ * makes either check pass vacuously, and so `npm test` fails the same way
+ * whichever check hits it first.
+ *
+ * The canonical EXPECTED_COVERAGE_INCLUDE / EXPECTED_COVERAGE_EXCLUDE arrays
+ * above stay literal and stay here on purpose: they are what the deep-equal
+ * against vitest.config.ts compares, and sourcing them from shared config
+ * would turn that cross-check into a tautology.
+ */
+const COVERAGE_SCOPE = readCoverageScope(WEB_ROOT)
 
 const allFiles = walk(SRC_ROOT)
 const testFiles = allFiles.filter(isTestFile)
@@ -346,11 +436,14 @@ describe('scan scope', () => {
     expect(testFiles).toContain('scene/color.test.ts')
   })
 
-  it('coverage-gates exactly the known modules and nothing excluded on purpose', () => {
-    // Pinned literally, not just spot-checked with toContain/not.toContain:
-    // a glob-semantics surprise would otherwise have to be caught one file
-    // at a time by the assertions below instead of failing here directly.
-    expect(coverageGatedSources).toEqual(['api/client.ts', 'api/qvpc.ts', 'scene/color.ts'])
+  it('coverage-gates exactly the modules coverage-scope.json lists, and nothing excluded on purpose', () => {
+    // Pinned against the whole manifest, not just spot-checked with
+    // toContain/not.toContain: a glob-semantics surprise would otherwise have
+    // to be caught one file at a time by the assertions below instead of
+    // failing here directly. The same manifest is what
+    // scripts/assert-coverage-scope.mjs holds the real run to, so a new gated
+    // module has to be added here, deliberately, by a human.
+    expect(coverageGatedSources.map(toConfigPath)).toEqual(COVERAGE_SCOPE.coverageGated)
 
     expect(coverageGatedSources).toContain('api/qvpc.ts')
     expect(coverageGatedSources).toContain('api/client.ts')
@@ -361,17 +454,93 @@ describe('scan scope', () => {
   })
 
   it('pragma-scans the coverage-gated modules plus api/types.ts, and nothing else', () => {
-    expect(pragmaScannedSources).toEqual([
-      'api/client.ts',
-      'api/qvpc.ts',
-      'api/types.ts',
-      'scene/color.ts',
-    ])
+    expect(pragmaScannedSources.map(toConfigPath)).toEqual(COVERAGE_SCOPE.pragmaScanned)
     // types.ts is the one file this scan covers that coverage gating does
     // not: excluded from the per-file thresholds, but not from the pragma
     // scan (see the comment on isPragmaScannedSource above).
     expect(isCoverageGatedSource('api/types.ts')).toBe(false)
     expect(isPragmaScannedSource('api/types.ts')).toBe(true)
+  })
+
+  it('keeps coverage-scope.json sorted, duplicate-free, and a superset chain', () => {
+    // The two toEqual assertions above compare against this manifest in the
+    // order walk() produces. A manifest that was unsorted or carried a
+    // duplicate would fail them for a reason that has nothing to do with the
+    // gate, so pin its shape here where the message says so.
+    for (const [field, files] of [
+      ['coverageGated', COVERAGE_SCOPE.coverageGated],
+      ['pragmaScanned', COVERAGE_SCOPE.pragmaScanned],
+    ] as const) {
+      expect([...files].sort(), `coverage-scope.json: ${field} is not sorted`).toEqual(files)
+      expect(new Set(files).size, `coverage-scope.json: ${field} has duplicates`).toBe(files.length)
+    }
+    // Every gated module is pragma-scanned; api/types.ts is the one extra,
+    // and any second one is a scope decision that needs its own review.
+    const gated = new Set<string>(COVERAGE_SCOPE.coverageGated)
+    expect(
+      COVERAGE_SCOPE.pragmaScanned.filter((file) => !gated.has(file)),
+      'coverage-scope.json: pragmaScanned must be coverageGated plus type-only modules',
+    ).toEqual(['src/api/types.ts'])
+  })
+
+  it('agrees with the coverage provider on hidden paths (test-exclude matches with dot:true)', () => {
+    // The gap this closes: test-exclude runs minimatch with `{ dot: true }`
+    // (index.js:97-98) and globs the tree with `dot: true` (107, 121), so a
+    // hidden module IS instrumented and IS held to a per-file threshold.
+    // minimatch's default `dot: false` said otherwise, which left
+    // `src/api/.hidden.ts` coverage-gated by vitest but absent from
+    // `pragmaScannedSources` -- a coverage-ignore pragma could sit there
+    // untouched by the scan, in a file neither manifest listed. Synthetic
+    // paths, so this holds whether or not such a file exists on disk.
+    expect(isCoverageGatedSource('api/.hidden.ts')).toBe(true)
+    expect(isCoverageGatedSource('api/.hidden/x.ts')).toBe(true)
+    expect(isCoverageGatedSource('scene/.hidden.ts')).toBe(true)
+    expect(isPragmaScannedSource('api/.hidden.ts')).toBe(true)
+    // Excludes keep applying to hidden paths for the same reason.
+    expect(isCoverageGatedSource('scene/shaders/.hidden.ts')).toBe(false)
+    expect(isCoverageGatedSource('api/.hidden.test.ts')).toBe(false)
+  })
+
+  it('excludes every committed spec file through a canonical exclude pattern', () => {
+    // isCoverageGatedSource is exactly include-minus-exclude; it no longer
+    // carries an `isTestFile` term that would mask a narrowed spec-file
+    // exclude pattern (see the comment on that predicate). This is that
+    // defence, kept as an independent invariant: every spec on disk must be
+    // caught by one of EXPECTED_COVERAGE_EXCLUDE's own patterns.
+    const leaked = testFiles.filter(
+      (path) => !matchesAnyPattern(EXPECTED_COVERAGE_EXCLUDE, toConfigPath(path)),
+    )
+    expect(leaked, 'spec files no canonical exclude pattern catches').toEqual([])
+    expect(coverageGatedSources.filter(isTestFile), 'spec files inside the gated set').toEqual([])
+  })
+
+  it('refuses canonical pattern forms this derivation cannot faithfully model', () => {
+    // `matchesAnyPattern` is a plain some(minimatch) over the literal
+    // patterns. test-exclude is not: it moves negated patterns into a
+    // separate `excludeNegated` list applied AFTER the excludes
+    // (handleNegation, index.js:60-74), and it rewrites a bare directory
+    // pattern into that pattern plus a globstar form (prepGlobPatterns,
+    // 133-147). Either would make this derivation quietly disagree with the
+    // provider, so refuse them outright rather than mis-derive.
+    for (const pattern of [...EXPECTED_COVERAGE_INCLUDE, ...EXPECTED_COVERAGE_EXCLUDE]) {
+      expect(
+        pattern.startsWith('!'),
+        `${pattern}: a negated pattern is applied by test-exclude after the excludes, ` +
+          'not as one more some(minimatch) term; this derivation does not model that form',
+      ).toBe(false)
+      expect(
+        looksLikeBareDirectory(pattern),
+        `${pattern}: test-exclude expands a bare directory pattern to also match everything ` +
+          'beneath it; this derivation matches the literal pattern only. Write it with an ' +
+          'explicit trailing globstar',
+      ).toBe(false)
+    }
+    // Positive controls: without these the loop could pass because the helper
+    // never returns true, not because the patterns are safe.
+    expect(looksLikeBareDirectory('src/scene/shaders')).toBe(true)
+    expect(looksLikeBareDirectory('src/scene/shaders/')).toBe(true)
+    expect(looksLikeBareDirectory('src/scene/shaders/**')).toBe(false)
+    expect(looksLikeBareDirectory('src/api/types.ts')).toBe(false)
   })
 
   it('keeps the HTTP layer inside the coverage include (no .tsx under api/)', () => {
@@ -403,10 +572,10 @@ describe('scan scope', () => {
       | undefined
     // This whole binding depends on vitest.config.ts exporting a PLAIN
     // OBJECT (defineConfig(identity) -- see the comment on the vitestConfig
-    // import above). If a future PR switches to a config FUNCTION or to
-    // `projects`, `coverage` here silently stops being the real, resolved
-    // settings; fail loudly and specifically instead of letting that show up
-    // as an inscrutable `toEqual` mismatch below.
+    // import above). A config FUNCTION does break these two checks, and is
+    // meant to: the import is then a function with no `test` property, so
+    // `coverage` is undefined and both Array.isArray calls fail loudly here
+    // instead of showing up as an inscrutable `toEqual` mismatch below.
     expect(
       Array.isArray(coverage?.include),
       'vitestConfig.test.coverage.include is not an array -- the config shape ' +
@@ -419,9 +588,23 @@ describe('scan scope', () => {
         'this binding assumes (a plain object from defineConfig) no longer holds; ' +
         'see the import comment above and redo the binding',
     ).toBe(true)
+    // A `projects` (or the legacy `workspace`) config, on the other hand,
+    // does NOT fail the two checks above -- top-level `test.coverage` can
+    // stay exactly as it is while each project resolves its own test config,
+    // leaving the deep-equals below passing against settings vitest no longer
+    // runs under. Nothing infers that from shape, so assert it outright.
+    const testConfig = vitestConfig.test as { projects?: unknown; workspace?: unknown } | undefined
+    const singleProject =
+      ' is set. This binding reads ONE top-level test config, and ' +
+      'scripts/assert-no-skips.mjs keys a Map by spec file path, which collapses the same ' +
+      'spec run under several projects into one entry: both assume a SINGLE project. A ' +
+      'browser/projects setup needs a project-aware gate before this assertion is relaxed.'
+    expect(testConfig?.projects, `vitestConfig.test.projects${singleProject}`).toBeUndefined()
+    expect(testConfig?.workspace, `vitestConfig.test.workspace${singleProject}`).toBeUndefined()
     expect(coverage?.include).toEqual(EXPECTED_COVERAGE_INCLUDE)
     expect(coverage?.exclude).toEqual(EXPECTED_COVERAGE_EXCLUDE)
   })
+
 })
 
 describe('committed suite integrity', () => {
@@ -548,5 +731,111 @@ describe('result gate (scripts/assert-no-skips.mjs)', () => {
   it('rejects a missing or malformed result document instead of passing vacuously', () => {
     expect(auditRun({}, specs, WEB_ROOT).length).toBeGreaterThan(0)
     expect(auditRun({ testResults: [] }, specs, WEB_ROOT).join('\n')).toContain('not run')
+  })
+})
+
+describe('coverage scope gate (scripts/assert-coverage-scope.mjs)', () => {
+  // This gate is the only check that sees the coverage scope the run actually
+  // MEASURED rather than the scope vitest.config.ts declares. Its report is
+  // coverage/coverage-final.json, whose keys are absolute paths, backslashed
+  // on Windows as the v8 provider writes them. Build that shape by hand so
+  // the audit logic is exercised on the failure paths too, not only on the
+  // happy one a green run happens to produce.
+  const absolute = (spec: string): string => `${WEB_ROOT.split(sep).join('/')}${spec}`
+  const report = (specs: readonly string[]): Record<string, unknown> =>
+    Object.fromEntries(specs.map((spec) => [absolute(spec), { path: absolute(spec) }]))
+
+  const gated = COVERAGE_SCOPE.coverageGated
+
+  it('accepts a report measuring exactly the derived, manifest-listed set', () => {
+    // Fed from the DERIVED file list rather than from the manifest, so this
+    // pins that the walk-and-minimatch derivation, the absolute-path
+    // normalisation in the gate, and the manifest all describe one single
+    // list end to end.
+    expect(auditCoverageScope(report(coverageGatedSources.map(toConfigPath)), gated, WEB_ROOT)) //
+      .toEqual([])
+  })
+
+  it('accepts the backslashed absolute keys the provider writes on Windows', () => {
+    const windows = Object.fromEntries(gated.map((spec) => [absolute(spec).split('/').join('\\'), {}]))
+    expect(auditCoverageScope(windows, gated, WEB_ROOT)).toEqual([])
+  })
+
+  it('rejects a run whose measured scope shrank, naming every module that vanished', () => {
+    // The bypass this gate exists for: `--coverage.include=src/scene/color.ts`
+    // on the command line (or a plugin config() hook) leaves vitest.config.ts
+    // byte-for-byte intact, so every other assertion in this file stays green
+    // while two modules drop out of coverage AND out of the per-file
+    // thresholds that are supposed to hold them at 90%.
+    const problems = auditCoverageScope(report(['src/scene/color.ts']), gated, WEB_ROOT)
+    expect(problems).toHaveLength(2)
+    expect(problems.join('\n')).toContain('src/api/client.ts')
+    expect(problems.join('\n')).toContain('src/api/qvpc.ts')
+    expect(problems.join('\n')).toContain('NOT measured')
+  })
+
+  it('rejects a module measured but absent from the manifest', () => {
+    // The other direction, and the one a hidden file trips: `coverage.all`
+    // sweeps the include patterns with dot:true, so src/api/.hidden.ts is
+    // instrumented the moment it exists. Not being listed is the failure.
+    const problems = auditCoverageScope(report([...gated, 'src/api/.hidden.ts']), gated, WEB_ROOT)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('src/api/.hidden.ts')
+    expect(problems[0]).toContain('NOT in coverage-scope.json')
+  })
+
+  it('reports a measured file outside the web root as its own path, not a walk up', () => {
+    expect(toWebRelative(WEB_ROOT, absolute('src/api/client.ts'))).toBe('src/api/client.ts')
+    expect(toWebRelative(WEB_ROOT, '/elsewhere/x.ts')).toBe('/elsewhere/x.ts')
+    expect(auditCoverageScope({ '/elsewhere/x.ts': {} }, gated, WEB_ROOT).join('\n')).toContain(
+      '/elsewhere/x.ts',
+    )
+  })
+
+  it('rejects a missing, malformed or empty report instead of passing vacuously', () => {
+    // Each of these is what the gate is handed when coverage was disabled,
+    // written with no json reporter, or never run at all. Since
+    // scripts/clean-coverage.mjs deletes the previous report before vitest
+    // starts, "no report" is the normal shape of a bypass attempt, not an
+    // exotic one -- so none of them may audit clean.
+    for (const [label, document] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['a string', 'text'],
+      ['a number', 42],
+      ['an array', []],
+      ['an empty object', {}],
+    ] as const) {
+      expect(
+        auditCoverageScope(document, gated, WEB_ROOT).length,
+        `audited ${label} clean as a coverage report`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('refuses to certify any run against an empty or malformed expectation', () => {
+    for (const [label, expected] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['an empty array', []],
+      ['a bare string', 'src/api/client.ts'],
+    ] as const) {
+      expect(
+        auditCoverageScope(report(gated), expected, WEB_ROOT).length,
+        `certified a run against ${label} as the expected manifest`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('refuses a missing manifest instead of falling back to an empty expectation', () => {
+    expect(() => readCoverageScope(join(WEB_ROOT, 'no-such-directory'))).toThrow(
+      /coverage-scope\.json/,
+    )
+    // And the manifest that does exist meets the reader's shape rules, so the
+    // throw above is the reader working, not the only path it can take.
+    for (const files of [COVERAGE_SCOPE.coverageGated, COVERAGE_SCOPE.pragmaScanned]) {
+      expect(files.length).toBeGreaterThan(0)
+      expect(files.every((file) => file.startsWith('src/'))).toBe(true)
+    }
   })
 })

@@ -1,0 +1,14 @@
+{
+  "$comment": "The exact set of source modules the coverage gates hold, as web-root-relative posix paths. ONE manifest, read by two independent checks: src/guards.test.ts asserts that the minimatch derivation from vitest.config.ts's coverage.include/exclude produces exactly `coverageGated` (derivation vs manifest), and scripts/assert-coverage-scope.mjs asserts that the coverage report vitest ACTUALLY wrote for this run lists exactly `coverageGated` (runtime vs manifest). Neither check can be satisfied by editing the other's source. Adding a genuinely new gated module therefore requires a reviewed edit to this file -- that human-review latch is deliberate, not an oversight: it is what makes a silently shrunk or widened coverage scope fail the build. `pragmaScanned` is `coverageGated` plus the type-only modules that carry no per-file threshold but are still scanned for coverage-ignore pragmas.",
+  "coverageGated": [
+    "src/api/client.ts",
+    "src/api/qvpc.ts",
+    "src/scene/color.ts"
+  ],
+  "pragmaScanned": [
+    "src/api/client.ts",
+    "src/api/qvpc.ts",
+    "src/api/types.ts",
+    "src/scene/color.ts"
+  ]
+}
