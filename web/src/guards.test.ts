@@ -138,13 +138,14 @@ const toConfigPath = (path: string): string => `src/${path}`
  * `coverage.all` with `dot: true` as well (ibid. 107, 121). minimatch
  * defaults to `dot: false`, under which a leading-dot segment matches no `*`
  * or globstar -- so with the default this derivation disagreed with the
- * provider on precisely the paths an author chooses freely: `src/api/
- * .hidden.ts` was instrumented and held to a per-file threshold by vitest,
- * yet fell outside `pragmaScannedSources` here and so was never scanned for
- * coverage-ignore pragmas. A pragma parked in such a file carved lines out of
- * its threshold with nothing going red. Do not "simplify" this back to a bare
- * `minimatch(path, pattern)`; the hidden-path regressions in "scan scope"
- * below pin it.
+ * provider on precisely the paths an author chooses freely. A hidden module
+ * such as `src/api/.hidden.ts` was instrumented by vitest yet fell outside
+ * `pragmaScannedSources` here, so it was never scanned for coverage-ignore
+ * pragmas; and a whole-file pragma leaves zero coverable statements, which
+ * the per-file threshold does not trip on either (measured: such a file
+ * reports 0/0/0/0 and the run still exits 0). Nothing went red. Do not
+ * "simplify" this back to a bare `minimatch(path, pattern)`; the hidden-path
+ * regressions in "scan scope" below pin it.
  *
  * `nocase: false` is already minimatch's default and is stated only to keep
  * it that way: test-exclude passes no case option either, so matching is
@@ -752,12 +753,14 @@ describe('coverage scope gate (scripts/assert-coverage-scope.mjs)', () => {
     // pins that the walk-and-minimatch derivation, the absolute-path
     // normalisation in the gate, and the manifest all describe one single
     // list end to end.
-    expect(auditCoverageScope(report(coverageGatedSources.map(toConfigPath)), gated, WEB_ROOT)) //
-      .toEqual([])
+    const derived = report(coverageGatedSources.map(toConfigPath))
+    expect(auditCoverageScope(derived, gated, WEB_ROOT)).toEqual([])
   })
 
   it('accepts the backslashed absolute keys the provider writes on Windows', () => {
-    const windows = Object.fromEntries(gated.map((spec) => [absolute(spec).split('/').join('\\'), {}]))
+    const windows = Object.fromEntries(
+      gated.map((spec) => [absolute(spec).split('/').join('\\'), {}]),
+    )
     expect(auditCoverageScope(windows, gated, WEB_ROOT)).toEqual([])
   })
 
