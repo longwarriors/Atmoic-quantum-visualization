@@ -38,6 +38,16 @@ threat model the front-end gates adopted -- persisting a coverage flag into
 this same ``test`` script is the bypass they exist to catch, and deleting a
 gate from the chain is cheaper than editing one -- so the chain is pinned from
 outside the chain, exactly as ``ci.yml`` and ``check.ps1`` already are.
+
+Naming a stage was not enough on its own: the stages were matched by
+substring, so ``vitest run --coverage.enabled=false`` satisfied the stage
+called ``vitest run --coverage``, and with ``clean-coverage.mjs``'s artefact
+list emptied the verifiers then certified the previous run's report. The same
+group therefore also pins what the chain may *not* say (no coverage override
+in the invocation), what npm wraps around it (no ``pretest`` / ``posttest``),
+what the pre-clean must delete, and that ``web/src/guards.test.ts`` -- which
+carries most of the front-end gate and which nothing else in the repo reads --
+still exists and still contains its blocks.
 """
 
 from __future__ import annotations
@@ -59,6 +69,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECK_SCRIPT = ROOT / "scripts" / "check.ps1"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 WEB_PACKAGE_JSON = ROOT / "web" / "package.json"
+WEB_GUARD_SPEC = ROOT / "web" / "src" / "guards.test.ts"
+WEB_CLEAN_COVERAGE = ROOT / "web" / "scripts" / "clean-coverage.mjs"
 ZERO_SHA = "0" * 40
 
 _INVOKE = re.compile(r"^\s*Invoke-Checked\s", re.MULTILINE)
@@ -652,4 +664,136 @@ def test_npm_test_stops_at_the_first_failing_gate() -> None:
     assert "||" not in script, f"`||` inverts the previous stage's exit code: {script}"
     assert "&" not in script.replace("&&", ""), (
         f"a bare `&` ignores the previous stage's exit code: {script}"
+    )
+
+
+#: Spellings that satisfy the ``vitest run --coverage`` stage above as a
+#: substring while turning coverage off or reconfiguring it. ``--coverage.``
+#: is the whole family of dotted overrides (``--coverage.enabled=false``,
+#: ``--coverage.provider=custom``, ``--coverage.thresholds.lines=0``); a bare
+#: ``--coverage`` is all the chain needs, so none of these belongs here.
+FORBIDDEN_COVERAGE_FLAGS = ("--coverage.", "--coverage=", "--no-coverage")
+
+
+def test_npm_test_configures_coverage_only_from_vitest_config() -> None:
+    """No coverage override may be persisted into the ``test`` script.
+
+    ``vitest run --coverage.enabled=false`` contains the string
+    ``vitest run --coverage``, so the stage check above accepted it: combined
+    with an emptied pre-clean list it left the verifiers certifying the
+    *previous* run's report at exit 0 (measured). Every other dotted override
+    is the same shape -- ``--coverage.provider=custom
+    --coverage.customProviderModule=...`` hands the report to a module in this
+    repo, and ``--coverage.thresholds.lines=0`` deletes what the report is
+    scored against.
+
+    The resolved-config capture catches all of them from inside the run
+    (``coverage/resolved-coverage.json`` records what vitest resolved, and
+    ``scripts/assert-coverage-scope.mjs`` deep-equals it against
+    ``coverage-scope.json``). This is the cheap outer layer: the invocation
+    itself carries no coverage configuration at all, so there is only one
+    place that configuration can come from.
+    """
+
+    script = _npm_test_script()
+    for flag in FORBIDDEN_COVERAGE_FLAGS:
+        assert flag not in script, (
+            f"web/package.json's `test` script passes {flag!r}: coverage must be configured "
+            f"only by vitest.config.ts, which is what coverage-scope.json is pinned to. {script}"
+        )
+
+
+def test_npm_test_runs_no_npm_lifecycle_hook_around_the_chain() -> None:
+    """``pretest`` / ``posttest`` must not exist.
+
+    npm runs them automatically around ``npm test``, so the pinned chain above
+    describes only the middle of what actually executes. Neither can seed a
+    report -- ``clean-coverage.mjs`` runs after ``pretest`` and deletes all
+    three -- but both are arbitrary code the chain check says nothing about,
+    and a gate whose invocation is pinned should not have unpinned bookends.
+    """
+
+    scripts = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))["scripts"]
+    for hook in ("pretest", "posttest"):
+        assert hook not in scripts, (
+            f"web/package.json defines a `{hook}` script; npm runs it automatically around "
+            f"`npm test`, outside everything NPM_TEST_STAGES pins: {scripts[hook]!r}"
+        )
+
+
+#: Every file ``scripts/clean-coverage.mjs`` must delete before vitest starts.
+#: Each is an INPUT to a gate that runs after vitest, and each is only
+#: evidence about *this* run while it cannot survive from the last one.
+STALE_ARTEFACTS = (
+    "coverage/coverage-final.json",
+    "coverage/vitest-results.json",
+    "coverage/resolved-coverage.json",
+)
+
+
+def test_clean_coverage_deletes_every_report_the_gates_read() -> None:
+    """``STALE_ARTEFACTS`` is pinned from outside the file that carries it.
+
+    Emptying that array is exactly as effective as deleting the pre-clean
+    stage from the ``test`` script -- measured: with it set to ``[]`` and
+    coverage turned off, both verifiers passed against the previous run's
+    report while an uncovered function shipped. The stage is pinned above; the
+    list the stage acts on is pinned here, for the same reason and in the same
+    place, because ``web/`` cannot hold its own invocation honest.
+    """
+
+    source = WEB_CLEAN_COVERAGE.read_text(encoding="utf-8")
+    match = re.search(r"const STALE_ARTEFACTS = \[(.*?)\]", source, re.DOTALL)
+    assert match, "web/scripts/clean-coverage.mjs no longer declares a STALE_ARTEFACTS array"
+    listed = tuple(re.findall(r"'([^']+)'", match.group(1)))
+    assert listed == STALE_ARTEFACTS, (
+        "web/scripts/clean-coverage.mjs must delete exactly the reports the post-run gates "
+        f"read, in order. Found {listed}, expected {STALE_ARTEFACTS}"
+    )
+
+
+#: Blocks and test names ``web/src/guards.test.ts`` must still carry. Deleting
+#: the file is cheaper than defeating any single one of them, and nothing else
+#: in the repo would notice: ``assert-no-skips.mjs`` derives its expected spec
+#: list from the disk, so a spec that no longer exists is simply not expected.
+GUARD_SPEC_CONTENTS = (
+    "describe('guard patterns (positive controls)'",
+    "describe('scan scope'",
+    "describe('committed suite integrity'",
+    "describe('result gate (scripts/assert-no-skips.mjs)'",
+    "describe('coverage scope gate (scripts/assert-coverage-scope.mjs)'",
+    "describe('coverage threshold gate (scripts/assert-coverage-scope.mjs)'",
+    "describe('resolved config gate (scripts/assert-coverage-scope.mjs)'",
+    "has no skipped, todo, focused or conditionally-run tests",
+    "has no coverage-ignore pragmas in gated source modules",
+    "keeps the modules coverage excludes as type-only actually type-only",
+    "keeps every runtime module under a gated root inside the coverage include",
+    "binds the coverage-gated derivation to the real coverage.include",
+    "binds the globalSetup that captures the resolved config",
+)
+
+
+def test_web_guard_spec_still_exists_and_still_carries_its_gates() -> None:
+    """The guard spec is pinned from outside itself, as the chain is.
+
+    ``web/src/guards.test.ts`` carries the config-source half of the coverage
+    binding, the runtime-extension policy, the pragma scan, the type-only
+    guard and the derivation-vs-manifest comparison. Deleting it left
+    ``npm test`` green at 96 tests with an uncovered ``src/api/sneaky.mts``
+    shipping (measured). By the same argument that pins the chain -- deleting
+    a gate disables it as thoroughly as editing it -- the file's existence and
+    its named blocks are asserted here, where deleting the guard cannot also
+    delete the assertion.
+    """
+
+    assert WEB_GUARD_SPEC.is_file(), (
+        "web/src/guards.test.ts is gone; nothing else reads vitest.config.ts, scans committed "
+        "sources for skip modifiers or coverage pragmas, or holds the coverage derivation to "
+        "coverage-scope.json"
+    )
+    source = WEB_GUARD_SPEC.read_text(encoding="utf-8")
+    missing = [name for name in GUARD_SPEC_CONTENTS if name not in source]
+    assert not missing, (
+        f"web/src/guards.test.ts no longer contains {missing}; emptying the file passes an "
+        "existence check while disabling every guard in it"
     )
