@@ -39,6 +39,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { minimatch } from 'minimatch'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -50,7 +51,13 @@ import {
 } from '../scripts/assert-no-skips.mjs'
 // `defineConfig` (vitest/dist/config.cjs) is the identity function for a
 // plain-object argument, and vitest.config.ts calls it with one: this import
-// IS the resolved config, not a copy or a default-merged approximation.
+// IS the resolved config, not a copy or a default-merged approximation. The
+// "coverage scope binding" test below, and the config-shape assertions
+// inside it, depend on this staying true: if a future PR switches
+// vitest.config.ts to a config FUNCTION or to `projects`, this import stops
+// reflecting the real, resolved coverage settings and the whole binding
+// (this import, EXPECTED_COVERAGE_INCLUDE / EXPECTED_COVERAGE_EXCLUDE below,
+// and the two predicates derived from them) must be redone.
 import vitestConfig from '../vitest.config'
 
 const SRC_ROOT = fileURLToPath(new URL('.', import.meta.url))
@@ -74,31 +81,18 @@ const TEST_FILE = /(^|\/)__tests__\/|\.(test|spec)\.tsx?$/
 const isTestFile = (path: string): boolean => TEST_FILE.test(path)
 
 /**
- * Mirrors `coverage.include` / `coverage.exclude` in vitest.config.ts: the
- * .ts modules under src/api/ and src/scene/ at any depth, minus the GLSL
- * string modules in src/scene/shaders/ and minus the tests themselves.
- * types.ts is excluded from the coverage *thresholds* there but is still
- * scanned here: a pragma in it would be pointless, and pointless pragmas are
- * the kind that get copy-pasted into a gated file next.
+ * The literal `coverage.include` / `coverage.exclude` arrays vitest.config.ts
+ * declares. Deep-equalled against the real, resolved config in the "coverage
+ * scope binding" test below: editing either array in vitest.config.ts
+ * without a matching, reviewed edit here fails `npm test` instead of
+ * silently shrinking what `isCoverageGatedSource` / `isPragmaScannedSource`
+ * below (and therefore `scan scope` and the pragma scan in "committed suite
+ * integrity") treat as gated.
  *
- * That "mirrors" is a claim about two hand-maintained things staying in
- * sync, not a structural guarantee: this regex never reads vitest.config.ts,
- * so nothing here would notice if the two drifted apart (e.g. a file quietly
- * added to `coverage.exclude` to dodge its per-file threshold). The
- * "coverage scope binding" test in the `scan scope` block below closes that
- * gap by deep-equalling the *actual* resolved `coverage.include` /
- * `coverage.exclude` against the literal arrays this function assumes.
- */
-const isGatedSource = (path: string): boolean =>
-  /^(api|scene)\/.*\.ts$/.test(path) && !path.startsWith('scene/shaders/') && !isTestFile(path)
-
-/**
- * The literal `coverage.include` / `coverage.exclude` arrays `isGatedSource`
- * above assumes vitest.config.ts declares. Asserted against the real,
- * resolved config in the "coverage scope binding" test below: editing either
- * array in vitest.config.ts without a matching, reviewed edit here fails
- * `npm test` instead of silently shrinking what `scan scope` and the pragma
- * scan (in "committed suite integrity") treat as gated.
+ * `isCoverageGatedSource` derives its matching from THESE arrays via
+ * `minimatch`, not from a separately hand-maintained regex, so there is no
+ * second piece of gating logic that could be narrowed independently of what
+ * the deep-equal test binds to the live config.
  */
 const EXPECTED_COVERAGE_INCLUDE = ['src/api/**/*.ts', 'src/scene/**/*.ts']
 const EXPECTED_COVERAGE_EXCLUDE = [
@@ -107,6 +101,49 @@ const EXPECTED_COVERAGE_EXCLUDE = [
   'src/**/__tests__/**',
   'src/api/types.ts',
 ]
+
+/**
+ * `walk()` paths are posix, relative to src/ (e.g. `api/qvpc.ts`); the
+ * coverage patterns above are `src/...`-prefixed, matching how vitest itself
+ * matches them (relative to the vitest.config.ts root, one level up from
+ * src/). Prepend `src/` to the walked path rather than stripping it from the
+ * patterns, so EXPECTED_COVERAGE_INCLUDE / EXPECTED_COVERAGE_EXCLUDE stay
+ * byte-for-byte identical to coverage.include / coverage.exclude in
+ * vitest.config.ts -- which is what the deep-equal test below compares.
+ */
+const toConfigPath = (path: string): string => `src/${path}`
+const matchesAnyPattern = (patterns: string[], path: string): boolean =>
+  patterns.some((pattern) => minimatch(path, pattern))
+
+/**
+ * A .ts module that vitest's coverage instruments and holds to its per-file
+ * threshold: matches some EXPECTED_COVERAGE_INCLUDE pattern, matches no
+ * EXPECTED_COVERAGE_EXCLUDE pattern, and is not a test file. (Test files are
+ * already excluded by EXPECTED_COVERAGE_EXCLUDE's `*.{test,spec}.{ts,tsx}` /
+ * `__tests__/**` patterns; `isTestFile` is kept as an independent check so a
+ * future edit to that exclude pattern alone cannot silently let a spec file
+ * back into the gated set.) Verified below against the literal expected set
+ * of files, not just spot-checked, so a glob-semantics surprise (globstar
+ * matching zero segments, brace expansion, dotfile handling) is caught
+ * in-suite rather than silently mis-gating.
+ */
+const isCoverageGatedSource = (path: string): boolean => {
+  const configPath = toConfigPath(path)
+  return (
+    matchesAnyPattern(EXPECTED_COVERAGE_INCLUDE, configPath) &&
+    !matchesAnyPattern(EXPECTED_COVERAGE_EXCLUDE, configPath) &&
+    !isTestFile(path)
+  )
+}
+
+/**
+ * Coverage-gated sources, plus src/api/types.ts: excluded from the coverage
+ * *thresholds* (type-only, no runtime statements) but still scanned for
+ * coverage-ignore pragmas on purpose -- a pointless pragma there is the kind
+ * that gets copy-pasted into a gated file next.
+ */
+const isPragmaScannedSource = (path: string): boolean =>
+  isCoverageGatedSource(path) || path === 'api/types.ts'
 
 // Fragments, joined at runtime, so that this file never spells out a token it
 // forbids. Each list is a positive control below, asserted against the very
@@ -187,7 +224,8 @@ const describeHits = (hits: Hit[]): string =>
 
 const allFiles = walk(SRC_ROOT)
 const testFiles = allFiles.filter(isTestFile)
-const gatedSources = allFiles.filter(isGatedSource)
+const coverageGatedSources = allFiles.filter(isCoverageGatedSource)
+const pragmaScannedSources = allFiles.filter(isPragmaScannedSource)
 
 describe('guard patterns (positive controls)', () => {
   // If a fragment join ever produced a regex that matches nothing, the scans
@@ -308,13 +346,32 @@ describe('scan scope', () => {
     expect(testFiles).toContain('scene/color.test.ts')
   })
 
-  it('covers the coverage-gated modules and nothing that is excluded on purpose', () => {
-    expect(gatedSources).toContain('api/qvpc.ts')
-    expect(gatedSources).toContain('api/client.ts')
-    expect(gatedSources).toContain('scene/color.ts')
-    expect(gatedSources).not.toContain('scene/shaders/orbitalPoints.ts')
-    expect(gatedSources).not.toContain('api/qvpc.test.ts')
-    expect(gatedSources.some((path) => path.endsWith('.tsx'))).toBe(false)
+  it('coverage-gates exactly the known modules and nothing excluded on purpose', () => {
+    // Pinned literally, not just spot-checked with toContain/not.toContain:
+    // a glob-semantics surprise would otherwise have to be caught one file
+    // at a time by the assertions below instead of failing here directly.
+    expect(coverageGatedSources).toEqual(['api/client.ts', 'api/qvpc.ts', 'scene/color.ts'])
+
+    expect(coverageGatedSources).toContain('api/qvpc.ts')
+    expect(coverageGatedSources).toContain('api/client.ts')
+    expect(coverageGatedSources).toContain('scene/color.ts')
+    expect(coverageGatedSources).not.toContain('scene/shaders/orbitalPoints.ts')
+    expect(coverageGatedSources).not.toContain('api/qvpc.test.ts')
+    expect(coverageGatedSources.some((path) => path.endsWith('.tsx'))).toBe(false)
+  })
+
+  it('pragma-scans the coverage-gated modules plus api/types.ts, and nothing else', () => {
+    expect(pragmaScannedSources).toEqual([
+      'api/client.ts',
+      'api/qvpc.ts',
+      'api/types.ts',
+      'scene/color.ts',
+    ])
+    // types.ts is the one file this scan covers that coverage gating does
+    // not: excluded from the per-file thresholds, but not from the pragma
+    // scan (see the comment on isPragmaScannedSource above).
+    expect(isCoverageGatedSource('api/types.ts')).toBe(false)
+    expect(isPragmaScannedSource('api/types.ts')).toBe(true)
   })
 
   it('keeps the HTTP layer inside the coverage include (no .tsx under api/)', () => {
@@ -325,23 +382,43 @@ describe('scan scope', () => {
     expect(leaked, 'runtime modules outside the coverage include').toEqual([])
   })
 
-  it('binds isGatedSource to the real coverage.include / coverage.exclude in vitest.config.ts', () => {
-    // `isGatedSource` is a hand-written regex; nothing before this test made
-    // it agree with the config vitest actually runs coverage against. This
-    // reads the resolved config object itself (not a re-parsed copy) and
-    // fails the moment the two disagree, e.g. a file appended to
-    // `coverage.exclude` to drop it from measured coverage without touching
-    // this file.
+  it('binds the coverage-gated derivation to the real coverage.include / coverage.exclude in vitest.config.ts', () => {
+    // `isCoverageGatedSource` derives its matching from EXPECTED_COVERAGE_INCLUDE
+    // / EXPECTED_COVERAGE_EXCLUDE via minimatch; nothing before this test made
+    // those canonical arrays agree with the config vitest actually runs
+    // coverage against. This reads the resolved config object itself (not a
+    // re-parsed copy) and fails the moment the two disagree, e.g. a file
+    // appended to `coverage.exclude` to drop it from measured coverage
+    // without a matching edit to EXPECTED_COVERAGE_EXCLUDE.
     // `test.coverage` is typed as a `provider`-discriminated union (v8 /
     // istanbul / custom), and the `custom` branch has no `include` /
     // `exclude` at all, so TS won't let those fields be read without first
     // narrowing on a `provider` value this file has no reason to hard-code.
     // The cast only widens to "has these two optional fields, of unknown
     // element type"; it does not assert their contents, which is what the
-    // two `toEqual` calls below actually verify against runtime data.
+    // shape checks and the two `toEqual` calls below actually verify against
+    // runtime data.
     const coverage = vitestConfig.test?.coverage as
       | { include?: unknown; exclude?: unknown }
       | undefined
+    // This whole binding depends on vitest.config.ts exporting a PLAIN
+    // OBJECT (defineConfig(identity) -- see the comment on the vitestConfig
+    // import above). If a future PR switches to a config FUNCTION or to
+    // `projects`, `coverage` here silently stops being the real, resolved
+    // settings; fail loudly and specifically instead of letting that show up
+    // as an inscrutable `toEqual` mismatch below.
+    expect(
+      Array.isArray(coverage?.include),
+      'vitestConfig.test.coverage.include is not an array -- the config shape ' +
+        'this binding assumes (a plain object from defineConfig) no longer holds; ' +
+        'see the import comment above and redo the binding',
+    ).toBe(true)
+    expect(
+      Array.isArray(coverage?.exclude),
+      'vitestConfig.test.coverage.exclude is not an array -- the config shape ' +
+        'this binding assumes (a plain object from defineConfig) no longer holds; ' +
+        'see the import comment above and redo the binding',
+    ).toBe(true)
     expect(coverage?.include).toEqual(EXPECTED_COVERAGE_INCLUDE)
     expect(coverage?.exclude).toEqual(EXPECTED_COVERAGE_EXCLUDE)
   })
@@ -354,7 +431,7 @@ describe('committed suite integrity', () => {
   })
 
   it('has no coverage-ignore pragmas in gated source modules', () => {
-    const hits = scan(gatedSources, (line) => PRAGMA_PATTERN.test(line))
+    const hits = scan(pragmaScannedSources, (line) => PRAGMA_PATTERN.test(line))
     expect(hits, `coverage pragmas inside gated modules:\n${describeHits(hits)}`).toEqual([])
   })
 })
