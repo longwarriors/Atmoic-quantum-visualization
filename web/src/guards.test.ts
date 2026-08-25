@@ -293,6 +293,17 @@ const MODIFIER_NAMES = [SKIP, 'on' + 'ly', TODO, SKIP + 'If', 'run' + 'If']
 // a character class in which the `|` is a literal, so `/* |8 ignore start */`
 // is honoured by the remapper like `v8`. It is matched without the `\b` the
 // word-like names get (a `|` has no word boundary after a space).
+/**
+ * An `export` that can carry runtime code. `export type`, `export interface`
+ * and `export declare` are erased by the compiler and emit nothing; every
+ * other export form -- `const`, `let`, `var`, `function`, `class`, `enum`,
+ * `default`, a plain `export { … }` re-export (which `isolatedModules`
+ * requires to be spelled `export type { … }` when it is type-only), and
+ * `export * from` -- can. Positive controls below, so widening the negative
+ * lookahead cannot make the scan pass by construction.
+ */
+const VALUE_EXPORT = /^\s*export\s+(?!type\s|interface\s|declare\s)/
+
 const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul', 'node:cov' + 'erage']
 const PRAGMA_TOOL_QUIRKS = ['\\|8']
 const PRAGMA_VERB = 'ig' + 'nore'
@@ -739,6 +750,59 @@ describe('committed suite integrity', () => {
   it('has no coverage-ignore pragmas in gated source modules', () => {
     const hits = scan(pragmaScannedSources, (line) => PRAGMA_PATTERN.test(line))
     expect(hits, `coverage pragmas inside gated modules:\n${describeHits(hits)}`).toEqual([])
+  })
+
+  it('keeps the modules coverage excludes as type-only actually type-only', () => {
+    // src/api/types.ts sits inside a gated root and is dropped by
+    // coverage.exclude, justified there as "type-only, no runtime
+    // statements". Nothing enforced that justification: an uncovered exported
+    // function added to it leaves `npm test` at exit 0 (measured). It is the
+    // same shape as the extension leak the scan-scope test above closes,
+    // escaping through the exclude list instead of through a file name, and
+    // it composes the same way -- move a gated module's body here and
+    // re-export it, and the gated module reports 100% while its real code is
+    // measured by nothing and held to no threshold.
+    //
+    // A value export is what makes that possible, so a value export is what
+    // this forbids. It does not forbid a bare top-level side effect, which
+    // exports nothing and so cannot host code a gated module calls; if one
+    // ever belongs here, the file is no longer type-only and belongs in
+    // coverage.include instead.
+    const gated = new Set<string>(COVERAGE_SCOPE.coverageGated)
+    const typeOnly = COVERAGE_SCOPE.pragmaScanned
+      .filter((file) => !gated.has(file))
+      .map((file) => file.replace(/^src\//, ''))
+    expect(typeOnly.length, 'no type-only module to check -- has the manifest changed?').toBe(1)
+
+    const hits = scan(typeOnly, (line) => VALUE_EXPORT.test(line))
+    expect(
+      hits,
+      'value exports in a module coverage excludes as type-only. Either keep it type-only, or ' +
+        `move it into coverage.include and coverage-scope.json:\n${describeHits(hits)}`,
+    ).toEqual([])
+
+    // Positive and negative controls: without these the scan could pass
+    // because the pattern matches nothing, not because the file is clean.
+    for (const line of [
+      'export function backdoor(value: number): number {',
+      'export const backdoor = (value: number): number => value',
+      'export class Backdoor {}',
+      'export enum Kind { A }',
+      'export default backdoor',
+      "export { backdoor } from './client'",
+      "export * from './client'",
+    ]) {
+      expect(VALUE_EXPORT.test(line), line).toBe(true)
+    }
+    for (const line of [
+      "export type BasisKind = 'real' | 'complex'",
+      'export interface OrbitalParameters {',
+      'export declare const version: string',
+      '  n: number',
+      '/** Geometry fields shared by the stationary and time-dependent isosurfaces. */',
+    ]) {
+      expect(VALUE_EXPORT.test(line), line).toBe(false)
+    }
   })
 })
 
