@@ -57,6 +57,31 @@
  * this file applies to the capture, so a `provider: "custom"` written into
  * coverage-scope.json throws instead of licensing itself.
  *
+ * WHAT THIS GATE DOES NOT DEFEND AGAINST
+ *
+ * It stops coverage being weakened by CONFIGURATION -- a shrunken scope,
+ * deleted or zeroed thresholds, `perFile:false`, a stale report, a deleted
+ * chain stage, a pragma, a module parked under an extension the include misses
+ * -- whether that weakening was careless or deliberate. It does not stop code
+ * written to lie about coverage. Every observer above runs inside the vitest
+ * process, and vitest assigns `config.coverage = coverageProvider
+ * .resolveOptions()` before globalSetup runs, so a custom provider hands the
+ * capture module a clean-looking config while instrumenting nothing --
+ * measured, `check.ps1` at exit 0 with an uncovered exported function
+ * shipping. The capture file is never touched. That is not a bug in the layers
+ * below; it is what "the process vouches for itself" means, and no further
+ * layer inside the process can close it.
+ *
+ * What bounds it instead is that WIRING a provider in now costs a reviewed
+ * diff: tests/test_check_script.py forbids `--coverage.` in the `test` script,
+ * forbids a `plugins` key in vitest.config.ts, pins the `test` chain to an
+ * exact stage tuple, and pins the file list under scripts/ -- all from
+ * outside, where the run cannot reach them. Closing the class itself means
+ * instrumenting independently of this chain (a second, separately configured
+ * coverage run) or diffing the coverage configuration against a protected
+ * baseline in CI. Both are deliberately out of scope here; see
+ * docs/project/status.md, "门禁的防护边界".
+ *
  * FAIL-CLOSED throughout. A missing, unparseable, non-object or empty report
  * or capture is a failure, never a pass -- `--coverage.enabled=false` and a
  * reporter list without `json` both simply produce no report, removing the
@@ -89,7 +114,7 @@ const MANIFEST = 'coverage-scope.json'
 /** The four metrics vitest thresholds, in the order vitest.config.ts writes them. */
 const METRICS = ['statements', 'branches', 'functions', 'lines']
 /** The capture shape this file knows how to read. */
-const CAPTURE_SCHEMA = 1
+const CAPTURE_SCHEMA = 2
 
 /** Forward slashes everywhere, and a lower-case drive letter on Windows. */
 function toPosix(path) {
@@ -562,6 +587,18 @@ export function auditResolvedCoverage(captured, expected, webRoot) {
     problems.push(
       `${RESOLVED_CAPTURE}: projectName is ${JSON.stringify(captured.projectName)}, expected ` +
         'the unnamed single project this gate assumes',
+    )
+  }
+  // The provider OBJECT vitest loaded, next to the provider NAME the resolved
+  // options claim. They come apart only for a fake that did not bother to
+  // disguise itself -- one that declares `name = "v8"` satisfies both -- so
+  // this is one more layer, not the wall. See the boundary note at the top.
+  if (captured.coverageProviderName !== 'v8') {
+    problems.push(
+      `${RESOLVED_CAPTURE}: coverageProviderName is ${JSON.stringify(
+        captured.coverageProviderName,
+      )}, not "v8" -- vitest loaded some other coverage provider, and a provider that is not ` +
+        'the v8 one WRITES coverage-final.json instead of instrumenting anything',
     )
   }
   problems.push(

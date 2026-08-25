@@ -7,9 +7,13 @@
 
 /**
  * vitest's resolved `coverage` options with the two machine-dependent values
- * normalised (`reportsDirectory` made root-relative, `processingConcurrency`
- * replaced by a marker) and every other key preserved, so the gate can
- * deep-equal the whole object.
+ * normalised (`reportsDirectory` made root-relative, and case-folded on
+ * Windows; `processingConcurrency` replaced by a marker object) and every
+ * other key preserved, so the gate can deep-equal the whole object.
+ *
+ * Anything JSON cannot carry becomes a marker object -- one key, `__captured`,
+ * naming the kind -- never a marker string, which a genuine string value could
+ * be spelled as.
  *
  * `coverage` is `unknown` because a resolved config this module cannot read
  * must throw, not be captured as something the gate would pass.

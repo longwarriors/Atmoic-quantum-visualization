@@ -411,18 +411,53 @@ function isValueExport(statement: ts.Statement): boolean {
 }
 
 /**
- * Value exports in a TypeScript source, as 1-based line numbers with the text
- * of the line the `export` keyword sits on.
+ * Does the compiler EMIT nothing at all for this top-level statement?
+ *
+ * `src/api/types.ts` is dropped from coverage on the stated grounds that it is
+ * type-only, so what it may contain is exactly the forms that leave no runtime
+ * behind. Everything else -- an expression, a variable, a function, a class, a
+ * live `enum` or `namespace`, a bare side-effect `import` -- is executable code
+ * inside a gated root that no threshold holds, whether or not it exports
+ * anything. Unknown statement kinds are not erased: this fails closed.
+ */
+function isErasedDeclaration(statement: ts.Statement): boolean {
+  if (hasDeclareModifier(statement)) {
+    // `declare global { … }`, `declare module`, `declare const`: ambient.
+    return true
+  }
+  if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+    return true
+  }
+  if (ts.isImportDeclaration(statement)) {
+    // An import with a clause is elided when only its types are used; a bare
+    // `import './x'` exists for no reason other than to run the other module.
+    return statement.importClause !== undefined
+  }
+  if (ts.isExportDeclaration(statement) || ts.isExportAssignment(statement)) {
+    // Whether THESE emit is `isValueExport`'s question, asked separately by
+    // the scan below; answering it here too would report one line twice.
+    return true
+  }
+  return ts.isEmptyStatement(statement)
+}
+
+/**
+ * Top-level statements a predicate flags, as 1-based line numbers with the
+ * text of the line the statement starts on.
  *
  * `createSourceFile` parses without type-checking, which is all this needs
  * and keeps the guard independent of the project's program. Parse errors are
  * reported rather than swallowed: an unparseable module must fail this scan,
- * not sail through it as "no exports found". (`tsc -p tsconfig.test.json
+ * not sail through it as "nothing found". (`tsc -p tsconfig.test.json
  * --noEmit` runs before vitest in the `test` chain and would already be red;
  * `parseDiagnostics` is belt and braces, and is read defensively because it
  * is not part of the public API.)
  */
-function valueExportHits(fileName: string, source: string): Hit[] {
+function topLevelHits(
+  fileName: string,
+  source: string,
+  flags: (statement: ts.Statement) => boolean,
+): Hit[] {
   const parsed = ts.createSourceFile(
     fileName,
     source,
@@ -448,10 +483,42 @@ function valueExportHits(fileName: string, source: string): Hit[] {
     ]
   }
 
-  return parsed.statements.filter(isValueExport).map((statement) => {
+  return parsed.statements.filter(flags).map((statement) => {
     const line = lineOf(statement.getStart(parsed))
     return { file: fileName, line, text: textOf(line) }
   })
+}
+
+/**
+ * Value exports in a TypeScript source: the forms that let another module
+ * reach code parked here by name.
+ */
+function valueExportHits(fileName: string, source: string): Hit[] {
+  return topLevelHits(fileName, source, isValueExport)
+}
+
+/**
+ * Top-level statements that EMIT but export nothing -- the class
+ * `valueExportHits` deliberately does not cover, and which a guard comment in
+ * this file used to call harmless on the grounds that code exporting nothing
+ * "cannot host code a gated module calls". That is false, and was demonstrated:
+ *
+ *     // src/api/types.ts
+ *     ;(globalThis as Record<string, unknown>).__hsv = (h, s, v) => { … }
+ *     // src/scene/color.ts
+ *     import '../api/types'
+ *
+ * moved color.ts's whole implementation, untested branches included, into a
+ * module measured by nothing, and left color.ts at 100/100/100/100 with the
+ * gate green (measured). A module reached through the global object needs no
+ * export at all. So the rule is not "exports nothing" but "emits nothing".
+ */
+function sideEffectHits(fileName: string, source: string): Hit[] {
+  return topLevelHits(
+    fileName,
+    source,
+    (statement) => !isValueExport(statement) && !isErasedDeclaration(statement),
+  )
 }
 
 const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul', 'node:cov' + 'erage']
@@ -984,31 +1051,43 @@ describe('committed suite integrity', () => {
     // re-export it, and the gated module reports 100% while its real code is
     // measured by nothing and held to no threshold.
     //
-    // A value export is what makes that possible, so a value export is what
-    // this forbids. It does not forbid a bare top-level side effect, which
-    // exports nothing and so cannot host code a gated module calls; if one
-    // ever belongs here, the file is no longer type-only and belongs in
-    // coverage.include instead.
+    // This used to forbid value exports only, on the stated grounds that a
+    // bare top-level side effect "exports nothing and so cannot host code a
+    // gated module calls". That premise was false, and a four-line edit
+    // falsified it: `;(globalThis as …).__hsv = (h, s, v) => { … }` here plus
+    // `import '../api/types'` in src/scene/color.ts moved color.ts's whole
+    // implementation, two untested branches included, into this module and
+    // left color.ts reporting 100/100/100/100 with the gate green (measured).
+    // Nothing has to be exported to be reached through the global object.
+    //
+    // So the rule this enforces is the one the exclusion actually claims:
+    // type-only means the compiler EMITS NOTHING for this file. Declarations
+    // only -- imports and exports, interfaces, type aliases, anything
+    // `declare`d. If executable code ever belongs here, the file is no longer
+    // type-only and belongs in coverage.include instead.
     const gated = new Set<string>(COVERAGE_SCOPE.coverageGated)
     const typeOnly = COVERAGE_SCOPE.pragmaScanned
       .filter((file) => !gated.has(file))
       .map((file) => file.replace(/^src\//, ''))
     expect(typeOnly.length, 'no type-only module to check -- has the manifest changed?').toBe(1)
 
-    // TWO scanners, union of hits. The parse is the one that matters -- it
-    // sees a declaration, not a line -- and the line regex is kept because it
-    // costs nothing and still fires if the TypeScript API ever moves under
-    // this file.
+    // THREE scanners, union of hits. The two parses are the ones that matter
+    // -- they see declarations, not lines -- and the line regex is kept
+    // because it costs nothing and still fires if the TypeScript API ever
+    // moves under this file.
+    const sources = typeOnly.map(
+      (file) => [file, readFileSync(join(SRC_ROOT, file), 'utf-8')] as const,
+    )
     const hits = [
       ...scan(typeOnly, (line) => VALUE_EXPORT.test(line)),
-      ...typeOnly.flatMap((file) =>
-        valueExportHits(file, readFileSync(join(SRC_ROOT, file), 'utf-8')),
-      ),
+      ...sources.flatMap(([file, source]) => valueExportHits(file, source)),
+      ...sources.flatMap(([file, source]) => sideEffectHits(file, source)),
     ]
     expect(
       hits,
-      'value exports in a module coverage excludes as type-only. Either keep it type-only, or ' +
-        `move it into coverage.include and coverage-scope.json:\n${describeHits(hits)}`,
+      'a module coverage excludes as type-only contains something the compiler emits. Either ' +
+        'keep it type-only, or move it into coverage.include and coverage-scope.json:\n' +
+        describeHits(hits),
     ).toEqual([])
 
     // Positive and negative controls: without these the scan could pass
@@ -1118,6 +1197,63 @@ describe('committed suite integrity', () => {
     // A file that does not parse is a failed scan, not an empty one.
     const broken = valueExportHits('types.ts', 'export const = = 1\n')
     expect(broken.length).toBeGreaterThan(0)
+  })
+
+  it('sees code a type-only module emits without exporting it', () => {
+    // The composition the value-export scan was written to permit, and which
+    // was demonstrated to work: the implementation is parked on `globalThis`
+    // by a bare expression statement -- no export modifier anywhere, so
+    // `isValueExport` says no by design -- and src/scene/color.ts reaches it
+    // with `import '../api/types'`. Everything below emits, and none of it is
+    // an export.
+    for (const [label, source] of [
+      [
+        'globalThis assignment (the measured composition)',
+        'export type A = string\n' +
+          ';(globalThis as Record<string, unknown>).__hsv = (h: number) => h * 2\n',
+      ],
+      ['bare side-effect import', "export type A = string\nimport './register'\n"],
+      ['unexported const', 'export type A = string\nconst hsv = (h: number) => h * 2\n'],
+      ['unexported function', 'export type A = string\nfunction hsv(h: number) {\n  return h\n}\n'],
+      ['unexported class', 'export type A = string\nclass Hsv {}\n'],
+      ['live enum', 'export type A = string\nenum Kind {\n  A,\n}\n'],
+      ['live namespace', 'export type A = string\nnamespace N {\n  export const x = 1\n}\n'],
+      ['top-level control flow', 'export type A = string\nif (Date.now() > 0) {\n  void 0\n}\n'],
+      ['import equals', "export type A = string\nimport x = require('./x')\n"],
+    ] as const) {
+      expect(sideEffectHits('types.ts', source).map((hit) => hit.line), label).toEqual([2])
+    }
+
+    // Negative controls, or the scan could pass by matching nothing rather
+    // than because the file is clean. Every form here is genuinely erased --
+    // the compiler emits no runtime for any of it.
+    for (const [label, source] of [
+      ['type alias', "export type BasisKind = 'real' | 'complex'\n"],
+      ['interface', 'export interface OrbitalParameters {\n  n: number\n}\n'],
+      ['ambient declaration', 'export declare const version: string\n'],
+      ['declare global', 'export type A = string\ndeclare global {\n  interface W {\n    x: 1\n  }\n}\n'],
+      ['type-only import', "import type { A } from './types'\nexport type B = A\n"],
+      ['value import with a clause', "import { A } from './types'\nexport type B = typeof A\n"],
+      ['type-only re-export', "export type { A } from './types'\n"],
+      ['lone semicolon', 'export type A = string\n;\n'],
+      // These DO emit, and are reported by valueExportHits instead. The two
+      // scanners partition the statements between them, so the union in the
+      // test above never names one line twice.
+      ['exported const (the other scan owns it)', 'export const hsv = (h: number) => h\n'],
+      ['star re-export (the other scan owns it)', "export * from './client'\n"],
+      ['export default (the other scan owns it)', 'export default 1\n'],
+    ] as const) {
+      expect(sideEffectHits('types.ts', source), label).toEqual([])
+    }
+    for (const source of [
+      'export const hsv = (h: number) => h\n',
+      "export * from './client'\n",
+      'export default 1\n',
+    ]) {
+      expect(valueExportHits('types.ts', source).length, source).toBe(1)
+    }
+    // And an unparseable module is a failed scan here too, not an empty one.
+    expect(sideEffectHits('types.ts', 'const = = 1\n').length).toBeGreaterThan(0)
   })
 })
 
@@ -1632,11 +1768,12 @@ describe('resolved config gate (scripts/assert-coverage-scope.mjs)', () => {
 
   /** A capture of a run that used exactly the manifest's configuration. */
   const capture = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-    schema: 1,
+    schema: 2,
     root: webRootPosix,
     isRootProject: true,
     projectName: '',
     globalSetup: structuredClone(expected.globalSetup),
+    coverageProviderName: 'v8',
     coverage: structuredClone(expected.coverage),
     ...overrides,
   })
@@ -1805,8 +1942,37 @@ describe('resolved config gate (scripts/assert-coverage-scope.mjs)', () => {
     expect(
       auditResolvedCoverage(capture({ projectName: 'browser' }), expected, WEB_ROOT).join('\n'),
     ).toContain('projectName')
-    expect(auditResolvedCoverage(capture({ schema: 2 }), expected, WEB_ROOT).join('\n')).toContain(
+    expect(auditResolvedCoverage(capture({ schema: 3 }), expected, WEB_ROOT).join('\n')).toContain(
       'schema',
+    )
+  })
+
+  it('rejects a provider vitest loaded under some other name -- one layer, not the wall', () => {
+    // `coverage.provider` above is read out of the resolved options, which
+    // vitest sets to `coverageProvider.resolveOptions()` before globalSetup
+    // runs: the provider gets to describe itself there. This reads the
+    // provider OBJECT instead, and the two come apart for the naive fake --
+    // vitest printed `Coverage enabled with fake` directly above three green
+    // gate lines (measured).
+    for (const [label, name] of [
+      ['a fake that did not disguise itself', 'fake'],
+      ['istanbul', 'istanbul'],
+      ['no provider loaded at all', null],
+    ] as const) {
+      expect(
+        auditResolvedCoverage(capture({ coverageProviderName: name }), expected, WEB_ROOT).join(
+          '\n',
+        ),
+        label,
+      ).toContain('coverageProviderName')
+    }
+    // And the honest limit of it, asserted rather than left to the comment: a
+    // fake that declares `name = "v8"` satisfies this check exactly as it
+    // satisfies the resolved options, because both are written by the process
+    // they describe. Closing that means measuring from outside this run --
+    // see the boundary note atop scripts/assert-coverage-scope.mjs.
+    expect(auditResolvedCoverage(capture({ coverageProviderName: 'v8' }), expected, WEB_ROOT)).toEqual(
+      [],
     )
   })
 
@@ -1885,12 +2051,12 @@ describe('resolved config gate (scripts/assert-coverage-scope.mjs)', () => {
       WEB_ROOT,
     )
     expect(normalized.reportsDirectory).toBe('coverage')
-    expect(normalized.processingConcurrency).toBe('<machine-dependent>')
+    expect(normalized.processingConcurrency).toEqual({ __captured: 'machine-dependent' })
     expect(normalized.provider).toBe('v8')
     expect(normalized.include).toEqual(['src/api/**/*.ts'])
     // A value JSON cannot carry is written as a marker, not dropped: a key
     // that vanished from the capture would vanish from the deep-equal too.
-    expect(normalized.onFinish).toBe('<function>')
+    expect(normalized.onFinish).toEqual({ __captured: 'function' })
     expect(Object.keys(normalized).sort()).toEqual([
       'include',
       'onFinish',
@@ -1901,5 +2067,59 @@ describe('resolved config gate (scripts/assert-coverage-scope.mjs)', () => {
     for (const notAConfig of [undefined, null, 'text', 42, []] as const) {
       expect(() => normalizeResolvedCoverage(notAConfig, WEB_ROOT), String(notAConfig)).toThrow()
     }
+  })
+
+  it('captures an absent value as something no real value can be spelled as', () => {
+    // The markers used to be strings: `undefined` was written `"<undefined>"`,
+    // which a genuine string value `"<undefined>"` normalised to character for
+    // character, so the capture could not say which of the two the run had
+    // resolved. Not reachable today -- no manifest expectation is ever a
+    // marker -- but an encoding that cannot tell "absent" from "a string that
+    // looks absent" is not evidence.
+    const marked = normalizeResolvedCoverage(
+      {
+        thresholds: undefined,
+        reporter: Symbol('reporter'),
+        watermark: Number.NaN,
+        ceiling: Number.POSITIVE_INFINITY,
+      },
+      WEB_ROOT,
+    )
+    expect(marked.thresholds).toEqual({ __captured: 'undefined' })
+    expect(marked.reporter).toEqual({ __captured: 'symbol' })
+    expect(marked.watermark).toEqual({ __captured: 'NaN' })
+    expect(marked.ceiling).toEqual({ __captured: 'Infinity' })
+
+    // The collision, gone: a string is a string.
+    const spelled = normalizeResolvedCoverage({ thresholds: '<undefined>' }, WEB_ROOT)
+    expect(spelled.thresholds).toBe('<undefined>')
+    expect(jsonDifferences(spelled, marked).length).toBeGreaterThan(0)
+
+    // And a genuine object that carries the marker key is escaped into two
+    // keys, so it cannot be read back as the one-key marker it resembles.
+    const escaped = normalizeResolvedCoverage({ thresholds: { __captured: 'undefined' } }, WEB_ROOT)
+    expect(escaped.thresholds).toEqual({
+      __captured: 'literal',
+      value: { __captured: 'undefined' },
+    })
+    expect(jsonDifferences(escaped, marked).length).toBeGreaterThan(0)
+  })
+
+  it('reads a reports directory the way the filesystem does, not the way the string looks', () => {
+    // `<root>/COVERAGE` and `<root>/coverage` are ONE directory on Windows, so
+    // holding the capture to the exact spelling there fails a run that used
+    // the pinned directory -- a false RED, not a bypass. On Linux they are two
+    // directories and the pin has to keep saying so.
+    const cased = normalizeResolvedCoverage(
+      { reportsDirectory: `${webRootPosix}/COVERAGE` },
+      WEB_ROOT,
+    )
+    expect(cased.reportsDirectory).toBe(process.platform === 'win32' ? 'coverage' : 'COVERAGE')
+    // A directory genuinely somewhere else stays visible either way -- this
+    // folds case, it does not fold paths.
+    expect(
+      normalizeResolvedCoverage({ reportsDirectory: `${webRootPosix}/../elsewhere` }, WEB_ROOT)
+        .reportsDirectory,
+    ).toBe('../elsewhere')
   })
 })

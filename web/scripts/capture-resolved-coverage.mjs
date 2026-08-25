@@ -38,14 +38,28 @@
  *
  *   reportsDirectory     absolute -> posix path relative to the project root
  *                        (`coverage`), which is what the gate cares about: it
- *                        is the directory the report is read from.
+ *                        is the directory the report is read from. Case-folded
+ *                        on Windows, where `COVERAGE` and `coverage` are one
+ *                        directory and comparing them case-sensitively would
+ *                        be a false RED on a run that used the pinned one.
  *   processingConcurrency  min(20, availableParallelism()) -> a fixed marker.
  *                        The KEY is still pinned; only its machine-dependent
  *                        value is not.
  *
  * Anything JSON cannot represent (a function, a symbol, undefined) is written
- * as an explicit marker string rather than dropped, so it fails the gate's
- * deep-equal loudly instead of vanishing from the captured key set.
+ * as an explicit MARKER rather than dropped, so it fails the gate's deep-equal
+ * loudly instead of vanishing from the captured key set. A marker is an object
+ * (see MARKER below), never a string, because a string marker cannot be told
+ * apart from a genuine string value spelled the same way.
+ *
+ * WHAT IS NOT WRITTEN, AND WHY IT COULD NOT BE
+ *
+ * Nothing here is evidence about the process that hosts it. vitest assigns
+ * `config.coverage = coverageProvider.resolveOptions()` BEFORE globalSetup
+ * runs, so a coverage provider chosen by this repo decides what this module
+ * captures. `coverageProviderName` below is one more layer against the naive
+ * case, not a wall. The boundary is stated in full at the top of
+ * scripts/assert-coverage-scope.mjs.
  *
  * Plain ESM, no dependencies. It writes and it throws; it decides nothing --
  * every expectation lives in coverage-scope.json and is enforced by
@@ -59,12 +73,40 @@ import { fileURLToPath } from 'node:url'
 const CAPTURE = 'coverage/resolved-coverage.json'
 
 /** Bumped when the shape below changes; the gate refuses any other value. */
-const SCHEMA = 1
+const SCHEMA = 2
+
+/**
+ * The key that makes an object in this capture a MARKER for something JSON
+ * cannot carry, rather than a captured value.
+ *
+ * Markers used to be strings (`"<undefined>"`), which a genuine string value
+ * spelled `"<undefined>"` normalised to character for character -- so the
+ * capture could not say which of the two the run had resolved. Two shapes
+ * separate them for good:
+ *
+ *   marker            exactly one key, `__captured`, naming the kind
+ *   escaped literal   two keys, `__captured: "literal"` and `value`, for a
+ *                     genuine object that carries `__captured` itself
+ *
+ * A string is now always a string, and the escape nests, so no config value
+ * can be captured as some other config value's capture.
+ */
+const MARKER = '__captured'
+
+const marker = (kind) => ({ [MARKER]: kind })
 
 /** Machine-dependent by construction; the key is pinned, the value is not. */
-const MACHINE_DEPENDENT = '<machine-dependent>'
+const MACHINE_DEPENDENT = marker('machine-dependent')
 
 const toPosix = (path) => String(path).split('\\').join('/')
+
+/**
+ * Windows compares paths case-insensitively, so `<root>/COVERAGE` and
+ * `<root>/coverage` are ONE directory there and holding the capture to the
+ * exact spelling would fail a run that used the pinned directory. On Linux
+ * they are two directories and the pin must keep saying so.
+ */
+const foldCase = (path) => (process.platform === 'win32' ? path.toLowerCase() : path)
 
 /**
  * `value` reduced to something JSON.stringify round-trips without dropping
@@ -85,16 +127,19 @@ function jsonSafe(value) {
   }
   if (type === 'number') {
     // NaN and +-Infinity serialise as `null`, which reads as a real value.
-    return Number.isFinite(value) ? value : `<${String(value)}>`
+    return Number.isFinite(value) ? value : marker(String(value))
   }
   if (type === 'object') {
-    return Object.fromEntries(
+    const captured = Object.fromEntries(
       Object.keys(value)
         .sort()
         .map((key) => [key, jsonSafe(value[key])]),
     )
+    // A genuine object carrying the marker key is wrapped rather than written
+    // out as-is, so it cannot be read back as the marker it resembles.
+    return Object.hasOwn(captured, MARKER) ? { [MARKER]: 'literal', value: captured } : captured
   }
-  return `<${type}>`
+  return marker(type)
 }
 
 /**
@@ -115,7 +160,7 @@ export function normalizeResolvedCoverage(coverage, root) {
     const directory = coverage.reportsDirectory
     normalized.reportsDirectory =
       typeof directory === 'string'
-        ? toPosix(relative(root, resolve(root, directory))) || '.'
+        ? foldCase(toPosix(relative(root, resolve(root, directory)))) || '.'
         : normalized.reportsDirectory
   }
   if ('processingConcurrency' in normalized) {
@@ -155,6 +200,22 @@ export function setup(project) {
     globalSetup: (Array.isArray(config.globalSetup) ? config.globalSetup : []).map((file) =>
       posix.normalize(toPosix(relative(root, String(file)))),
     ),
+    // ONE MORE LAYER, EXPLICITLY NOT THE WALL. `coverage` above is whatever
+    // `initCoverageProvider()` assigned to `config.coverage` -- vitest sets it
+    // to `coverageProvider.resolveOptions()` before globalSetup runs, so the
+    // provider gets to describe itself there. This is the provider OBJECT
+    // vitest loaded, which the naive fake does not bother to disguise (vitest
+    // printed `Coverage enabled with fake` directly above three green gate
+    // lines, measured). A fake that declares `name = 'v8'` passes this line as
+    // easily as it passes the object above, and both are written by the
+    // process they describe. `coverageProvider` is marked @internal in
+    // vitest 3.2.7, so it is read defensively and captured as null when it is
+    // not there -- which is also what coverage being disabled looks like, and
+    // that is already a hard problem at the gate.
+    coverageProviderName:
+      typeof project?.vitest?.coverageProvider?.name === 'string'
+        ? project.vitest.coverageProvider.name
+        : null,
     coverage: normalizeResolvedCoverage(config.coverage, root),
   }
 

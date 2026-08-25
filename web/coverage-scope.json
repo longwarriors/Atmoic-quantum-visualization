@@ -19,7 +19,7 @@
     "lines": 90
   },
   "resolvedCoverage": {
-    "$comment": "Written by scripts/capture-resolved-coverage.mjs from vitest's resolved `project.config`, normalised: reportsDirectory is made root-relative and processingConcurrency (min(20, availableParallelism())) is replaced by a marker, because both differ between machines -- their KEYS are still pinned. `coverage.exclude` is longer than vitest.config.ts's coverage.exclude on purpose: vitest appends the resolved setupFiles and `test.include` to it (resolveConfig, coverage.DfSpMS-b.js:3664-3668), so the last two entries are test.include and src/guards.test.ts binds them to it.",
+    "$comment": "Written by scripts/capture-resolved-coverage.mjs from vitest's resolved `project.config`, normalised: reportsDirectory is made root-relative (and case-folded on Windows, where `COVERAGE` and `coverage` are one directory) and processingConcurrency (min(20, availableParallelism())) is replaced by a marker, because both differ between machines -- their KEYS are still pinned. A marker is an object with the single key `__captured`, never a string: a string marker could not be told apart from a genuine string value spelled the same way. `coverage.exclude` is longer than vitest.config.ts's coverage.exclude on purpose: vitest appends the resolved setupFiles and `test.include` to it (resolveConfig, coverage.DfSpMS-b.js:3664-3668), so the last two entries are test.include and src/guards.test.ts binds them to it. The capture also carries `coverageProviderName` (the provider OBJECT vitest loaded) and the gate holds it to \"v8\" absolutely -- that is one more layer, not a wall: a fake provider that declares `name = 'v8'` satisfies it, and everything captured here is written by the process it describes. See docs/project/status.md, \"门禁的防护边界\".",
     "globalSetup": [
       "scripts/capture-resolved-coverage.mjs"
     ],
@@ -56,7 +56,9 @@
         "src/api/**/*.ts",
         "src/scene/**/*.ts"
       ],
-      "processingConcurrency": "<machine-dependent>",
+      "processingConcurrency": {
+        "__captured": "machine-dependent"
+      },
       "provider": "v8",
       "reportOnFailure": false,
       "reporter": [
