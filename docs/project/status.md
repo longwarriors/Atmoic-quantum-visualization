@@ -106,7 +106,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 | `mypy`（strict） | 29 个源码文件无问题 |
 | `uv run --group docs pytest --cov=quviz` | 776 passed，0 failed，0 skipped，68 warnings；本树总覆盖率 92.37%（门槛 85%）——本检出存在 `web/dist`；无 `web/dist` 的全新工作树上此前测得 92.28%（本轮未重测），差异来自 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
-| `mkdocs build --strict` | 通过（本轮四次测量落在 1.75–1.78 s：单独执行两次均 1.78 s，`check.ps1` 内两次 1.77 s 与 1.75 s。此前写的 2.6 s 与本树对不上；这一栏记的是逐次实测值，不是一个定值）；仅上游 mkdocs-material 2.0 提示 |
+| `mkdocs build --strict` | 通过（本轮五次实测落在 1.74–1.78 s：单独执行两次均 1.78 s，`check.ps1` 内三次为 1.77 / 1.75 / 1.74 s。此前写的 2.6 s 与本树对不上；这一栏记的是逐次实测的区间，不是一个定值——按定值写下来，下一次运行就又不对了）；仅上游 mkdocs-material 2.0 提示 |
 | `npm run test` | 4 个文件 223 tests passed（`guards.test.ts` 127、`qvpc.test.ts` 65、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`assert-coverage-scope` 先核对 `resolved-coverage.json`：本次运行解析后的覆盖率配置与 `coverage-scope.json` 的 `resolvedCoverage` 逐键一致（provider 为 `v8`，无 `customProviderModule`，vitest 实际加载的 provider 对象 `name` 也是 `v8`），再核对 `coverage-final.json`：实际插桩 3 个模块，与 `coverage-scope.json` 完全一致，且三个模块重算出的覆盖率均达到 `thresholds`（语句 90%、分支 85%、函数 90%、行 90%）；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
 | `npm run build` | 通过；`index-*.js` 1,203.66 kB（gzip 329.07 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
 | 工作树 | `git status --short` 为空；`git ls-files --eol` 无 CRLF 工作副本 |
