@@ -183,6 +183,129 @@ def test_check_script_refuses_to_run_without_a_script_root(tmp_path: Path) -> No
     assert "[stub" not in run.stdout, f"a gate ran without a resolved repo root:\n{run.stdout}"
 
 
+def test_check_script_dereferences_a_junctioned_scripts_directory(tmp_path: Path) -> None:
+    """A directory junction at ``scripts`` must not redirect the repo root.
+
+    ``$PSScriptRoot`` is never dereferenced by PowerShell itself: a junction
+    at ``foreign/scripts`` pointing at this repo's real ``scripts/`` used to
+    leave ``$repoRoot`` at the junction, so every gate ran inside the empty
+    ``foreign/`` tree and the run still exited 0 -- certifying neither tree.
+    No admin/Developer-Mode privilege is needed to create a junction (unlike
+    a symlink), so this is reachable by an unprivileged operator or process.
+    The fix must resolve the junction back to the real repo before any gate
+    runs.
+    """
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(stubs, "uv", "[stub uv]")
+    _write_stub(stubs, "npm", "[stub npm]")
+
+    foreign = tmp_path / "foreign"
+    (foreign / "web").mkdir(parents=True)
+    junction = foreign / "scripts"
+    real_scripts = ROOT / "scripts"
+
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(real_scripts)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
+        run = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(junction / "check.ps1")],
+            cwd=foreign,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        steps = re.findall(r"^\[stub (uv|npm)\] cwd=(.+?) args=(.*)$", run.stdout, re.MULTILINE)
+        programs = [program for program, _, _ in steps]
+        assert programs == ["uv"] * 6 + ["npm"] * 2, run.stdout
+        for program, cwd, args in steps:
+            expected = ROOT if program == "uv" else ROOT / "web"
+            assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
+            assert not _same_dir(cwd, foreign), (
+                f"{program} {args!r} ran in the junctioned foreign tree, not the real repo"
+            )
+
+        announced = re.search(r"^check\.ps1: running every gate in (.+)$", run.stdout, re.MULTILINE)
+        assert announced, run.stdout
+        assert _same_dir(announced.group(1).strip(), ROOT), (
+            "check.ps1 announced the junction's foreign tree instead of the real repo"
+        )
+    finally:
+        subprocess.run(
+            ["cmd", "/c", "rmdir", str(junction)], check=True, capture_output=True, text=True
+        )
+        assert not junction.exists(), "the junction must be removed after the test"
+        assert (real_scripts / "check.ps1").exists(), (
+            "removing the junction must not have touched the real scripts/ directory"
+        )
+
+
+def test_check_script_refuses_a_hard_linked_copy_outside_its_repo(tmp_path: Path) -> None:
+    """A hard link to ``check.ps1`` has no reparse point to resolve.
+
+    Unlike a junction, a hard link is just a second directory entry for the
+    same file record -- there is no reparse point for the fix to dereference,
+    so the script must recognise that the resolved root is not a genuine
+    checkout (missing ``.git``/``pyproject.toml``) and refuse to run any gate
+    there, rather than certifying the foreign tree the way the junction
+    bypass once did.
+    """
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(stubs, "uv", "[stub uv]")
+    _write_stub(stubs, "npm", "[stub npm]")
+
+    foreign = tmp_path / "foreign2"
+    (foreign / "scripts").mkdir(parents=True)
+    (foreign / "web").mkdir()
+    linked_script = foreign / "scripts" / "check.ps1"
+    os.link(CHECK_SCRIPT, linked_script)
+    try:
+        env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
+        run = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(linked_script)],
+            cwd=foreign,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert run.returncode != 0, (
+            f"a hard-linked check.ps1 outside the repo must fail, not exit 0:\n{run.stdout + run.stderr}"
+        )
+        assert "[stub" not in run.stdout, (
+            f"a gate ran against the foreign hard-linked tree before the script refused:\n{run.stdout}"
+        )
+    finally:
+        # A hard link is a second directory entry for the real file's inode:
+        # unlinking it here only decrements the link count, it never touches
+        # the real scripts/check.ps1 (pytest's own tmp_path cleanup is lazy
+        # and cross-session, so leaving this to it would pile up extra hard
+        # links on the real file across repeated runs).
+        linked_script.unlink()
+        assert CHECK_SCRIPT.exists(), (
+            "unlinking the foreign hard link must not remove the real check.ps1"
+        )
+
+
 # --- ci.yml changed-links base resolution ----------------------------------
 
 
