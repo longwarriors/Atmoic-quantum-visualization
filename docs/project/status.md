@@ -17,7 +17,7 @@
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮与测试套件自检的 vitest 单测（173 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮与测试套件自检的 vitest 单测（178 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -73,6 +73,8 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 对上述八项绕过逐一复测（零 SHA / 非祖先 SHA、`doi.org` 子串、三种 `doi` 排版、`github.com.` 与 `refs%2Fheads%2Fmaster`、相邻原始 HTML、各种 skip 拼法与 `node:coverage` 注释、`client.ts` 路径改错）均已不能再绕过；复测中顺带发现并按"先变红再变绿"补上的新缺口：`docs/` 里以 `++` 开头的行在 diff 中呈 `+++ ...`，曾被当作文件头丢弃而不探测其链接；`tree/v1.0/../master` 这类 `.`/`..`（含 `%2e`）路径段在浏览器里先被归一化，pin 门禁曾按归一化前的 `v1.0` 放行，`refs/pull/…` 等非 heads/tags 的 ref 命名空间与 Gitea 的 `raw|media/branch/<name>` 也曾以 `version = {refs}` / `{branch}` 过关；写在原始 HTML 块尾、行内文字之后或行首缩进处的 `markdown="1"` 元素在构建时整体按原样输出（`MarkdownInHtmlProcessor` 只解析占位符位于块首的元素），扫描器曾把其中的 `[@key]` 算作引用；`@vitest/coverage-v8` 内置的 v8-to-istanbul 用 `[c|v]8` 拼写 start/stop 正则，字符类里的 `|` 是字面量，`/* |8 ignore start */` 曾被覆盖率工具承认而不被源码守卫识别；`client.test.ts` 的 HTTP 错误用例曾只做子串匹配，删掉 `response.ok` 检查后 V8 的 JSON 解析错误恰好引用响应体而仍然通过；master 自身的首次推送 / force push 退回到 `origin/master` 时 diff 为空、只输出"no new links"，现改为全量探测；`check.ps1` 被以 stdin 方式喂给 `pwsh -Command -` 时曾在没有 `$PSScriptRoot` 的情况下一个门禁都不跑却 exit 0，现明确 exit 1。终审又指出并同样按"先变红再变绿"修复：pin 门禁的主机名规范化先去尾点再做 IDNA 映射，`github.com。`（U+3002，以及 U+FF0E、U+FF61）经映射后成为 `github.com.`，从而逃出全部代码托管规则、没有 `commit` 的分支 URL 仅凭 `urldate` 即可通过，现改为映射之后再去尾点；缩进 2–3 个空格、原始 HTML 块尾之后（含以 TAB 分隔）的 `markdown="1"` 元素与行内文字之后的同名标签（后者对构建是段落内的行内 HTML，其内容是正文）已逐例加入构建对照矩阵；`scripts/check_links.py` 判断"基准版本没有 `references.bib`"曾靠匹配 git 的英文报错文本，本地化的 git 会使其抛错中止，现改为用 `git cat-file -e` 的退出码判断。仍保留的已知发散：四空格 / TAB 缩进的行（含原始 HTML 块尾部以 TAB 开头的文字）对构建是缩进代码块、对扫描器是 admonition 正文，其中的 `[@key]` 会被算作引用，这是文档化的取舍。
 
+终审之后，一轮独立复检按同样方法核实已发布的门禁实现，又发现并按"先变红再变绿"修复了四项绕过：`check.ps1` 经目录 junction / 硬链接以别名路径调用时，`$repoRoot` 取 `$PSScriptRoot` 的词法父目录而不解析 reparse 点，会在错误的工作树里跑完全部门禁并 exit 0，现解析 reparse 点定位脚本真实所属仓库，并以 `.git`+`pyproject.toml` 标记兜底，非法树直接 exit 1；pin 门禁按 RFC 3986 的 `urlsplit` 取主机，浏览器（WHATWG special-scheme）却把反斜杠与异常斜杠数归一化到真实主机，`https:///github.com/...`、`https://github.com\o/...` 等曾以空/畸形 authority 落入普通 web URL 分支、仅凭 urldate 通过，现对 http(s) 的畸形 authority（反斜杠或空主机）在主机路由前直接拒绝；`RAW_HOSTS` 原以 `_host_in` 子域匹配 `githubusercontent.com`，令 `objects.`/`media.` 等不透明资产域被按 `raw` 的 `/owner/repo/ref/path` 解析、掩盖错误 commit，现改为精确匹配 `raw.githubusercontent.com`，其余 `*.githubusercontent.com` 一律作为资产/CDN 主机拒绝；`guards.test.ts` 曾用手写正则镜像 `coverage.include/exclude`，把某文件加入 `vitest.config.ts` 的 exclude 可静默收缩覆盖范围而 `npm test` 仍绿，现直接导入解析后的 vitest 配置并对 include/exclude 断言，收缩即失败。四项修复后，全量 `check.ps1` 门禁复跑通过。
+
 ### 本树实测结果
 
 在提交 `db32d43` 上按复审要求的方式测得：`git worktree add` 一棵全新工作树（无 `web/dist`、无 `node_modules`），`npm ci` 后以 `pwsh -NoProfile -File scripts/check.ps1` 端到端执行，exit 0（从另一个目录以绝对路径调用同一脚本的核对在 `ea9873c` 上做过：它打印的根目录是新工作树而不是调用者目录，同样 exit 0，各步数字一致，只有覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）：
@@ -81,10 +83,10 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；96 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 734 passed，0 failed，0 skipped，68 warnings；总覆盖率 92.23%（门槛 85%）——该数字在全新工作树（无 `web/dist`）上测得；`web/dist` 存在时略高，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `uv run --group docs pytest --cov=quviz` | 767 passed，0 failed，0 skipped，68 warnings；总覆盖率 92.28%（门槛 85%）——该数字在全新工作树（无 `web/dist`）上测得；`web/dist` 存在时略高，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过（2.6 s；仅上游 mkdocs-material 2.0 提示） |
-| `npm run test` | 4 个文件 177 tests passed（`qvpc.test.ts` 65、`guards.test.ts` 81、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
+| `npm run test` | 4 个文件 178 tests passed（`qvpc.test.ts` 65、`guards.test.ts` 82、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
 | `npm run build` | 通过；`index-*.js` 1,203.66 kB（gzip 329.07 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
 | 工作树 | `git status --short` 为空；`git ls-files --eol` 无 CRLF 工作副本 |
 

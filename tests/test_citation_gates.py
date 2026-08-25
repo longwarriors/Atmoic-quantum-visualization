@@ -1033,7 +1033,8 @@ def test_genuine_raw_githubusercontent_still_accepted_and_still_checked() -> Non
 def test_branch_shaped_objects_githubusercontent_still_rejected() -> None:
     url = "https://objects.githubusercontent.com/o/r/master/f"
     entry = _entry("x", url=url, commit=SHA, version="master")
-    assert validate_source_pins([entry]) != []
+    messages = validate_source_pins([entry])
+    assert any("githubusercontent" in m for m in messages)
 
 
 def test_non_code_host_source_audit_needs_an_access_date() -> None:
