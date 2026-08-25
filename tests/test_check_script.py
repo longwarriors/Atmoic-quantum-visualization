@@ -42,12 +42,28 @@ outside the chain, exactly as ``ci.yml`` and ``check.ps1`` already are.
 Naming a stage was not enough on its own: the stages were matched by
 substring, so ``vitest run --coverage.enabled=false`` satisfied the stage
 called ``vitest run --coverage``, and with ``clean-coverage.mjs``'s artefact
-list emptied the verifiers then certified the previous run's report. The same
-group therefore also pins what the chain may *not* say (no coverage override
-in the invocation), what npm wraps around it (no ``pretest`` / ``posttest``),
-what the pre-clean must delete, and that ``web/src/guards.test.ts`` -- which
-carries most of the front-end gate and which nothing else in the repo reads --
-still exists and still contains its blocks.
+list emptied the verifiers then certified the previous run's report. Naming
+them as an ordered *subset* was not enough either -- an inserted stage was
+permitted anywhere, and one that rewrote both reports took ``npm test`` to
+exit 0 while vitest printed 66.66% for a gated module -- so the chain is now
+pinned as an exact tuple. The same group also pins what the chain may *not*
+say (no coverage override in the invocation), what npm wraps around it (no
+``pretest`` / ``posttest``), what the pre-clean must delete, and that
+``web/src/guards.test.ts`` -- which carries most of the front-end gate and
+which nothing else in the repo reads -- still exists and still contains its
+blocks.
+
+Two pins in that group are here rather than in ``web/`` for a stronger reason
+than symmetry: they are the only checks the *run* cannot reach. A Vite plugin's
+``config()`` hook rewrites the configuration vitest resolves without touching a
+byte of any file the front-end guards read, and a coverage provider reached
+that way hands the run's own gates a report the run wrote itself -- measured,
+with ``check.ps1`` printing "All checks passed!". Nothing inside the process
+can settle that (see the boundary note atop
+``web/scripts/assert-coverage-scope.mjs`` and ``docs/project/status.md``). What
+these do is make the wiring impossible to add quietly: ``vitest.config.ts``
+must declare no ``plugins``, and ``web/scripts/`` must hold exactly the modules
+listed here.
 """
 
 from __future__ import annotations
@@ -610,18 +626,20 @@ def test_probe_step_sweeps_every_link_when_asked(tmp_path: Path) -> None:
 
 # --- web/package.json test chain -------------------------------------------
 
-#: Every front-end gate ``npm test`` must still run, in the order it must run
-#: them. ``clean-coverage.mjs`` first, or the two verifiers can be handed the
+#: The ``test`` script's ``&&``-joined stages, in full and in order.
+#: ``clean-coverage.mjs`` first, or the two verifiers can be handed the
 #: previous run's reports; ``--coverage`` on the vitest invocation, or no
 #: coverage report is produced for ``assert-coverage-scope.mjs`` to read at
 #: all; then the two post-run verifiers, which are the only checks that see
 #: what the run actually measured and enforced rather than what the config
 #: source declares.
 NPM_TEST_STAGES = (
-    "scripts/clean-coverage.mjs",
-    "vitest run --coverage",
-    "scripts/assert-no-skips.mjs",
-    "scripts/assert-coverage-scope.mjs",
+    "node scripts/clean-coverage.mjs",
+    "tsc -p tsconfig.test.json --noEmit",
+    "vitest run --coverage --reporter=default --reporter=json "
+    "--outputFile=coverage/vitest-results.json",
+    "node scripts/assert-no-skips.mjs",
+    "node scripts/assert-coverage-scope.mjs",
 )
 
 
@@ -632,22 +650,37 @@ def _npm_test_script() -> str:
     return script
 
 
-def test_npm_test_still_runs_every_front_end_gate_in_order() -> None:
-    """Each gate is its own ``&&``-joined stage, and the order is fixed."""
+def test_npm_test_runs_exactly_these_gates_in_exactly_this_order() -> None:
+    """The stage list is the whole chain: same stages, same order, no extras.
 
-    stages = [segment.strip() for segment in _npm_test_script().split("&&")]
+    Naming the stages as an ordered *subset* was not enough. An **inserted**
+    stage was permitted anywhere, and that is a complete bypass rather than a
+    diff-review problem: with ``&& node scripts/postprocess-coverage.mjs``
+    between vitest and the verifiers, plus a plugin ``config()`` hook deleting
+    ``thresholds`` so vitest itself stays quiet, a forty-line script rebuilt
+    both ``coverage/resolved-coverage.json`` and ``coverage/coverage-final.json``
+    out of ``coverage-scope.json``. ``npm test`` exited 0 while vitest's own
+    table two lines above the green gate summary read ``color.ts | 66.66``
+    (measured; every check in this file passed).
 
-    previous = -1
-    for stage in NPM_TEST_STAGES:
-        matches = [index for index, segment in enumerate(stages) if stage in segment]
-        assert matches, (
-            f"web/package.json's `test` script no longer runs {stage!r}; "
-            f"deleting a gate from the chain disables it as thoroughly as editing it. Stages: {stages}"
-        )
-        assert matches[0] > previous, (
-            f"{stage!r} runs before the stage that must precede it. Stages: {stages}"
-        )
-        previous = matches[0]
+    Everything between vitest and the verifiers is therefore pinned by
+    exclusion: the segments must EQUAL this tuple. That also pins two stages
+    the subset never named at all -- the ``tsc`` type-check, and the reporter
+    flags that write the JSON result file ``assert-no-skips.mjs`` reads.
+
+    Runs of whitespace inside a stage are collapsed before comparing, because
+    reformatting one is not a security event; a stage cannot hide in the
+    difference, since the split is on ``&&``.
+    """
+
+    stages = tuple(" ".join(segment.split()) for segment in _npm_test_script().split("&&"))
+
+    assert stages == NPM_TEST_STAGES, (
+        "web/package.json's `test` script is no longer exactly the pinned chain. Deleting a gate "
+        "disables it as thoroughly as editing it, and INSERTING a stage between vitest and the "
+        "verifiers lets that stage rewrite the reports they read (measured: exit 0 with vitest "
+        f"printing 66.66% for a gated module).\n  found:    {stages}\n  expected: {NPM_TEST_STAGES}"
+    )
 
 
 def test_npm_test_stops_at_the_first_failing_gate() -> None:
@@ -701,6 +734,96 @@ def test_npm_test_configures_coverage_only_from_vitest_config() -> None:
             f"web/package.json's `test` script passes {flag!r}: coverage must be configured "
             f"only by vitest.config.ts, which is what coverage-scope.json is pinned to. {script}"
         )
+
+
+#: ``web/vitest.config.ts`` must declare no Vite/vitest ``plugins``.
+#:
+#: Matched as a key -- bare, quoted, or bracket-indexed -- rather than as the
+#: bare word, so a comment may still discuss plugins.
+_VITEST_PLUGINS_KEY = re.compile(r"""(?:\bplugins\b|['"]plugins['"])\s*\]?\s*:""")
+
+WEB_VITEST_CONFIG = ROOT / "web" / "vitest.config.ts"
+
+
+def test_vitest_config_declares_no_plugins() -> None:
+    """The absence of a ``plugins`` key is pinned, because it is load-bearing.
+
+    A Vite plugin's ``config()`` hook rewrites the config vitest RESOLVES
+    without touching a byte of anything the front-end guards read. Two attacks
+    used it and nothing else caught either: ``delete cfg.test.coverage
+    .thresholds`` (which the resolved-config capture does now catch), and --
+    the one that was caught by nothing at all -- pointing ``coverage.provider``
+    at a module in this repo whose ``resolveOptions()`` returns
+    ``{...options, provider: 'v8'}``. vitest assigns that return value onto the
+    config object *before* ``globalSetup`` runs, so the pristine capture module
+    writes a perfectly clean capture while nothing is instrumented: ``npm test``
+    exit 0, every test in this file passing, ``check.ps1`` printing "All checks
+    passed!", with an uncovered exported function shipping in a gated module.
+
+    Nothing inside the run can see that, because everything inside the run is
+    written by the process the attacker controls (see the boundary note atop
+    ``web/scripts/assert-coverage-scope.mjs``). What this does is make the
+    WIRING impossible to add silently: this repo declares no plugins, so a diff
+    that adds one has to edit this file, and this assertion turns that from a
+    thing a reviewer might notice into a red build. If a plugin is ever
+    genuinely needed, pin the array here the way ``globalSetup`` is pinned in
+    ``web/src/guards.test.ts``.
+    """
+
+    source = WEB_VITEST_CONFIG.read_text(encoding="utf-8")
+    found = _VITEST_PLUGINS_KEY.search(source)
+    assert not found, (
+        "web/vitest.config.ts declares a `plugins` key: "
+        f"{source[max(0, found.start() - 40) : found.end() + 40]!r}. A plugin's config() hook "
+        "rewrites the config vitest resolves without touching any source the front-end guards "
+        "read -- including coverage.provider, which decides who writes the coverage report."
+    )
+
+
+#: Every file under ``web/scripts/``, as sorted posix paths relative to it.
+WEB_SCRIPTS = (
+    "assert-coverage-scope.d.mts",
+    "assert-coverage-scope.mjs",
+    "assert-no-skips.d.mts",
+    "assert-no-skips.mjs",
+    "capture-resolved-coverage.d.mts",
+    "capture-resolved-coverage.mjs",
+    "clean-coverage.mjs",
+)
+
+
+def test_web_scripts_directory_holds_exactly_the_pinned_modules() -> None:
+    """A new module cannot appear beside the gates without a reviewed edit.
+
+    ``web/scripts/`` is where the chain's stages live, and both attacks the
+    round above could not otherwise stop begin by adding one file to it: a fake
+    coverage provider (``fake-coverage-provider.mjs``) and an inserted chain
+    stage (``postprocess-coverage.mjs``). Neither is expensive to write; what
+    makes them cheap is that they cost nothing to *land*.
+
+    This is a manifest, with the same human-review latch ``coverage-scope.json``
+    is: adding a module here is a one-line edit to this tuple, in the same
+    reviewed commit. It is not a wall on its own -- a module can be put
+    anywhere in ``web/``, and what actually stops it being reached is that
+    every way of wiring one in is pinned from outside the run (no
+    ``--coverage.`` flag in the ``test`` script, no ``plugins`` key in
+    ``vitest.config.ts``, an exact stage tuple for the chain, and
+    ``coverage.provider`` deep-equalled in three places). It closes the last
+    cheap step of both.
+    """
+
+    scripts = ROOT / "web" / "scripts"
+    assert scripts.is_dir(), "web/scripts/ is gone; the whole front-end gate chain lived there"
+    found = tuple(
+        sorted(
+            path.relative_to(scripts).as_posix() for path in scripts.rglob("*") if path.is_file()
+        )
+    )
+    assert found == WEB_SCRIPTS, (
+        "web/scripts/ no longer holds exactly the pinned modules. A module that appears here "
+        "without a reviewed edit to this list is how a forged coverage provider or an inserted "
+        f"chain stage arrives.\n  found:    {found}\n  expected: {WEB_SCRIPTS}"
+    )
 
 
 def test_npm_test_runs_no_npm_lifecycle_hook_around_the_chain() -> None:
@@ -767,9 +890,11 @@ GUARD_SPEC_CONTENTS = (
     "has no skipped, todo, focused or conditionally-run tests",
     "has no coverage-ignore pragmas in gated source modules",
     "keeps the modules coverage excludes as type-only actually type-only",
+    "sees code a type-only module emits without exporting it",
     "keeps every runtime module under a gated root inside the coverage include",
     "binds the coverage-gated derivation to the real coverage.include",
     "binds the globalSetup that captures the resolved config",
+    "rejects a provider vitest loaded under some other name",
 )
 
 
