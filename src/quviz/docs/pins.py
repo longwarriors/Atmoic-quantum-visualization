@@ -28,6 +28,13 @@ the pin mean something:
   ``github.com。``, ``GitHub.com``, ``github%2Ecom``,
   ``tree/refs%2Fheads%2Fmaster`` and ``tree/v1.0/../master`` meet exactly the
   rules their canonical spellings meet;
+* only the exact host ``raw.githubusercontent.com`` is raw source; every
+  other ``githubusercontent.com`` subdomain (release-asset objects, Git-LFS
+  media, avatars, an attacker's own subdomain) serves an opaque CDN path with
+  no ``owner/repo/revision`` layout to read a ref from, and is rejected
+  outright as not source at a revision -- not silently misread as raw source,
+  and not downgraded to the weaker non-code-host check, which would accept
+  one on a ``urldate`` alone with an unexamined ``commit`` field;
 * an entry whose ``url`` is on a code host must name a repository (at least
   ``/owner/repo``, or ``/group/subgroup/repo`` on GitLab); issue,
   pull-request, discussion and wiki pages are not source and are rejected,
@@ -77,7 +84,12 @@ from urllib.parse import unquote, urlsplit
 from quviz.docs.bibliography import BibEntry, keywords
 
 CODE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "gitee.com")
-RAW_HOSTS = ("githubusercontent.com",)
+# The exact raw-content host -- not the registrable domain. objects., media.,
+# avatars. and any other githubusercontent.com subdomain serve opaque
+# CDN/release-asset/LFS paths with no owner/repo/revision layout; only this
+# one host has it, so it is matched by exact equality (`_host(url) in
+# RAW_HOSTS`) everywhere, never by `_host_in`'s subdomain rule.
+RAW_HOSTS = frozenset({"raw.githubusercontent.com"})
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,40}$")
 _HEX_ANY_CASE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 URLDATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -197,7 +209,26 @@ def _authority_malformed(url: str) -> bool:
 
 
 def is_code_host(url: str) -> bool:
-    return _host_in(_host(url), CODE_HOSTS + RAW_HOSTS)
+    host = _host(url)
+    return _host_in(host, CODE_HOSTS) or host in RAW_HOSTS
+
+
+def _is_githubusercontent_asset_host(url: str) -> bool:
+    """Whether ``url`` is a non-raw githubusercontent.com subdomain.
+
+    ``objects.``, ``media.``, ``avatars.`` and any other subdomain of this
+    domain (an attacker's own included) serve opaque CDN/release-asset/LFS
+    paths: no owner, repository or revision can be read from them. Detecting
+    the family with ``_host_in`` -- the same dot-boundary-safe subdomain
+    match used for ``CODE_HOSTS`` -- and excluding the one exact host in
+    ``RAW_HOSTS`` lets the caller reject these outright as not source at a
+    revision, rather than silently routing them to the non-code-host check,
+    which would accept one on a ``urldate`` alone with an unexamined
+    ``commit`` field.
+    """
+
+    host = _host(url)
+    return host not in RAW_HOSTS and _host_in(host, ("githubusercontent.com",))
 
 
 def _is_gitlab(url: str) -> bool:
@@ -243,7 +274,7 @@ def repository_problem(url: str) -> str | None:
     segments = _segments(url)
     if len(segments) < 2:
         return "is not source: it names no repository (expected at least /owner/repo)"
-    if _host_in(_host(url), RAW_HOSTS):
+    if _host(url) in RAW_HOSTS:
         if len(segments) < 4:
             return "is not source: a raw URL is /owner/repo/<revision>/<path>"
         return None
@@ -287,7 +318,7 @@ def url_ref(url: str) -> tuple[RefKind, str] | None:
     """
 
     found: tuple[RefKind, str] | None = None
-    if _host_in(_host(url), RAW_HOSTS):
+    if _host(url) in RAW_HOSTS:
         # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
         segments = _segments(url)
         if len(segments) > 2:
@@ -410,6 +441,11 @@ def validate_source_pins(entries: Iterable[BibEntry]) -> list[str]:
             messages.append(
                 f"{entry.key}: URL {url} is not a well-formed http(s) address "
                 "(empty/ambiguous host or backslash); a browser would resolve it elsewhere"
+            )
+        elif url and _is_githubusercontent_asset_host(url):
+            messages.append(
+                f"{entry.key}: URL {url} is a githubusercontent asset/CDN host, "
+                "not source at a revision"
             )
         elif url and is_code_host(url):
             messages.extend(_validate_code_host(entry, url))

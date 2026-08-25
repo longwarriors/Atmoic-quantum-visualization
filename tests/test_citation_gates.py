@@ -956,6 +956,86 @@ def test_gitlab_tag_and_codeberg_commit_urls_are_understood() -> None:
     assert validate_source_pins([wrong]) != []
 
 
+# (P1) raw.githubusercontent.com is the exact host that has the
+# /owner/repo/<revision>/<path> layout; every other githubusercontent.com
+# subdomain (release-asset objects, Git-LFS media, avatars, an attacker's own
+# subdomain) is an opaque CDN/asset host that must be rejected outright, not
+# misread as raw source and not laundered into acceptance via urldate.
+OBJECTS_URL = (
+    "https://objects.githubusercontent.com/github-production-release-asset-2e65be/123/456/file.bin"
+)
+
+
+def test_non_raw_githubusercontent_subdomains_are_not_code_hosts() -> None:
+    assert not is_code_host(OBJECTS_URL)
+    assert not is_code_host("https://media.githubusercontent.com/media/o/r/x/f.bin")
+    assert not is_code_host("https://avatars.githubusercontent.com/u/12345/a/b")
+    assert not is_code_host("https://evil.githubusercontent.com/a/b/c/d")
+    assert is_code_host("https://raw.githubusercontent.com/o/r/x/f.py")
+
+
+@pytest.mark.parametrize(
+    "commit",
+    [
+        "fedcba9876543210fedcba9876543210fedcba98",  # bogus, well-formed hex
+        SHA,  # a real SHA -- still not what this URL names
+        None,  # no commit field at all
+    ],
+)
+def test_opaque_release_asset_url_is_rejected_regardless_of_commit(commit: str | None) -> None:
+    # The asset id "456" used to be misread as a git ref, matched `version`,
+    # and the commit field was never compared to anything -- certifying an
+    # arbitrary, unverifiable commit as an audited revision.
+    fields: dict[str, str] = {"url": OBJECTS_URL, "version": "456"}
+    if commit is not None:
+        fields["commit"] = commit
+    messages = validate_source_pins([_entry("x", **fields)])
+    assert messages != []
+    assert "githubusercontent" in messages[0]
+
+
+def test_opaque_release_asset_url_is_not_laundered_by_a_urldate() -> None:
+    # Misclassifying it as a code host removed the weaker _validate_other
+    # urldate check; adding one back must not create a laundering path.
+    entry = _entry("x", url=OBJECTS_URL, commit=SHA, version="456", urldate="2026-08-22")
+    assert validate_source_pins([entry]) != []
+
+
+def test_media_githubusercontent_with_contradictory_commit_is_rejected() -> None:
+    # Git-LFS media URLs are one path segment longer than raw, so the real
+    # SHA in the URL used to never be compared to a contradictory commit.
+    url = f"https://media.githubusercontent.com/media/o/r/{SHA}/f.bin"
+    entry = _entry("x", url=url, commit=OTHER_SHA, version="r")
+    assert validate_source_pins([entry]) != []
+
+
+@pytest.mark.parametrize(
+    ("url", "version"),
+    [
+        ("https://avatars.githubusercontent.com/u/12345/a/b", "a"),
+        ("https://evil.githubusercontent.com/a/b/c/d", "c"),
+    ],
+)
+def test_other_githubusercontent_subdomains_are_rejected(url: str, version: str) -> None:
+    entry = _entry("x", url=url, commit=SHA, version=version)
+    assert validate_source_pins([entry]) != []
+
+
+def test_genuine_raw_githubusercontent_still_accepted_and_still_checked() -> None:
+    url = f"https://raw.githubusercontent.com/o/r/{SHA}/f.py"
+    assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
+    mismatched = _entry("x", url=url, commit=OTHER_SHA)
+    messages = validate_source_pins([mismatched])
+    assert len(messages) == 1, messages
+    assert SHA[:12] in messages[0] and OTHER_SHA[:12] in messages[0]
+
+
+def test_branch_shaped_objects_githubusercontent_still_rejected() -> None:
+    url = "https://objects.githubusercontent.com/o/r/master/f"
+    entry = _entry("x", url=url, commit=SHA, version="master")
+    assert validate_source_pins([entry]) != []
+
+
 def test_non_code_host_source_audit_needs_an_access_date() -> None:
     article = _entry("a", url="https://example.org/post", keywords="source-audit,teaching")
     assert any("urldate" in m for m in validate_source_pins([article]))
