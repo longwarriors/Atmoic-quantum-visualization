@@ -18,32 +18,54 @@
  *        thresholds that make the scope mean anything are gone.
  *
  * A CLI flag persisted into the `test` script, a Vite plugin `config()` hook,
- * or an env-driven override all do the same thing. The only check that can
- * see either is one that reads the report the run produced. That is this
- * file, and it makes two passes over coverage/coverage-final.json:
+ * or an env-driven override all do the same thing. So this file makes three
+ * passes, over two files the RUN produced:
  *
- *   SCOPE       its key set is exactly the files the v8 provider instrumented,
- *               so it IS the measured scope. Compared against `coverageGated`.
+ *   RESOLVED    coverage/resolved-coverage.json, written by scripts/
+ *               capture-resolved-coverage.mjs from vitest's own resolved
+ *               config (wired in as `globalSetup`). This is the config the
+ *               run really used, overrides folded in. Compared against
+ *               `resolvedCoverage`.
+ *   SCOPE       coverage-final.json's key set is exactly the files the
+ *               provider instrumented, so it IS the measured scope. Compared
+ *               against `coverageGated`.
  *   THRESHOLDS  its per-file `s` / `b` / `f` hit maps are what vitest's own
  *               threshold check reduces to percentages, so recomputing them
  *               here re-runs that check independently of whether vitest still
  *               ran it. Compared against `thresholds`.
  *
- * Both expectations live in coverage-scope.json -- the same manifest
+ * The RESOLVED pass is first because it is the one that says the other two
+ * are worth anything. Reading the report only proves something while
+ * something else guarantees the report came from real instrumentation:
+ * `--coverage.provider=custom --coverage.customProviderModule=...`, whether
+ * persisted into the `test` script or set by a plugin `config()` hook, makes
+ * the report a file the run hand-wrote, and every content check downstream
+ * then certifies a forgery (measured, twice, with an uncovered exported
+ * function shipping in a gated module and `check.ps1` at exit 0). Binding one
+ * more coverage key each round is how three reviews in a row found the next
+ * one, so this pass deep-equals the WHOLE resolved coverage object -- every
+ * key, not a list of the ones that looked dangerous -- on top of naming the
+ * security-relevant ones explicitly.
+ *
+ * All three expectations live in coverage-scope.json -- the same manifest
  * src/guards.test.ts checks its minimatch derivation and its literal
  * EXPECTED_COVERAGE_THRESHOLDS against. Two independent checks, one manifest:
  * the config must agree with the manifest, and the run must agree with the
  * manifest. Editing vitest.config.ts, the test script, or the guard file
- * alone cannot satisfy both.
+ * alone cannot satisfy both. The manifest cannot be made permissive either:
+ * `readCoverageScope` applies the same invariants to the EXPECTATION that
+ * this file applies to the capture, so a `provider: "custom"` written into
+ * coverage-scope.json throws instead of licensing itself.
  *
  * FAIL-CLOSED throughout. A missing, unparseable, non-object or empty report
- * is a failure, never a pass -- `--coverage.enabled=false` and a reporter
- * list without `json` both simply produce no report, and scripts/
- * clean-coverage.mjs deletes the previous one before vitest starts so a
- * green report from an earlier run can never stand in for this one. So is a
- * gated module with zero coverable statements: istanbul scores an empty
- * metric 100%, so a whole-file coverage pragma passes every threshold vitest
- * has (measured: such a file reports 0/0/0/0 and the run still exits 0).
+ * or capture is a failure, never a pass -- `--coverage.enabled=false` and a
+ * reporter list without `json` both simply produce no report, removing the
+ * `globalSetup` produces no capture, and scripts/clean-coverage.mjs deletes
+ * all three files before vitest starts so a green one from an earlier run can
+ * never stand in for this one. So is a gated module with zero coverable
+ * statements: istanbul scores an empty metric 100%, so a whole-file coverage
+ * pragma passes every threshold vitest has (measured: such a file reports
+ * 0/0/0/0 and the run still exits 0).
  *
  * Usage (wired into `npm test` in package.json, after vitest):
  *
@@ -61,9 +83,13 @@ import { posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const COVERAGE_REPORT = 'coverage/coverage-final.json'
+/** Written by scripts/capture-resolved-coverage.mjs, vitest's `globalSetup`. */
+const RESOLVED_CAPTURE = 'coverage/resolved-coverage.json'
 const MANIFEST = 'coverage-scope.json'
 /** The four metrics vitest thresholds, in the order vitest.config.ts writes them. */
 const METRICS = ['statements', 'branches', 'functions', 'lines']
+/** The capture shape this file knows how to read. */
+const CAPTURE_SCHEMA = 1
 
 /** Forward slashes everywhere, and a lower-case drive letter on Windows. */
 function toPosix(path) {
@@ -358,6 +384,203 @@ export function auditCoverageThresholds(coverage, manifest, webRoot) {
 }
 
 /**
+ * Every place two JSON documents differ, as `path: actual vs expected` lines.
+ * Objects are compared by key SET, so a missing key and an extra key are both
+ * differences and neither can hide behind the other -- which is the whole
+ * point of deep-equalling the resolved coverage config rather than a list of
+ * fields somebody chose.
+ */
+export function jsonDifferences(actual, expected, path = '') {
+  const at = path === '' ? '' : `${path}: `
+  const show = (value) => JSON.stringify(value) ?? String(value)
+
+  const isPlainObject = (value) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+
+  if (Array.isArray(expected) || Array.isArray(actual)) {
+    if (!Array.isArray(expected) || !Array.isArray(actual)) {
+      return [`${at}${show(actual)} is not the expected ${show(expected)}`]
+    }
+    const differences = []
+    if (actual.length !== expected.length) {
+      differences.push(`${at}has ${actual.length} entr(ies), expected ${expected.length}`)
+    }
+    for (let index = 0; index < Math.max(actual.length, expected.length); index += 1) {
+      differences.push(...jsonDifferences(actual[index], expected[index], `${path}[${index}]`))
+    }
+    return differences
+  }
+  if (isPlainObject(expected) || isPlainObject(actual)) {
+    if (!isPlainObject(expected) || !isPlainObject(actual)) {
+      return [`${at}${show(actual)} is not the expected ${show(expected)}`]
+    }
+    const differences = []
+    for (const key of [...new Set([...Object.keys(actual), ...Object.keys(expected)])].sort()) {
+      const where = path === '' ? key : `${path}.${key}`
+      if (!Object.hasOwn(expected, key)) {
+        differences.push(`${where}: present as ${show(actual[key])}, but not expected at all`)
+      } else if (!Object.hasOwn(actual, key)) {
+        differences.push(`${where}: missing; expected ${show(expected[key])}`)
+      } else {
+        differences.push(...jsonDifferences(actual[key], expected[key], where))
+      }
+    }
+    return differences
+  }
+  return Object.is(actual, expected) ? [] : [`${at}${show(actual)}, expected ${show(expected)}`]
+}
+
+/**
+ * The invariants a resolved coverage config must satisfy no matter what any
+ * manifest says. Applied twice, on purpose: to the config the run RESOLVED,
+ * and -- by `readCoverageScope` -- to the EXPECTATION coverage-scope.json
+ * carries for it. A deep-equal against the manifest alone would let one edit
+ * to the manifest license the very config it is supposed to forbid; these
+ * make that edit fail at the manifest instead.
+ *
+ * Each item is here because dropping it hands the gate a report the run wrote
+ * itself, or removes the thing the report is measured against:
+ *
+ *   provider / customProviderModule  a custom provider IS the report author.
+ *   enabled                          `--coverage.enabled=false` instruments
+ *                                    nothing; without this the only signal is
+ *                                    the missing report.
+ *   all                              with `all:false` only files a test
+ *                                    imported are instrumented, so an
+ *                                    untested module is absent rather than 0%.
+ *   include / exclude                the measured scope.
+ *   thresholds                       what measuring it has to prove.
+ *   reporter                         no `json` reporter, no report at all.
+ */
+function resolvedCoverageProblems(coverage, source) {
+  if (coverage === null || typeof coverage !== 'object' || Array.isArray(coverage)) {
+    return [`${source}: "coverage" is missing or not an object`]
+  }
+  const problems = []
+  if (coverage.provider !== 'v8') {
+    problems.push(
+      `${source}: coverage.provider is ${JSON.stringify(coverage.provider)}, not "v8" -- a ` +
+        'custom or istanbul provider writes the report this gate reads, so the report would ' +
+        'no longer be evidence of anything',
+    )
+  }
+  if (Object.hasOwn(coverage, 'customProviderModule')) {
+    problems.push(
+      `${source}: coverage.customProviderModule is set (${JSON.stringify(
+        coverage.customProviderModule,
+      )}) -- that module hand-writes coverage-final.json`,
+    )
+  }
+  if (coverage.enabled !== true) {
+    problems.push(
+      `${source}: coverage.enabled is ${JSON.stringify(coverage.enabled)}, not true -- ` +
+        'nothing was instrumented and no per-file threshold held anything',
+    )
+  }
+  if (coverage.all !== true) {
+    problems.push(
+      `${source}: coverage.all is ${JSON.stringify(coverage.all)}, not true -- only files a ` +
+        'test imported would be measured, so an untested module goes missing instead of ' +
+        'reporting 0%',
+    )
+  }
+  for (const field of ['include', 'exclude']) {
+    const value = coverage[field]
+    if (!Array.isArray(value) || value.length === 0 || !value.every((p) => typeof p === 'string')) {
+      problems.push(`${source}: coverage.${field} is not a non-empty array of patterns`)
+    }
+  }
+  problems.push(
+    ...thresholdProblems(coverage.thresholds).map((problem) =>
+      problem.replace(`${MANIFEST}: "thresholds"`, `${source}: coverage.thresholds`),
+    ),
+  )
+  // Resolved form is [[name, options], ...] (vitest's resolveCoverageReporters).
+  const reporters = Array.isArray(coverage.reporter)
+    ? coverage.reporter.map((entry) => (Array.isArray(entry) ? entry[0] : entry))
+    : []
+  if (!reporters.includes('json')) {
+    problems.push(
+      `${source}: coverage.reporter is ${JSON.stringify(coverage.reporter)} -- without the ` +
+        '"json" reporter no coverage-final.json is written and every check below has nothing ' +
+        'to read',
+    )
+  }
+  return problems
+}
+
+/**
+ * Check the coverage config vitest RESOLVED for this run -- captured by
+ * scripts/capture-resolved-coverage.mjs from `project.config` inside
+ * `globalSetup` -- against the manifest's `resolvedCoverage`.
+ *
+ * Returns a list of human-readable problems; empty means the run used exactly
+ * the coverage configuration the manifest describes.
+ *
+ * This is the only check in the repo that sees the config the run actually
+ * had. src/guards.test.ts reads the config SOURCE (a CLI flag or a plugin
+ * `config()` hook leaves it byte-identical) and the two passes below read the
+ * report (whoever wrote it decides what it says).
+ */
+export function auditResolvedCoverage(captured, expected, webRoot) {
+  if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) {
+    return [
+      `${RESOLVED_CAPTURE}: not a JSON object (got ${
+        Array.isArray(captured) ? 'an array' : String(captured === null ? 'null' : typeof captured)
+      }) -- no resolved coverage config was captured for this run`,
+    ]
+  }
+  if (expected === null || typeof expected !== 'object' || Array.isArray(expected)) {
+    return [
+      `${MANIFEST}: "resolvedCoverage" is missing or not an object -- refusing to certify a ` +
+        'run against no expectation at all',
+    ]
+  }
+
+  const problems = []
+  if (captured.schema !== CAPTURE_SCHEMA) {
+    return [
+      `${RESOLVED_CAPTURE}: schema is ${JSON.stringify(captured.schema)}, not ${CAPTURE_SCHEMA} ` +
+        '-- this gate does not know how to read that capture, so it refuses to pass it',
+    ]
+  }
+  const capturedRoot = typeof captured.root === 'string' ? toPosix(resolve(captured.root)) : null
+  if (capturedRoot !== toPosix(resolve(webRoot))) {
+    problems.push(
+      `${RESOLVED_CAPTURE}: root is ${JSON.stringify(captured.root)}, not ${JSON.stringify(
+        toPosix(resolve(webRoot)),
+      )} -- this capture describes a different checkout's run`,
+    )
+  }
+  if (captured.isRootProject !== true) {
+    problems.push(
+      `${RESOLVED_CAPTURE}: isRootProject is ${JSON.stringify(captured.isRootProject)} -- the ` +
+        'capture came from a non-root project, whose config is not the one this gate pins',
+    )
+  }
+  if (captured.projectName !== '') {
+    problems.push(
+      `${RESOLVED_CAPTURE}: projectName is ${JSON.stringify(captured.projectName)}, expected ` +
+        'the unnamed single project this gate assumes',
+    )
+  }
+  problems.push(
+    ...jsonDifferences(captured.globalSetup, expected.globalSetup, 'globalSetup').map(
+      (difference) =>
+        `${RESOLVED_CAPTURE}: resolved ${difference} -- the globalSetup list is what writes ` +
+        'this capture; changing it changes who vouches for the run',
+    ),
+  )
+  problems.push(...resolvedCoverageProblems(captured.coverage, RESOLVED_CAPTURE))
+  problems.push(
+    ...jsonDifferences(captured.coverage, expected.coverage, 'coverage').map(
+      (difference) => `${RESOLVED_CAPTURE}: resolved ${difference}`,
+    ),
+  )
+  return problems
+}
+
+/**
  * The manifest, shape-checked. Throws with a specific message on anything a
  * later comparison could misread as "nothing to check".
  */
@@ -385,6 +608,43 @@ export function readCoverageScope(webRoot) {
   if (firstProblem !== undefined) {
     throw new Error(firstProblem.replace(`${MANIFEST}:`, `${manifestPath}:`))
   }
+  // The expectation for the resolved config is held to the same invariants as
+  // the resolved config itself, so it cannot be edited into permitting a
+  // custom provider, disabled coverage or a zeroed threshold. Its `include` /
+  // `exclude` / `globalSetup` are bound to vitest.config.ts on the other side,
+  // by src/guards.test.ts.
+  const resolved = parsed?.resolvedCoverage
+  if (resolved === null || typeof resolved !== 'object' || Array.isArray(resolved)) {
+    throw new Error(`${manifestPath}: "resolvedCoverage" must be an object`)
+  }
+  if (
+    !Array.isArray(resolved.globalSetup) ||
+    resolved.globalSetup.length === 0 ||
+    !resolved.globalSetup.every((file) => typeof file === 'string' && file.endsWith('.mjs'))
+  ) {
+    throw new Error(
+      `${manifestPath}: "resolvedCoverage".globalSetup must be a non-empty array of .mjs paths ` +
+        '-- without a globalSetup nothing captures the config the run resolved',
+    )
+  }
+  const [firstResolvedProblem] = resolvedCoverageProblems(
+    resolved.coverage,
+    `${manifestPath}: "resolvedCoverage"`,
+  )
+  if (firstResolvedProblem !== undefined) {
+    throw new Error(firstResolvedProblem)
+  }
+  const thresholdDifferences = jsonDifferences(
+    resolved.coverage.thresholds,
+    parsed.thresholds,
+    'thresholds',
+  )
+  if (thresholdDifferences.length > 0) {
+    throw new Error(
+      `${manifestPath}: "resolvedCoverage".coverage.${thresholdDifferences[0]} -- the thresholds ` +
+        'the run must resolve and the thresholds the report is scored against are one value',
+    )
+  }
   return parsed
 }
 
@@ -397,6 +657,47 @@ function main() {
     manifest = readCoverageScope(webRoot)
   } catch (error) {
     console.error(`assert-coverage-scope: ${error.message}`)
+    process.exit(1)
+  }
+
+  // Provenance first: the two passes below read a file, and reading a file
+  // only proves something once something else says who was allowed to write
+  // it. scripts/clean-coverage.mjs deleted this capture before vitest started,
+  // so "missing" means this run's globalSetup did not write one -- which is
+  // what removing the globalSetup from vitest.config.ts looks like.
+  const capturePath = resolve(webRoot, RESOLVED_CAPTURE)
+  if (!existsSync(capturePath)) {
+    console.error(
+      `assert-coverage-scope: ${capturePath} does not exist; this run captured no resolved ` +
+        'coverage config. vitest.config.ts must keep scripts/capture-resolved-coverage.mjs in ' +
+        'its `globalSetup` (see coverage-scope.json: "resolvedCoverage").',
+    )
+    process.exit(1)
+  }
+  let captured
+  try {
+    captured = JSON.parse(readFileSync(capturePath, 'utf-8'))
+  } catch (error) {
+    console.error(`assert-coverage-scope: ${capturePath} is not valid JSON: ${error.message}`)
+    process.exit(1)
+  }
+  const resolvedProblems = auditResolvedCoverage(captured, manifest.resolvedCoverage, webRoot)
+  if (resolvedProblems.length > 0) {
+    console.error(
+      `assert-coverage-scope: ${resolvedProblems.length} problem(s) -- the coverage config this ` +
+        `run RESOLVED does not match ${MANIFEST}:`,
+    )
+    for (const problem of resolvedProblems) {
+      console.error(`  - ${problem}`)
+    }
+    console.error(
+      'assert-coverage-scope: this is the config vitest actually ran under, overrides folded ' +
+        'in, so it catches what no assertion over vitest.config.ts can see -- a persisted CLI ' +
+        'flag, a plugin config() hook, an env override. A custom coverage provider in ' +
+        'particular WRITES coverage-final.json, which would make every check below certify a ' +
+        `report the run made up. If this change is intended, update ${MANIFEST} in the same ` +
+        'reviewed commit.',
+    )
     process.exit(1)
   }
 
@@ -453,6 +754,11 @@ function main() {
   }
 
   const { thresholds } = manifest
+  console.log(
+    `assert-coverage-scope: this run RESOLVED the coverage config ${MANIFEST} carries ` +
+      `(provider ${captured.coverage.provider}, no custom provider module), captured from ` +
+      "vitest's own resolved config by globalSetup.",
+  )
   console.log(
     `assert-coverage-scope: ${manifest.coverageGated.length} module(s) instrumented, ` +
       `exactly matching ${MANIFEST}.`,

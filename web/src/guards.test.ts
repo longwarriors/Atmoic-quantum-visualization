@@ -40,15 +40,19 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { minimatch } from 'minimatch'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 import {
   auditCoverageScope,
   auditCoverageThresholds,
+  auditResolvedCoverage,
+  jsonDifferences,
   readCoverageScope,
   summarizeFileCoverage,
   toWebRelative,
 } from '../scripts/assert-coverage-scope.mjs'
+import { normalizeResolvedCoverage } from '../scripts/capture-resolved-coverage.mjs'
 import {
   auditRun,
   listSpecFiles,
@@ -148,6 +152,45 @@ const EXPECTED_COVERAGE_THRESHOLDS = {
   functions: 90,
   lines: 90,
 }
+
+/**
+ * The coverage provider vitest.config.ts declares -- the thing that decides
+ * who WRITES coverage/coverage-final.json.
+ *
+ * Measured, and the reason the capture below exists: with
+ * `--coverage.provider=custom --coverage.customProviderModule=./scripts/
+ * fake-coverage-provider.mjs` persisted into the `test` script (or set by a
+ * plugin `config()` hook), a module in this repo hand-writes a report listing
+ * the three gated modules at 100%, and `check.ps1` prints "All checks
+ * passed!" at exit 0 with a genuinely uncovered exported function shipping.
+ * Every content check downstream then certifies a forgery.
+ *
+ * This literal is the config-SOURCE half and it is deliberately NOT the fix:
+ * a CLI flag and a plugin hook both leave it byte-identical. The fix is
+ * scripts/capture-resolved-coverage.mjs writing the config vitest RESOLVED
+ * and scripts/assert-coverage-scope.mjs deep-equalling the whole of it
+ * against coverage-scope.json's `resolvedCoverage`. This is one more layer,
+ * not the wall.
+ */
+const EXPECTED_COVERAGE_PROVIDER = 'v8'
+
+/**
+ * `test.include` -- the specs vitest collects. Pinned here for two reasons:
+ * narrowing it hides a whole spec file from the run, and vitest APPENDS it to
+ * the resolved `coverage.exclude` (resolveConfig, coverage.DfSpMS-b.js:
+ * 3664-3668), so it is part of the resolved coverage config the gate checks
+ * and the two must be one value.
+ */
+const EXPECTED_TEST_INCLUDE = ['src/**/*.{test,spec}.{ts,tsx}', 'src/**/__tests__/**/*.{ts,tsx}']
+
+/**
+ * `globalSetup` -- the module vitest runs once per run, which is what writes
+ * coverage/resolved-coverage.json from the RESOLVED config. Deleting it from
+ * vitest.config.ts fails twice over: here, and in the gate, which hard-fails
+ * on a missing capture (scripts/clean-coverage.mjs deletes the previous one
+ * before vitest starts, so "missing" cannot be satisfied by an old file).
+ */
+const EXPECTED_GLOBAL_SETUP = ['./scripts/capture-resolved-coverage.mjs']
 
 /**
  * Extensions Vite resolves and executes as a runtime module.
@@ -299,10 +342,117 @@ const MODIFIER_NAMES = [SKIP, 'on' + 'ly', TODO, SKIP + 'If', 'run' + 'If']
  * other export form -- `const`, `let`, `var`, `function`, `class`, `enum`,
  * `default`, a plain `export { … }` re-export (which `isolatedModules`
  * requires to be spelled `export type { … }` when it is type-only), and
- * `export * from` -- can. Positive controls below, so widening the negative
- * lookahead cannot make the scan pass by construction.
+ * `export * from` -- can.
+ *
+ * This regex is the SECOND layer, kept for the plain single-line form it does
+ * catch and because it needs nothing but `String.prototype`. It cannot be the
+ * only layer: it is applied one line at a time, so both
+ *
+ *     export
+ *     function backdoorInTypes(v: number): number { return v * 2 }
+ *
+ * and `;export const backdoorInTypes = …` are valid TypeScript that it never
+ * sees (measured: both left `npm test` at exit 0 with executable, uncovered
+ * code inside a gated root). Every positive control it had was single-line,
+ * so the class could not be caught by construction. `valueExportHits` below
+ * parses the file instead, and the scan takes the UNION of the two.
  */
 const VALUE_EXPORT = /^\s*export\s+(?!type\s|interface\s|declare\s)/
+
+/** `export` on a declaration, as the parser sees it (not as a line looks). */
+const hasExportModifier = (node: ts.Node): boolean =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+
+/** `declare` makes a declaration ambient, so the compiler emits nothing. */
+const hasDeclareModifier = (node: ts.Node): boolean =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
+
+/**
+ * Does this top-level statement export something the compiler EMITS?
+ *
+ * Answered from the syntax tree rather than from the text of a line, because
+ * whether `export` starts its line, or is followed by a newline, or sits
+ * after a `;`, is exactly the sort of detail a bypass is written out of.
+ * Unknown statement kinds carrying an `export` modifier count as value
+ * exports: this must fail closed.
+ */
+function isValueExport(statement: ts.Statement): boolean {
+  if (ts.isExportAssignment(statement)) {
+    // `export default …` / `export = …`; both emit.
+    return true
+  }
+  if (ts.isExportDeclaration(statement)) {
+    if (statement.isTypeOnly) {
+      return false
+    }
+    const clause = statement.exportClause
+    if (clause !== undefined && ts.isNamedExports(clause)) {
+      // `export { a, type B }` emits iff some specifier is not type-only.
+      return clause.elements.some((element) => !element.isTypeOnly)
+    }
+    // `export * from …` / `export * as ns from …`.
+    return true
+  }
+  if (!hasExportModifier(statement)) {
+    return false
+  }
+  if (hasDeclareModifier(statement)) {
+    return false
+  }
+  if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+    return false
+  }
+  if (ts.isImportEqualsDeclaration(statement)) {
+    return !statement.isTypeOnly
+  }
+  return true
+}
+
+/**
+ * Value exports in a TypeScript source, as 1-based line numbers with the text
+ * of the line the `export` keyword sits on.
+ *
+ * `createSourceFile` parses without type-checking, which is all this needs
+ * and keeps the guard independent of the project's program. Parse errors are
+ * reported rather than swallowed: an unparseable module must fail this scan,
+ * not sail through it as "no exports found". (`tsc -p tsconfig.test.json
+ * --noEmit` runs before vitest in the `test` chain and would already be red;
+ * `parseDiagnostics` is belt and braces, and is read defensively because it
+ * is not part of the public API.)
+ */
+function valueExportHits(fileName: string, source: string): Hit[] {
+  const parsed = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.ES2022,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS,
+  )
+  const lineOf = (position: number): number =>
+    ts.getLineAndCharacterOfPosition(parsed, position).line + 1
+  const textOf = (line: number): string => source.split('\n')[line - 1]?.trim() ?? ''
+
+  const diagnostics = (parsed as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
+    .parseDiagnostics
+  if (Array.isArray(diagnostics) && diagnostics.length > 0) {
+    const first = diagnostics[0]
+    const line = typeof first.start === 'number' ? lineOf(first.start) : 1
+    return [
+      {
+        file: fileName,
+        line,
+        text: `does not parse (${ts.flattenDiagnosticMessageText(first.messageText, ' ')})`,
+      },
+    ]
+  }
+
+  return parsed.statements.filter(isValueExport).map((statement) => {
+    const line = lineOf(statement.getStart(parsed))
+    return { file: fileName, line, text: textOf(line) }
+  })
+}
 
 const PRAGMA_TOOLS = ['v8', 'c8', 'istan' + 'bul', 'node:cov' + 'erage']
 const PRAGMA_TOOL_QUIRKS = ['\\|8']
@@ -680,7 +830,7 @@ describe('scan scope', () => {
     // shape checks and the two `toEqual` calls below actually verify against
     // runtime data.
     const coverage = vitestConfig.test?.coverage as
-      | { include?: unknown; exclude?: unknown; thresholds?: unknown }
+      | { include?: unknown; exclude?: unknown; thresholds?: unknown; provider?: unknown }
       | undefined
     // This whole binding depends on vitest.config.ts exporting a PLAIN
     // OBJECT (defineConfig(identity) -- see the comment on the vitestConfig
@@ -738,6 +888,77 @@ describe('scan scope', () => {
         'the runtime gate enforces the manifest copy, so a lower one there would silently ' +
         'become the real threshold',
     ).toEqual(EXPECTED_COVERAGE_THRESHOLDS)
+    // The measurer itself. One more layer, NOT the wall: see the comment on
+    // EXPECTED_COVERAGE_PROVIDER -- a CLI flag and a plugin config() hook
+    // both change the provider while leaving this line byte-identical, and
+    // what sees those is the resolved-config capture the gate checks.
+    expect(
+      coverage?.provider,
+      'vitestConfig.test.coverage.provider is not v8 -- a custom provider WRITES the coverage ' +
+        'report the gate reads, so every check downstream would be certifying a forgery',
+    ).toBe(EXPECTED_COVERAGE_PROVIDER)
+  })
+
+  it('binds the globalSetup that captures the resolved config, and the spec include it appends', () => {
+    // scripts/capture-resolved-coverage.mjs is what writes
+    // coverage/resolved-coverage.json, the only artefact that shows the
+    // config vitest RESOLVED. Removing it from vitest.config.ts must fail
+    // here AND at the gate (which hard-fails on a missing capture, because
+    // scripts/clean-coverage.mjs deleted the previous one before vitest
+    // started). Two independent failures for one deletion, deliberately: a
+    // gate whose evidence can simply stop being produced is not a gate.
+    const testConfig = vitestConfig.test as
+      | { globalSetup?: unknown; include?: unknown }
+      | undefined
+    expect(
+      Array.isArray(testConfig?.globalSetup),
+      'vitestConfig.test.globalSetup is not an array -- nothing captures the coverage config ' +
+        'this run resolves, and the gate can then only see the report, not who wrote it',
+    ).toBe(true)
+    expect(testConfig?.globalSetup).toEqual(EXPECTED_GLOBAL_SETUP)
+    // vitest resolves globalSetup paths against the root, so the manifest
+    // carries the root-relative spelling of the same list.
+    expect(
+      COVERAGE_SCOPE.resolvedCoverage.globalSetup,
+      'coverage-scope.json: "resolvedCoverage".globalSetup must be vitest.config.ts\'s ' +
+        'globalSetup, resolved relative to the project root',
+    ).toEqual(EXPECTED_GLOBAL_SETUP.map((file) => file.replace(/^\.\//, '')))
+    // test.include is pinned for its own sake (a narrowed pattern hides a
+    // whole spec file) and because vitest APPENDS it to the resolved
+    // coverage.exclude, which the gate deep-equals.
+    expect(testConfig?.include).toEqual(EXPECTED_TEST_INCLUDE)
+  })
+
+  it('binds the expected RESOLVED coverage config to the same literals as the source one', () => {
+    // coverage-scope.json carries what the run must resolve to. That
+    // expectation has to be pinned to the config source, or the pair would be
+    // a mirror of itself: an edit to vitest.config.ts plus a matching edit to
+    // the manifest would agree with each other and with nothing else.
+    const resolved = COVERAGE_SCOPE.resolvedCoverage.coverage
+    expect(resolved.provider).toBe(EXPECTED_COVERAGE_PROVIDER)
+    expect(resolved.include).toEqual(EXPECTED_COVERAGE_INCLUDE)
+    expect(resolved.thresholds).toEqual(EXPECTED_COVERAGE_THRESHOLDS)
+    // vitest appends the resolved setupFiles (none here) and test.include to
+    // coverage.exclude -- resolveConfig, coverage.DfSpMS-b.js:3664-3668 --
+    // so the resolved list is the declared one plus test.include, in order.
+    // Spelled out rather than asserted loosely: the head must be exactly the
+    // canonical exclude array, and the tail exactly test.include.
+    expect(resolved.exclude).toEqual([...EXPECTED_COVERAGE_EXCLUDE, ...EXPECTED_TEST_INCLUDE])
+    // And the fields whose value is a policy, not a mirror of the config.
+    expect(resolved.enabled, 'a run with coverage disabled instruments nothing').toBe(true)
+    expect(resolved.all, 'with all:false an untested module is absent, not 0%').toBe(true)
+    expect(
+      Object.hasOwn(resolved, 'customProviderModule'),
+      'coverage-scope.json must not expect a custom provider module: that module writes the ' +
+        'report',
+    ).toBe(false)
+    expect(
+      (resolved.reporter as unknown[]).map((entry) => (Array.isArray(entry) ? entry[0] : entry)),
+      'without the json reporter no coverage-final.json is written at all',
+    ).toContain('json')
+    expect(resolved.reportsDirectory, 'the directory the gate reads the report from').toBe(
+      'coverage',
+    )
   })
 })
 
@@ -774,7 +995,16 @@ describe('committed suite integrity', () => {
       .map((file) => file.replace(/^src\//, ''))
     expect(typeOnly.length, 'no type-only module to check -- has the manifest changed?').toBe(1)
 
-    const hits = scan(typeOnly, (line) => VALUE_EXPORT.test(line))
+    // TWO scanners, union of hits. The parse is the one that matters -- it
+    // sees a declaration, not a line -- and the line regex is kept because it
+    // costs nothing and still fires if the TypeScript API ever moves under
+    // this file.
+    const hits = [
+      ...scan(typeOnly, (line) => VALUE_EXPORT.test(line)),
+      ...typeOnly.flatMap((file) =>
+        valueExportHits(file, readFileSync(join(SRC_ROOT, file), 'utf-8')),
+      ),
+    ]
     expect(
       hits,
       'value exports in a module coverage excludes as type-only. Either keep it type-only, or ' +
@@ -803,6 +1033,91 @@ describe('committed suite integrity', () => {
     ]) {
       expect(VALUE_EXPORT.test(line), line).toBe(false)
     }
+    // The same forms as whole modules, for the parse. They are spelled out
+    // again rather than reusing the lines above because a parser is fed
+    // sources, not lines: `export interface X {` alone is a syntax error, and
+    // a control that fails to parse would "pass" for the wrong reason.
+    for (const source of [
+      'export function backdoor(value: number): number {\n  return value\n}\n',
+      'export const backdoor = (value: number): number => value\n',
+      'export class Backdoor {}\n',
+      'export enum Kind {\n  A,\n}\n',
+      'const backdoor = 1\nexport default backdoor\n',
+      "export { backdoor } from './client'\n",
+      "export * from './client'\n",
+      'export let mutable = 1\n',
+      'export var legacy = 1\n',
+    ]) {
+      expect(valueExportHits('control.ts', source).length, source).toBe(1)
+    }
+    for (const source of [
+      "export type BasisKind = 'real' | 'complex'\n",
+      'export interface OrbitalParameters {\n  n: number\n}\n',
+      'export declare const version: string\n',
+      'interface Local {\n  n: number\n}\nexport type { Local }\n',
+      '/** Geometry fields shared by the stationary and time-dependent isosurfaces. */\n',
+    ]) {
+      expect(valueExportHits('control.ts', source), source).toEqual([])
+    }
+  })
+
+  it('sees a value export the line regex cannot: a newline, or a leading semicolon', () => {
+    // Both forms are valid TypeScript, both clear `tsc -p tsconfig.test.json
+    // --noEmit` (which runs before vitest), and both put executable,
+    // uncovered code inside a gated root. Measured on the line-regex guard:
+    // `Tests 204 passed`, both gate lines green, EXIT=0 for each. Every
+    // positive control that guard had was single-line, so it could not catch
+    // this class by construction -- these two are the class.
+    const newlineAfterExport =
+      'export type A = string\n' +
+      'export\nfunction backdoorInTypes(v: number): number {\n  return v * 2\n}\n'
+    const leadingSemicolon =
+      'export type A = string\n;export const backdoorInTypes = (v: number): number => v * 2\n'
+
+    for (const [label, source, line] of [
+      ['newline after export', newlineAfterExport, 2],
+      ['leading semicolon', leadingSemicolon, 2],
+    ] as const) {
+      // The regex is blind to both; the parse is not. This is the whole
+      // reason the scan above takes a union rather than either one alone.
+      expect(
+        source.split('\n').some((text) => VALUE_EXPORT.test(text)),
+        `${label}: the line regex was supposed to be blind to this`,
+      ).toBe(false)
+      const hits = valueExportHits('types.ts', source)
+      expect(hits.map((hit) => hit.line), label).toEqual([line])
+    }
+  })
+
+  it('reads exports from the tree, so comments, strings and formatting cannot fake one', () => {
+    // Negative controls the line regex gets wrong in the other direction, and
+    // a parse gets right: prose and string literals that merely contain the
+    // word, and type-only re-export forms `isolatedModules` requires.
+    for (const [label, source] of [
+      ['export mentioned in prose', '// re-export the client here\nexport type A = string\n'],
+      ['export inside a string', 'export type A = string\nconst s = "export const x = 1"\n'],
+      ['export inside a template', 'export type A = string\nconst s = `\nexport const x = 1\n`\n'],
+      ['type-only re-export', "export type { A } from './types'\n"],
+      ['per-specifier type-only', "type A = string\nexport { type A }\n"],
+      ['ambient declaration', 'export declare const version: string\n'],
+      ['unexported value', 'const hidden = 1\nvoid hidden\nexport type A = string\n'],
+    ] as const) {
+      expect(valueExportHits('types.ts', source), label).toEqual([])
+    }
+    // ... and forms it must still catch, including ones spread over lines.
+    for (const [label, source] of [
+      ['mixed named export', "const a = 1\nexport { a, type B }\ntype B = string\n"],
+      ['multi-line function', 'export function f(\n  v: number,\n): number {\n  return v\n}\n'],
+      ['export namespace', 'export namespace N {\n  export const x = 1\n}\n'],
+      ['export default', 'const a = 1\nexport default a\n'],
+      ['star re-export', "export * from './client'\n"],
+      ['import equals', "import x = require('./x')\nexport = x\n"],
+    ] as const) {
+      expect(valueExportHits('types.ts', source).length, label).toBeGreaterThan(0)
+    }
+    // A file that does not parse is a failed scan, not an empty one.
+    const broken = valueExportHits('types.ts', 'export const = = 1\n')
+    expect(broken.length).toBeGreaterThan(0)
   })
 })
 
@@ -1287,5 +1602,304 @@ describe('coverage threshold gate (scripts/assert-coverage-scope.mjs)', () => {
       auditCoverageThresholds(uniformReport(covered), undefined, WEB_ROOT).length,
       'certified a run against no manifest at all',
     ).toBeGreaterThan(0)
+  })
+})
+
+describe('resolved config gate (scripts/assert-coverage-scope.mjs)', () => {
+  // The third pass, and the one that says the other two are worth anything.
+  //
+  // Binding the measured file SET says which modules were looked at; binding
+  // the THRESHOLDS says what looking at them had to prove; neither says
+  // anything about who did the looking. `coverage.provider` lives in the
+  // RESOLVED config, where a persisted CLI flag or a plugin config() hook can
+  // swap it for `custom` plus a `customProviderModule` that hand-writes
+  // coverage-final.json -- measured twice, both green, both with an uncovered
+  // exported function shipping in a gated module.
+  //
+  // scripts/capture-resolved-coverage.mjs writes that resolved config out as
+  // vitest's `globalSetup`, and the gate deep-equals the WHOLE of it. Whole,
+  // not a chosen list of fields: three reviews in a row each found the next
+  // unbound key, so what is pinned here is every key there is.
+  //
+  // This block exercises the audit on synthetic captures. It deliberately
+  // does NOT read the live coverage/resolved-coverage.json: `npm run
+  // test:watch` runs vitest without --coverage, and a guard that failed there
+  // would be a false red on a legitimate workflow. Checking the live capture
+  // is the gate script's job, and the gate script only runs inside `npm test`.
+
+  const expected = COVERAGE_SCOPE.resolvedCoverage
+  const webRootPosix = WEB_ROOT.split(sep).join('/').replace(/\/$/, '')
+
+  /** A capture of a run that used exactly the manifest's configuration. */
+  const capture = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    schema: 1,
+    root: webRootPosix,
+    isRootProject: true,
+    projectName: '',
+    globalSetup: structuredClone(expected.globalSetup),
+    coverage: structuredClone(expected.coverage),
+    ...overrides,
+  })
+
+  /** The same, with resolved coverage options changed or (undefined) removed. */
+  const withCoverage = (changes: Record<string, unknown>): Record<string, unknown> => {
+    const coverage: Record<string, unknown> = structuredClone(expected.coverage)
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === undefined) {
+        delete coverage[key]
+      } else {
+        coverage[key] = value
+      }
+    }
+    return capture({ coverage })
+  }
+
+  it('accepts a run that resolved exactly the configuration the manifest carries', () => {
+    expect(auditResolvedCoverage(capture(), expected, WEB_ROOT)).toEqual([])
+  })
+
+  it('rejects the custom-provider swap, in both of its spellings', () => {
+    // B1: the two flags persisted into the `test` script. B2: the same two
+    // fields set by a Vite plugin config() hook, which touches neither the
+    // script nor any array the config-source assertions read.
+    const custom = auditResolvedCoverage(
+      withCoverage({
+        provider: 'custom',
+        customProviderModule: '/w/scripts/fake-coverage-provider.mjs',
+      }),
+      expected,
+      WEB_ROOT,
+    )
+    expect(custom.join('\n')).toContain('coverage.provider is "custom"')
+    expect(custom.join('\n')).toContain('customProviderModule')
+    // istanbul is a real provider rather than a forgery, but it is not the
+    // one this manifest describes and it is not the report shape the
+    // threshold pass recomputes.
+    expect(
+      auditResolvedCoverage(withCoverage({ provider: 'istanbul' }), expected, WEB_ROOT).join('\n'),
+    ).toContain('not "v8"')
+    // A customProviderModule alongside a v8 provider is refused too: the key
+    // existing at all means somebody pointed coverage at a module.
+    expect(
+      auditResolvedCoverage(
+        withCoverage({ customProviderModule: './scripts/fake.mjs' }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('customProviderModule')
+  })
+
+  it('rejects coverage that resolved to disabled, or to only the files a test imported', () => {
+    expect(
+      auditResolvedCoverage(withCoverage({ enabled: false }), expected, WEB_ROOT).join('\n'),
+    ).toContain('coverage.enabled is false')
+    expect(
+      auditResolvedCoverage(withCoverage({ all: false }), expected, WEB_ROOT).join('\n'),
+    ).toContain('coverage.all is false')
+  })
+
+  it('rejects thresholds the run resolved away, and a scope it resolved smaller', () => {
+    // A17 and A21 seen at the config level this time, rather than recomputed
+    // from the report: the run itself says it was told to enforce nothing.
+    expect(
+      auditResolvedCoverage(
+        withCoverage({
+          thresholds: { perFile: true, statements: 0, branches: 0, functions: 0, lines: 0 },
+        }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('coverage.thresholds')
+    expect(
+      auditResolvedCoverage(withCoverage({ thresholds: undefined }), expected, WEB_ROOT).join('\n'),
+    ).toContain('coverage.thresholds')
+    expect(
+      auditResolvedCoverage(
+        withCoverage({
+          thresholds: { perFile: false, statements: 90, branches: 85, functions: 90, lines: 90 },
+        }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('perFile')
+    expect(
+      auditResolvedCoverage(
+        withCoverage({ include: ['src/scene/color.ts'] }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('coverage.include')
+    expect(
+      auditResolvedCoverage(
+        withCoverage({ exclude: [...expected.coverage.exclude, 'src/api/client.ts'] }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('coverage.exclude')
+  })
+
+  it('rejects a reporter list that would leave no report to read', () => {
+    expect(
+      auditResolvedCoverage(withCoverage({ reporter: [['text', {}]] }), expected, WEB_ROOT).join(
+        '\n',
+      ),
+    ).toContain('"json" reporter')
+  })
+
+  it('rejects any resolved option the manifest does not account for, in either direction', () => {
+    // THE point of deep-equalling the whole object. Every previous round
+    // bound one more named field and the next round found the one after it;
+    // an option nobody has vetted -- turned on by a flag, a hook, or a vitest
+    // upgrade -- now has to be a reviewed edit to coverage-scope.json rather
+    // than a silent change to how the run was measured.
+    const extra = auditResolvedCoverage(
+      withCoverage({ someNewCoverageOption: true }),
+      expected,
+      WEB_ROOT,
+    )
+    expect(extra.join('\n')).toContain('someNewCoverageOption')
+    expect(extra.join('\n')).toContain('not expected at all')
+
+    const missing = auditResolvedCoverage(
+      withCoverage({ ignoreEmptyLines: undefined }),
+      expected,
+      WEB_ROOT,
+    )
+    expect(missing.join('\n')).toContain('ignoreEmptyLines')
+    expect(missing.join('\n')).toContain('missing')
+
+    // A value change on an option with no absolute rule of its own is caught
+    // by the same deep-equal, which is what makes the whole-object bind more
+    // than a restatement of the named checks above.
+    expect(
+      auditResolvedCoverage(withCoverage({ excludeAfterRemap: true }), expected, WEB_ROOT).join(
+        '\n',
+      ),
+    ).toContain('excludeAfterRemap')
+    expect(
+      auditResolvedCoverage(
+        withCoverage({ reportsDirectory: '../elsewhere' }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('reportsDirectory')
+  })
+
+  it('rejects a capture that is not this run, this project, or this schema', () => {
+    expect(
+      auditResolvedCoverage(capture({ globalSetup: [] }), expected, WEB_ROOT).join('\n'),
+    ).toContain('globalSetup')
+    expect(
+      auditResolvedCoverage(
+        capture({ globalSetup: ['scripts/something-else.mjs'] }),
+        expected,
+        WEB_ROOT,
+      ).join('\n'),
+    ).toContain('globalSetup')
+    expect(
+      auditResolvedCoverage(capture({ root: '/elsewhere/web' }), expected, WEB_ROOT).join('\n'),
+    ).toContain('different checkout')
+    expect(
+      auditResolvedCoverage(capture({ isRootProject: false }), expected, WEB_ROOT).join('\n'),
+    ).toContain('non-root project')
+    expect(
+      auditResolvedCoverage(capture({ projectName: 'browser' }), expected, WEB_ROOT).join('\n'),
+    ).toContain('projectName')
+    expect(auditResolvedCoverage(capture({ schema: 2 }), expected, WEB_ROOT).join('\n')).toContain(
+      'schema',
+    )
+  })
+
+  it('refuses a missing, malformed or empty capture or expectation instead of passing vacuously', () => {
+    // What the gate is handed when the globalSetup was removed, or when the
+    // capture was truncated. Each must fail, never audit clean.
+    for (const [label, document] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['a string', 'text'],
+      ['a number', 42],
+      ['an array', []],
+      ['an empty object', {}],
+    ] as const) {
+      expect(
+        auditResolvedCoverage(document, expected, WEB_ROOT).length,
+        `audited ${label} clean as a resolved-config capture`,
+      ).toBeGreaterThan(0)
+    }
+    for (const [label, expectation] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['an array', []],
+      ['an empty object', {}],
+      ['a bare string', 'v8'],
+    ] as const) {
+      expect(
+        auditResolvedCoverage(capture(), expectation, WEB_ROOT).length,
+        `certified a run against ${label} as the expected resolved config`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('refuses a manifest whose own expectation would license a forged report', () => {
+    // The latch, from the other side. If `resolvedCoverage` could be edited
+    // freely, one commit could both swap the provider and bless the swap, so
+    // readCoverageScope holds the EXPECTATION to the same invariants the
+    // capture is held to -- and throws at import time when it is violated,
+    // taking this whole spec file down exactly as a zeroed manifest
+    // threshold already does.
+    expect(COVERAGE_SCOPE.resolvedCoverage.coverage.provider).toBe(EXPECTED_COVERAGE_PROVIDER)
+    expect(readCoverageScope(WEB_ROOT).resolvedCoverage.coverage.enabled).toBe(true)
+    expect(() => readCoverageScope(join(WEB_ROOT, 'no-such-directory'))).toThrow(
+      /coverage-scope\.json/,
+    )
+  })
+
+  it('reports every difference between two JSON documents, extra keys included', () => {
+    // jsonDifferences is what makes the whole-object bind readable, and a
+    // diff that silently ignored a key would turn that bind back into the
+    // chosen-fields check this round exists to replace.
+    expect(jsonDifferences({ a: 1, b: [1, 2] }, { a: 1, b: [1, 2] })).toEqual([])
+    expect(jsonDifferences({ a: 1 }, { a: 2 }).join('\n')).toContain('a: 1, expected 2')
+    expect(jsonDifferences({ a: 1, b: 2 }, { a: 1 }).join('\n')).toContain('not expected at all')
+    expect(jsonDifferences({ a: 1 }, { a: 1, b: 2 }).join('\n')).toContain('missing')
+    expect(jsonDifferences([1], [1, 2]).join('\n')).toContain('entr(ies), expected 2')
+    expect(jsonDifferences({ a: { b: 1 } }, { a: { b: 2 } }).join('\n')).toContain('a.b')
+    expect(jsonDifferences({ a: [1] }, { a: 1 }).join('\n')).toContain('a')
+    // null is a value, not an absent key.
+    expect(jsonDifferences({ a: null }, { a: null })).toEqual([])
+    expect(jsonDifferences({ a: null }, {}).join('\n')).toContain('not expected at all')
+  })
+
+  it('normalises exactly the two machine-dependent resolved values, and nothing else', () => {
+    // reportsDirectory is absolute and processingConcurrency is
+    // min(20, availableParallelism()), so pinning either raw value would make
+    // the manifest unusable on another machine. Their KEYS stay pinned.
+    const normalized = normalizeResolvedCoverage(
+      {
+        provider: 'v8',
+        reportsDirectory: `${webRootPosix}/coverage`,
+        processingConcurrency: 12,
+        include: ['src/api/**/*.ts'],
+        onFinish: () => undefined,
+      },
+      WEB_ROOT,
+    )
+    expect(normalized.reportsDirectory).toBe('coverage')
+    expect(normalized.processingConcurrency).toBe('<machine-dependent>')
+    expect(normalized.provider).toBe('v8')
+    expect(normalized.include).toEqual(['src/api/**/*.ts'])
+    // A value JSON cannot carry is written as a marker, not dropped: a key
+    // that vanished from the capture would vanish from the deep-equal too.
+    expect(normalized.onFinish).toBe('<function>')
+    expect(Object.keys(normalized).sort()).toEqual([
+      'include',
+      'onFinish',
+      'processingConcurrency',
+      'provider',
+      'reportsDirectory',
+    ])
+    for (const notAConfig of [undefined, null, 'text', 42, []] as const) {
+      expect(() => normalizeResolvedCoverage(notAConfig, WEB_ROOT), String(notAConfig)).toThrow()
+    }
   })
 })

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Delete the two report files `npm test` gates on, BEFORE vitest runs.
+ * Delete the three files `npm test` gates on, BEFORE vitest runs.
  *
- * Both gates that run after vitest -- `assert-no-skips.mjs` (reads
+ * Every gate that runs after vitest -- `assert-no-skips.mjs` (reads
  * coverage/vitest-results.json) and `assert-coverage-scope.mjs` (reads
- * coverage/coverage-final.json) -- are only as trustworthy as their claim to
- * be reading THIS run's output. `coverage.clean` defaults to true and does
- * wipe the coverage directory, but it is the coverage provider that does the
- * wiping, so it only happens when coverage is enabled at all. Measured on
- * this tree (vitest 3.2.7):
+ * coverage/coverage-final.json and coverage/resolved-coverage.json) -- is
+ * only as trustworthy as its claim to be reading THIS run's output.
+ * `coverage.clean` defaults to true and does wipe the coverage directory, but
+ * it is the coverage provider that does the wiping, so it only happens when
+ * coverage is enabled at all. Measured on this tree (vitest 3.2.7):
  *
  *   npm test                -> coverage/ wiped, both files rewritten
  *   vitest run (no coverage)-> BOTH files survive untouched from the last run
@@ -17,7 +17,14 @@
  * false`, or a reporter list without `json`) would leave a previous, green
  * report in place for the post-run gates to read and pass. Deleting the files
  * up front turns every one of those into a hard failure: the gates refuse a
- * missing report rather than accepting a stale one.
+ * missing report rather than accepting a stale one. The same argument covers
+ * resolved-coverage.json, which vitest's `globalSetup` writes: removing the
+ * globalSetup must leave NO capture, not last run's capture.
+ *
+ * The list below is pinned from outside this file, by
+ * tests/test_check_script.py -- emptying it is exactly as effective as
+ * deleting the pre-clean stage from the `test` script, and that stage is
+ * pinned there too.
  *
  * Plain ESM, no dependencies, cross-platform (`rmSync`, not `rm -f`).
  */
@@ -26,7 +33,11 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Web-root-relative. Every file here is an INPUT to a post-run gate. */
-const STALE_ARTEFACTS = ['coverage/coverage-final.json', 'coverage/vitest-results.json']
+const STALE_ARTEFACTS = [
+  'coverage/coverage-final.json',
+  'coverage/vitest-results.json',
+  'coverage/resolved-coverage.json',
+]
 
 function main() {
   const webRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))

@@ -14,6 +14,34 @@ export interface CoverageThresholds {
   lines: number
 }
 
+/**
+ * The coverage configuration the run must RESOLVE, as captured from vitest's
+ * own resolved config by scripts/capture-resolved-coverage.mjs.
+ *
+ * `coverage` is deep-equalled WHOLE by the gate, so it carries every key of
+ * vitest's resolved coverage options, not only the ones named here; the index
+ * signature is that remainder. The named fields are the ones the gate also
+ * checks against absolute expectations, so that no edit to the manifest can
+ * license a config the gate is supposed to refuse.
+ */
+export interface ResolvedCoverageExpectation {
+  /** Root-relative, and non-empty: something must write the capture. */
+  globalSetup: string[]
+  coverage: {
+    provider: string
+    enabled: boolean
+    all: boolean
+    include: string[]
+    exclude: string[]
+    thresholds: CoverageThresholds
+    /** Resolved form: `[name, options]` tuples. Must contain `json`. */
+    reporter: unknown
+    /** Root-relative; the directory the gate reads the report from. */
+    reportsDirectory: string
+    [option: string]: unknown
+  }
+}
+
 /** coverage-scope.json: the one manifest both gates check themselves against. */
 export interface CoverageScopeManifest {
   /** Modules vitest must instrument and hold to a per-file threshold. */
@@ -22,6 +50,8 @@ export interface CoverageScopeManifest {
   pragmaScanned: string[]
   /** Deep-equalled against vitest.config.ts's `coverage.thresholds` by the guard suite. */
   thresholds: CoverageThresholds
+  /** Deep-equalled against the config the run resolved. */
+  resolvedCoverage: ResolvedCoverageExpectation
 }
 
 /** One metric of one file: `pct` is `covered / total`, truncated to 2 decimals. */
@@ -71,6 +101,30 @@ export function summarizeFileCoverage(entry: unknown): FileCoverageSummary
 export function auditCoverageThresholds(
   coverage: unknown,
   manifest: unknown,
+  webRoot: string,
+): string[]
+
+/**
+ * Every place two JSON documents differ, as `path: actual vs expected` lines;
+ * empty when they are deep-equal. Objects are compared by key SET, so an
+ * unexpected extra key is a difference in its own right.
+ */
+export function jsonDifferences(actual: unknown, expected: unknown, path?: string): string[]
+
+/**
+ * Problems found comparing the coverage config vitest RESOLVED for this run
+ * -- captured by scripts/capture-resolved-coverage.mjs -- against
+ * coverage-scope.json's `resolvedCoverage`; empty when the run used exactly
+ * the configuration the manifest describes.
+ *
+ * This is the only check that sees the config the run actually had: a CLI
+ * flag, a plugin `config()` hook or an env override leaves vitest.config.ts
+ * byte-identical, and a custom provider decides for itself what the coverage
+ * report says.
+ */
+export function auditResolvedCoverage(
+  captured: unknown,
+  expected: unknown,
   webRoot: string,
 ): string[]
 

@@ -11,7 +11,23 @@ export default defineConfig({
     // the run still reports "passed" and the only signal is the coverage gate
     // tripping as a side effect, which a small spec can dodge. Refuse outright.
     allowOnly: false,
+    // Writes the coverage config vitest RESOLVED for this run (CLI flags,
+    // plugin config() hooks and env overrides folded in) to
+    // coverage/resolved-coverage.json, which scripts/assert-coverage-scope.mjs
+    // deep-equals against coverage-scope.json's `resolvedCoverage` after the
+    // run. Nothing else can see that config: every assertion over THIS file
+    // reads what it declares, and the coverage report is written by whichever
+    // provider the resolved config named -- which is the point, because
+    // `--coverage.provider=custom` makes that a module in this repo.
+    // Removing this line fails twice: src/guards.test.ts deep-equals it, and
+    // the gate hard-fails on a missing capture.
+    globalSetup: ['./scripts/capture-resolved-coverage.mjs'],
     coverage: {
+      // The measurer. A `custom` provider does not instrument anything -- it
+      // hands vitest whatever coverage-final.json its module chooses to
+      // write -- so this value is checked three times over: here against
+      // src/guards.test.ts's literal, in the resolved capture above, and in
+      // coverage-scope.json's `resolvedCoverage`.
       provider: 'v8',
       // Coverage scope, stated exactly so the gate cannot quietly shrink:
       //
