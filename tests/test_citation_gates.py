@@ -1376,3 +1376,92 @@ def test_gitea_raw_and_media_paths_carry_the_same_ref_markers_as_src(
         assert validate_source_pins([_entry("x", url=url, commit=SHA, version="tag")]) != []
     else:
         assert validate_source_pins([_entry("x", url=url, commit=SHA)]) == []
+
+
+# --- P1: a WHATWG-anomalous http(s) authority must not bypass code-host routing ---
+#
+# A URL can carry a valid ``https`` scheme (clearing the guard above) while
+# ``urlsplit(url).hostname`` is still ``None`` (``https:///...``, ``https:////...``,
+# a run of slashes other than exactly ``//`` after the scheme) or contains a
+# backslash where a WHATWG-conformant browser accepts one as a path/authority
+# separator (``github.com\o`` resolves to host ``github.com``, path ``/o``).
+# ``is_code_host`` reads ``False`` for both, so the entry used to fall through
+# to ``_validate_other``, which certifies it on a ``urldate`` alone -- even
+# though a browser resolves the exact same spelling onto a moving branch on a
+# real code host. Verified against Node's ``URL`` parser as browser ground
+# truth (see the P1 verification report).
+@pytest.mark.parametrize(
+    "url",
+    [
+        # the three inputs named in the report
+        "https:///github.com/o/r/tree/master",
+        "https:////github.com/o/r/tree/master",
+        "https://github.com\\o/r/tree/master",
+        # family 1: empty / short / long authority
+        "https:/github.com/o/r/tree/master",
+        "https:github.com/o/r/tree/master",
+        "https://///github.com/o/r/tree/master",
+        # family 2: backslash authority slashes
+        "https:\\\\github.com/o/r/tree/master",
+        "https:/\\github.com/o/r/tree/master",
+        # family 3: backslash as the first path separator (incl. userinfo)
+        "https://github.com\\o\\r\\tree\\master",
+        "https://user@github.com\\o/r/tree/master",
+        # family 4: other code hosts, same trick
+        "https://gitlab.com\\g/s/r/-/tree/master",
+        "https:///codeberg.org/o/r/src/branch/main",
+        "https://raw.githubusercontent.com\\o/r/master/f.py",
+        # family 5: other moving refs, same trick
+        "https:///github.com/o/r/tree/HEAD",
+        "https://github.com\\o/r/blob/develop/f.py",
+    ],
+)
+def test_whatwg_anomalous_authority_bypasses_are_rejected(url: str) -> None:
+    entry = _entry("x", url=url, urldate="2026-08-25")
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1, f"{url} was certified as a pin with a urldate alone: {messages}"
+    assert "well-formed" in messages[0]
+    assert "urldate" not in messages[0]
+
+
+# family 6: the same anomalous spellings also defeat the rules that never even
+# ran -- a non-source page, a bare owner with no repository, and a fully-formed
+# SHA blob URL with no commit field at all (commit is supposed to be
+# mandatory on every code-host entry) all "passed" because the entire
+# ``_validate_code_host`` branch was skippable, not just the branch rule.
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https:///github.com/o/r/issues/1",
+        "https:///github.com/o",
+        f"https:///github.com/o/r/blob/{SHA}/f.py",
+    ],
+)
+def test_malformed_authority_bypass_also_defeats_the_other_code_host_rules(url: str) -> None:
+    entry = _entry("x", url=url, urldate="2026-08-25")
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1, f"{url} was certified with a urldate alone: {messages}"
+    assert "well-formed" in messages[0]
+
+
+def test_uppercase_scheme_branch_url_still_routes_through_the_branch_rule() -> None:
+    # HTTPS://... clears urlsplit's scheme check (it lowercases the scheme)
+    # and has a perfectly well-formed authority, so it must still be rejected
+    # as a moving branch -- not by the new malformed-authority check.
+    entry = _entry("x", url="HTTPS://github.com/o/r/tree/master", commit=SHA, urldate="2026-08-25")
+    messages = validate_source_pins([entry])
+    assert len(messages) == 1, messages
+    assert "branch" in messages[0] and "'master'" in messages[0]
+    assert "well-formed" not in messages[0]
+
+
+def test_look_alike_host_with_urldate_still_passes_as_an_ordinary_web_url() -> None:
+    # The malformed-authority check must not flag a well-formed host, even one
+    # that is a look-alike of a code host: it is not ambiguous, just untrusted.
+    entry = _entry("x", url="https://github.com.evil.example/post", urldate="2026-08-25")
+    assert validate_source_pins([entry]) == []
+
+
+def test_malformed_authority_check_does_not_affect_a_genuinely_pinned_code_host_url() -> None:
+    entry = _entry("x", url=f"https://github.com/o/r/blob/{SHA}/f.py", commit=SHA)
+    assert validate_source_pins([entry]) == []

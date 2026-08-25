@@ -9,6 +9,16 @@ the pin mean something:
 * every ``source-audit`` ``url`` must carry an ``http://`` or ``https://``
   scheme -- a scheme-less ``github.com/...`` has no hostname and would
   otherwise escape every code-host rule below;
+* the URL's authority must be well-formed *before* any host or path rule
+  looks at it: ``urllib.parse.urlsplit`` is RFC 3986-shaped, so a URL can
+  carry a valid ``https`` scheme while ``hostname`` is still ``None``
+  (``https:///owner/repo``, a run of ``/`` other than exactly two after the
+  scheme) or hold a backslash where a WHATWG-conformant browser accepts one
+  as a path/authority separator (``github.com\\owner`` resolves to host
+  ``github.com``, path ``/owner``) -- both used to make ``is_code_host``
+  false and route straight past every rule below to the non-code-host check,
+  which passes on a ``urldate`` alone even though a browser resolves the same
+  spelling onto a moving branch on a real code host;
 * the host is normalised the way a browser resolves it before it is compared
   with the code-host list (lowercase, userinfo and port dropped, percent-escapes
   decoded, IDNA-mapped to ASCII and only *then* trailing dots stripped, so the
@@ -155,6 +165,35 @@ def _segments(url: str) -> list[str]:
         elif part and part != ".":
             resolved.append(part)
     return resolved
+
+
+def _authority_malformed(url: str) -> bool:
+    """Whether ``url`` lacks the one authority a browser would resolve it to.
+
+    WHATWG's special-scheme rules disagree with :mod:`urllib.parse` on two
+    points that both let an ``http(s)`` URL through the scheme guard while
+    still having no reliable host:
+
+    * a run of ``/`` (or ``\\``) other than exactly two right after the
+      scheme still reaches an authority for a special scheme like ``https``
+      -- ``https:///x``, ``https:////x`` and ``https:x`` (no slash at all)
+      all resolve to host ``x`` in a browser -- but ``urlsplit`` treats
+      anything other than exactly ``//`` as "no authority", so ``hostname``
+      is ``None`` and the URL would otherwise fall through to the
+      non-code-host rules as if it had no recognisable host at all;
+    * ``\\`` is accepted as a slash in the *authority* and *path* states for
+      a special scheme, so ``github.com\\owner`` resolves to host
+      ``github.com``, path ``/owner`` -- but ``urlsplit`` reads it as an
+      ordinary path character, so the backslash and everything after it
+      become part of the host string and match no code host.
+
+    No legitimate bibliography URL needs an empty authority or a backslash,
+    so both are treated as a hard error rather than routed as an ordinary
+    web page: the caller must never read "hostname didn't match" as "this is
+    not a code host" without first checking the authority parsed at all.
+    """
+
+    return "\\" in url or not urlsplit(url).hostname
 
 
 def is_code_host(url: str) -> bool:
@@ -365,6 +404,13 @@ def validate_source_pins(entries: Iterable[BibEntry]) -> list[str]:
         url = entry.fields.get("url", "").strip()
         if url and urlsplit(url).scheme not in {"http", "https"}:
             messages.append(f"{entry.key}: url {url!r} must start with http:// or https://")
+        elif url and _authority_malformed(url):
+            # Allow-list on a successfully normalised host: an authority that
+            # did not parse is a hard error, never "not a code host".
+            messages.append(
+                f"{entry.key}: URL {url} is not a well-formed http(s) address "
+                "(empty/ambiguous host or backslash); a browser would resolve it elsewhere"
+            )
         elif url and is_code_host(url):
             messages.extend(_validate_code_host(entry, url))
         else:
