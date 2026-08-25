@@ -6,9 +6,10 @@
 
 | 声明 | 主要来源 | QuViz 验证 | 边界 |
 |---|---|---|---|
-| $Y_\ell^m$ 与 Laguerre 定义/约定 | [@dlmf-spherical-harmonics, §14.30; @dlmf-laguerre, eq. 18.5.12; @griffiths2018qm, ch. 4 (pp. 131–197)] | 归一化、正交（径向/角向/全波函数）、通式节点数、$H\psi-E\psi$、$L^2$、$L_z$、$\langle r\rangle$、$\langle1/r\rangle$，均在 `tests/test_analytic_gates.py` | SciPy 参数顺序必须显式映射；角度顺序错误会被变异测试捕获 |
+| $Y_\ell^m$ 与 Laguerre 定义/约定 | [@dlmf-spherical-harmonics, §14.30; @dlmf-laguerre, eq. 18.5.12; @griffiths2018qm, ch. 4 (pp. 131–197)] | 归一化、正交（径向/角向/全波函数）、通式径向节点数、$H\psi-E\psi$、$L^2$、$L_z$、$\langle r\rangle$、$\langle1/r\rangle$，均在 `tests/test_analytic_gates.py` | SciPy 参数顺序必须显式映射；角度顺序错误会被变异测试捕获 |
 | 代码 API 的角度、相位和函数签名 | [@scipy-sph-harm-y; @scipy-eval-genlaguerre] | 与低阶解析式交叉比较 | 官方 API 只证明接口，不证明本项目调用正确 |
 | 教学推导路线 | [@solara-hydrogen-derivation] | 独立代数与测试 | PDF 正确不代表配套动画源码正确 |
+| 节点与轨道形状的教学直觉 | [@floatheadphysics2025-orbitals, 13:29--24:08] | 通式径向节点计数、低阶角/径向节点场景契约与球谐函数测试 | 驻波类比不证明氢原子动能趋势；$d_{z^2}$ 与磁量子数边界见纠错账本 |
 | 轨道外观 | [@orbitron; @minutephysics2021atoms; @science-asylum2020-orbitals] | 节点/对称性测试和人工视觉回归 | 图库与视频不是数值真值 |
 
 ## 采样、几何与数值
@@ -32,6 +33,6 @@
 
 ## 学习动机与视觉语言
 
-minutephysics、The Science Asylum 和知乎材料可以解释为什么值得计算、作图和区分密度/相位/概率流 [@minutephysics2021atoms; @science-asylum2020-orbitals; @zhihu-molecular-orbital]。它们承担叙事与教学责任，不单独承担公式、数值常数或算法无偏性的证明。
+minutephysics、The Science Asylum、FloatHeadPhysics 和知乎材料可以解释为什么值得计算、作图和区分密度/相位/概率流，也提供节点形状的教学叙事 [@minutephysics2021atoms; @science-asylum2020-orbitals; @floatheadphysics2025-orbitals, 13:29--24:08; @zhihu-molecular-orbital]。它们承担叙事与教学责任，不单独承担公式、数值常数或算法无偏性的证明。
 
 具体材料判定见[用户提供资料审计](source-audit.md)，错误位置和修正见[纠错账本](corrections.md)。

@@ -120,12 +120,26 @@ renders them as author-year labels.
 
 [source](https://claude.ai/code/artifact/e9c58805-458b-446a-9913-b80e9c108bc4)
 
+<a id="comenius2025-quantum-theory-ps03"></a>
+### `comenius2025-quantum-theory-ps03` — Príklady na domácu úlohu z kvantovej teórie: Sada č. 3 (Quantum Theory Homework Problems: Set No. 3)
+
+**Comenius University Bratislava.** 2025.
+
+[source](https://davinci.fmph.uniba.sk/~blazek1/QM/QM_2526/PS03.pdf)
+
 <a id="evanescence"></a>
 ### `evanescence` — Evanescence: An Exploration in the Visualization of Hydrogenic Orbitals
 
 **Meng, Alvin Q.** 2022.
 
 [source](https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799)
+
+<a id="floatheadphysics2025-orbitals"></a>
+### `floatheadphysics2025-orbitals` — We finally understood orbital shapes intuitively! (My mind is blown)
+
+**FloatHeadPhysics.** 2025.
+
+[source](https://www.youtube.com/watch?v=M--6_0F62pQ)
 
 <a id="mocquin2022-fdm"></a>
 ### `mocquin2022-fdm` — 300-times Faster Resolution of Finite-Difference Method Using NumPy

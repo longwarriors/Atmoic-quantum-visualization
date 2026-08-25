@@ -74,6 +74,40 @@ $$
 
 正确作者包括 **Shane P. Tully** 与 **Przemyslaw Maslak**；旧索引中的 “Stephen P. Tully” 和 “Peter Maslak” 不是 DOI 注册元数据。BibTeX 已按 DOI `10.1021/ed300393s` 修正 [@tully2013pointillist]。
 
+## FloatHeadPhysics 轨道形状视频
+
+这段视频的节点动画仍有教学价值；以下纠正限定到具体时间段，不把局部错误扩散成对整段材料的否定 [@floatheadphysics2025-orbitals]。
+
+### 局域密度与径向分布（06:06--10:00）
+
+视频先把“从原子核向外的概率”描述成在原点为零、随后上升，又说视觉上的点密度不重要、每个半径上的总点数才重要。这里在没有稳定标明体积元的情况下切换了两个不同分布 [@floatheadphysics2025-orbitals, 06:06--10:00]：
+
+$$
+\rho_{1s}(r)=|\psi_{1s}(r)|^2,
+\qquad
+p_r(r)=4\pi r^2\rho_{1s}(r).
+$$
+
+$\rho_{1s}$ 是单位物理体积的局域密度，在原点最大；$p_r(r)dr$ 是整个薄球壳的概率，在原点为零。点云的局域拥挤程度与径向分箱计数都重要，只是不能互换。项目采用的完整球坐标测度见[坐标与概率测度](../concepts/coordinate-measures.md) [@griffiths2018qm, ch. 4 (pp. 131--197)]。
+
+### 节点与平均动能（05:05--06:05）
+
+视频借一维弦类比声称：节点更多使电子局限在更小区域，动量不确定度与动能随之增大 [@floatheadphysics2025-orbitals, 05:05--06:05]。对库仑氢样定态，这条推论不成立。写 $E_n=-C/n^2$（$C>0$），virial theorem 给出：
+
+$$
+2\langle T\rangle=-\langle V\rangle,
+\qquad
+\langle T\rangle=-E_n=\frac{C}{n^2}.
+$$
+
+因此 $n$ 增大时总能量变得较不负，但平均动能减小。常见实基下 $N_{\mathrm{total}}=n-1$ 仍然正确；错误的是用“更局限、动能更高”解释该节点计数 [@griffiths2018qm, p. 125 (virial theorem) and ch. 4 (pp. 131--197)]。
+
+### $d_{z^2}$ 与磁量子数（21:58--30:18）
+
+视频把“两个角节点”主要画成两个平面，并把 $d$ 轨道概括成四瓣 [@floatheadphysics2025-orbitals, 21:58--24:08]；但 $d_{z^2}$ 的角因子 $3\cos^2\theta-1$ 在 $\cos\theta=\pm1/\sqrt3$ 为零，节点是圆锥面，等值面呈两瓣加环。角节点数只规定零点集合的数量，不规定它们都是平面 [@dlmf-spherical-harmonics, eq. 14.30.3]。
+
+视频随后用顺/逆时针旋转节点解释 $m=-\ell,\ldots,+\ell$ [@floatheadphysics2025-orbitals, 27:25--30:18]。这可以帮助记忆简并子空间的维数 $2\ell+1$，却不能把 $m$ 直接解释成实轨道朝向：复基中的 $m$ 是 $L_z/\hbar$ 本征值，$p_x,p_y$ 等定向实轨道是 $m=\pm1$ 态的线性组合。项目约定见[实轨道与复轨道](../tutorials/real-vs-complex.md) [@dlmf-spherical-harmonics, eqs. 14.30.3, 14.30.6, and 14.30.11_5]。
+
 ## QuViz 自身审计的纠错
 
 纠错账本对本项目的审计输出同样适用。以下条目是 QuViz 写错、而不是来源写错。

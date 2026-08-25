@@ -26,15 +26,39 @@ $$
 
 ## 节点计数
 
+径向节点数与角向基选择无关：
+
 $$
-N_{\mathrm{radial}}=n-\ell-1,
-\qquad
+N_{\mathrm{radial}}=n-\ell-1.
+$$
+
+在常见的实球谐（tesseral）基中，若按独立节点面计数，则：
+
+$$
 N_{\mathrm{angular}}=\ell,
 \qquad
 N_{\mathrm{total}}=n-1.
 $$
 
+复基 $Y_\ell^m\propto P_\ell^{|m|}(\cos\theta)e^{im\phi}$ 的 $e^{im\phi}$ 没有零点；实基中的方位节点面在复基中表现为相位绕转。因此后两个计数不能脱离 `basis` 当成相同的节点面拓扑 [@dlmf-spherical-harmonics, §14.30]。
+
 节点计数是高价值回归测试。图像看起来“像”并不够；错误的径向多项式通常会把节点放到错误半径。
+
+!!! tip "节点直觉：先看拓扑，再回到方程"
+
+    从一维驻波过渡到三维节点，是理解常见实 $s/p/d$ 外观的一条有效教学路线：在固定 $n$ 下，把节点面分成径向与角向两类，再观察零点集合如何分割空间。FloatHeadPhysics 的动画在 13:29--24:08 对这条路线给出了清晰演示 [@floatheadphysics2025-orbitals, 13:29--24:08]。
+
+    但“角节点”不等于“平面节点”。例如：
+
+    $$
+    Y_2^0\propto 3\cos^2\theta-1
+    $$
+
+    的两个角节点满足 $\cos\theta=\pm1/\sqrt3$，是圆锥面；因此 $d_{z^2}$ 呈两瓣加环，而不是四瓣。节点的数量和位置必须由球谐函数与径向函数决定，不能由切蛋糕类比直接推出 [@dlmf-spherical-harmonics, eq. 14.30.3]。
+
+!!! warning "节点更多不代表氢原子的平均动能更高"
+
+    一维弦或无限深势阱中“节点更多、波长更短、动能更高”的直觉不能原样搬到库仑束缚态。氢样定态满足 virial 关系 $2\langle T\rangle=-\langle V\rangle$，所以 $E=\langle T\rangle+\langle V\rangle=-\langle T\rangle$。当 $n$ 增大时 $E_n$ 变得较不负，而 $\langle T\rangle=-E_n$ 反而减小 [@griffiths2018qm, p. 125 (virial theorem) and ch. 4 (pp. 131--197)]。视频 05:05--06:05 的不确定性论证越过了类比的适用边界；常见实基下总节点面数仍是 $n-1$，错误的是这条能量解释 [@floatheadphysics2025-orbitals, 05:05--06:05]。
 
 ## 已确认的资料纠错
 
