@@ -48,6 +48,10 @@ import {
   type VitestFileResult,
   type VitestJsonResults,
 } from '../scripts/assert-no-skips.mjs'
+// `defineConfig` (vitest/dist/config.cjs) is the identity function for a
+// plain-object argument, and vitest.config.ts calls it with one: this import
+// IS the resolved config, not a copy or a default-merged approximation.
+import vitestConfig from '../vitest.config'
 
 const SRC_ROOT = fileURLToPath(new URL('.', import.meta.url))
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -76,9 +80,33 @@ const isTestFile = (path: string): boolean => TEST_FILE.test(path)
  * types.ts is excluded from the coverage *thresholds* there but is still
  * scanned here: a pragma in it would be pointless, and pointless pragmas are
  * the kind that get copy-pasted into a gated file next.
+ *
+ * That "mirrors" is a claim about two hand-maintained things staying in
+ * sync, not a structural guarantee: this regex never reads vitest.config.ts,
+ * so nothing here would notice if the two drifted apart (e.g. a file quietly
+ * added to `coverage.exclude` to dodge its per-file threshold). The
+ * "coverage scope binding" test in the `scan scope` block below closes that
+ * gap by deep-equalling the *actual* resolved `coverage.include` /
+ * `coverage.exclude` against the literal arrays this function assumes.
  */
 const isGatedSource = (path: string): boolean =>
   /^(api|scene)\/.*\.ts$/.test(path) && !path.startsWith('scene/shaders/') && !isTestFile(path)
+
+/**
+ * The literal `coverage.include` / `coverage.exclude` arrays `isGatedSource`
+ * above assumes vitest.config.ts declares. Asserted against the real,
+ * resolved config in the "coverage scope binding" test below: editing either
+ * array in vitest.config.ts without a matching, reviewed edit here fails
+ * `npm test` instead of silently shrinking what `scan scope` and the pragma
+ * scan (in "committed suite integrity") treat as gated.
+ */
+const EXPECTED_COVERAGE_INCLUDE = ['src/api/**/*.ts', 'src/scene/**/*.ts']
+const EXPECTED_COVERAGE_EXCLUDE = [
+  'src/scene/shaders/**',
+  'src/**/*.{test,spec}.{ts,tsx}',
+  'src/**/__tests__/**',
+  'src/api/types.ts',
+]
 
 // Fragments, joined at runtime, so that this file never spells out a token it
 // forbids. Each list is a positive control below, asserted against the very
@@ -295,6 +323,27 @@ describe('scan scope', () => {
     // layer has no JSX, so any such file is a scope leak, not a component.
     const leaked = allFiles.filter((path) => path.startsWith('api/') && path.endsWith('.tsx'))
     expect(leaked, 'runtime modules outside the coverage include').toEqual([])
+  })
+
+  it('binds isGatedSource to the real coverage.include / coverage.exclude in vitest.config.ts', () => {
+    // `isGatedSource` is a hand-written regex; nothing before this test made
+    // it agree with the config vitest actually runs coverage against. This
+    // reads the resolved config object itself (not a re-parsed copy) and
+    // fails the moment the two disagree, e.g. a file appended to
+    // `coverage.exclude` to drop it from measured coverage without touching
+    // this file.
+    // `test.coverage` is typed as a `provider`-discriminated union (v8 /
+    // istanbul / custom), and the `custom` branch has no `include` /
+    // `exclude` at all, so TS won't let those fields be read without first
+    // narrowing on a `provider` value this file has no reason to hard-code.
+    // The cast only widens to "has these two optional fields, of unknown
+    // element type"; it does not assert their contents, which is what the
+    // two `toEqual` calls below actually verify against runtime data.
+    const coverage = vitestConfig.test?.coverage as
+      | { include?: unknown; exclude?: unknown }
+      | undefined
+    expect(coverage?.include).toEqual(EXPECTED_COVERAGE_INCLUDE)
+    expect(coverage?.exclude).toEqual(EXPECTED_COVERAGE_EXCLUDE)
   })
 })
 
