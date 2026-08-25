@@ -17,7 +17,7 @@
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮与测试套件自检的 vitest 单测（219 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、实际插桩的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮与测试套件自检的 vitest 单测（223 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、实际插桩的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -82,18 +82,32 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 又一轮对抗性复检确认上一轮的七项修复全部成立（16 次攻击被挡下，覆盖率百分比算法与 `istanbul-lib-coverage@3.2.2` 在九个刁钻样例上逐项相同），但指出同一处结构性错误又向外挪了一格：范围绑住了、门槛绑住了，**测量者本身**（`coverage.provider`）仍然没有被任何断言读到，于是 CLI 参数与插件 `config()` 钩子两种改法都能让一个自写报告的 custom provider 顶替真实插桩，`check.ps1` 报 `All checks passed!` exit 0。本轮不再“再绑一个键”，改为把 vitest **解析后**的整份覆盖率配置捕获下来整体比对（见上一节）；同时按“先复现再修复”补上四处：`test` 脚本里的覆盖率参数与 npm 生命周期钩子、`clean-coverage.mjs` 的删除清单、`web/src/guards.test.ts` 的存在性都被从 `tests/` 钉住；类型专用模块的守卫由**逐行正则**改为用 TypeScript 编译器 API **真正解析**该文件的顶层声明（正则作为第二层保留），因为 `export` 换行后接 `function backdoorInTypes(…)` 与 `;export const backdoorInTypes = …` 两种写法都是合法 TypeScript、都能通过 `tsc`、都把可执行且未覆盖的代码放进门禁根目录，而原有七个正面对照全是单行写法，按构造就抓不到这一类。另补正两处此前说得过头的表述：上一轮把类型专用守卫的缺口说成“只漏掉裸副作用”，实际它连值导出也漏（即上述两种写法）；上一轮说“门禁信任报告文件”的敞口“由预清理加 `&&` 链条兜住”，这句不成立——预清理本身当时没有任何测试钉住，而 `&&` 链条挡不住由运行自己写出报告的 custom provider，现在兜住它的是解析后配置的整体比对加上这三处新钉。
 
+**这一段本身也需要就地更正。**“整体逐键比对”是真的，它也确实挡住了*诚实的* custom provider——同一个伪 provider 只要让 `resolveOptions()` 原样返回选项，门禁立刻变红（已复现）——但它**没有**关闭 custom provider 这条攻击，而上面的写法读起来像是关闭了。vitest 在 `Vitest.start()` 里先执行 `this.config.coverage = this.coverageProvider.resolveOptions()`，之后才进入 `runFiles()` → globalSetup，而 `project.config` 与那个对象是同一引用：捕获模块读到的，正是 provider 自己交回来的那份配置。于是一个约 60 行、`resolveOptions()` 返回 `{...options, provider: 'v8'}` 并删掉 `customProviderModule` 的伪 provider，能让**未经任何改动的**捕获模块写出一份完全干净的捕获，而实际上一行都没有插桩——插件钩子形态下 `npm test` exit 0、23 项 pytest 全过、`check.ps1` 报 `All checks passed!`，捕获文件自始至终没有被碰过。这不是捕获模块写错了，而是“运行为自己作证”的必然结果；下面的《门禁的防护边界》把这条界线写清楚。
+
+最后一轮（本轮）不再增加“运行内部的第五层”。上一段说明了为什么再加也没有用：任何在这个进程里产生的证据，都可以被这个进程伪造。本轮只做两件事——把确实能抬高地板、尤其是能挡住**粗心**削弱（这才是这道门禁的日常职责）的便宜修复补齐，然后把边界如实写下来。四项修复同样按“先复现再修复”：`test` 调用链此前按**有序子集**匹配各段，允许在任意位置**插入**一段，实测把 `&& node scripts/postprocess-coverage.mjs` 插在 vitest 与校验器之间、再配一个删掉 `thresholds` 的插件钩子，约 40 行脚本就能由 `coverage-scope.json` 反向拼出 `resolved-coverage.json` 与 `coverage-final.json`，`npm test` exit 0，而屏幕上 vitest 自己的表格就写着 `color.ts | 66.66`，当时全部 pytest 照常通过——现在改为**逐段全等**于一个有序元组（同序、同数、不许有多余段），插入即变红，顺带把子集写法从未点名的 `tsc` 类型检查段与写出 JSON 结果文件的 reporter 参数也一并钉住；从 `tests/`（运行够不到的地方）另加两条钉子——`web/vitest.config.ts` 不得声明 `plugins` 键（这一条单独就挡掉了上述插件钩子形态与更早的 A21），`web/scripts/` 目录必须恰好是清单里那七个文件（伪 provider 与插入段的第一步都是往这里放一个新模块）；类型专用模块的守卫此前的理由是错的——注释写着裸副作用“不导出任何东西，因而无法承载受门禁模块调用的代码”，实测 `;(globalThis as …).__hsv = (h, s, v) => {…}` 写进 `src/api/types.ts`、`src/scene/color.ts` 只留 `import '../api/types'`，就把整份实现（含两个未测分支）搬进了一个不被任何东西测量的模块，而 `color.ts` 报 100/100/100/100、门禁全绿——现在该文件的顶层只允许**编译器不产出任何运行时**的形式（import/export、interface、type、`declare`、空语句），表达式语句、变量、函数、类、活的 `enum`/`namespace`、裸副作用 import 一律变红，错误的注释也已改掉；另修两处小问题：捕获里的标记此前把 `undefined` 写成字符串 `"<undefined>"`，与一个真的叫 `"<undefined>"` 的字符串值无法区分，现改为只有一个 `__captured` 键的**对象**标记（真值恰好带该键时再套一层转义），`reportsDirectory` 的比较此前区分大小写，在 Windows 上 `<root>/COVERAGE` 与 `<root>/coverage` 本是同一个目录却会误报变红，现在按平台折叠大小写。防御纵深上还把 vitest 实际加载的 provider **对象**的 `name` 一并捕获并硬性要求为 `v8`：它只抓得住不加伪装的假 provider（vitest 会在三行绿色门禁摘要正上方打印 `Coverage enabled with fake`），一个声明 `name = 'v8'` 的假 provider 照样通过——这一层在代码注释、测试用例与下面这一节里都被明确标注为**一层，而不是墙**。
+
+### 门禁的防护边界
+
+前四轮每一轮都在运行内部再加一层观察者，第五轮不再这样做。这里如实写清这道前端门禁挡得住什么、挡不住什么。
+
+**挡得住的，是覆盖率被“配置”悄悄削弱**——不论削弱是有意还是随手为之，而后者才是它日常真正在挡的东西。以下每一条都曾实测能让 `npm test` 以 exit 0 通过，现在都会变红：缩小 `coverage.include`/`exclude`；下调、置零、删除 `thresholds`（改配置源码、写进 CLI 参数、或由插件 `config()` 钩子删键，三种形态）；`perFile: false`；隐藏的点文件逃出源码扫描范围；把运行时模块放到不被 `coverage.include` 匹配的扩展名下（`.mts`/`.cts`/`.js`/`.mjs`）；整块文件的覆盖率 pragma（模块报 0/0/0/0，而 vitest 自己的门槛检查按 istanbul 的算法判为 100%）；用上一轮遗留的报告顶账；从 `npm test` 链条里删掉一段门禁，或在其中插入一段；删除或清空 `guards.test.ts`；用 npm 的 `pretest`/`posttest` 生命周期钩子；把“类型专用”模块写成不再类型专用；`projects`/`workspace` 配置；取反或裸目录形式的匹配模式。
+
+**挡不住的，是有人写代码去谎报覆盖率。** 具体是两类：一个 custom coverage provider 伪造 `resolveOptions()`（上文详述，捕获文件甚至不需要被碰）；以及一段能改写产物的额外链条段（上面已按精确元组关闭了这一处，但这一**类**依然存在——凡是能在 vitest 与校验器之间写 `coverage/*.json` 的东西都能击穿全部三道检查）。原因一句话就够：**所有在这个进程里产生的证据，都可以被这个进程伪造**；再加第几层都不改变这一点，因为新层也在同一个进程里。要真正关闭它，需要脱离 `check.ps1` 这条链去独立插桩（例如用一份单独配置再跑一遍覆盖率并比对两次结果），或者由 CI 把覆盖率配置与一份受保护的基线做 diff——两条都需要 CI 侧改动，本轮**有意**不做。可以如实计入的补偿性控制只有一条：一次给仓库加入 coverage provider 或 vite 插件的 diff 本身就是评审信号，而上面那两条钉子（不许有 `plugins` 键、`web/scripts/` 文件清单）把这种 diff 从“评审者也许会注意到”变成了“必须评审通过才能落地”——挡的是落地成本，不是运行时的伪造能力。
+
+**已知的组合逃逸**：把受门禁模块的函数体整体搬进不受测量的模块（`src/state/`、`src/components/`）、只留一行 re-export，受门禁模块仍会以 100% 通过。这是 PR-8 声明的范围边界，不是新漏洞；关掉它要靠给那一层写测试，而不是再改一道守卫。
+
 ### 本树实测结果
 
-下表在本分支最后一次门禁提交（含上述解析后覆盖率配置捕获，以及调用链/清理清单/守卫存在性/类型专用模块解析四项修复）之上重新测得；这里不再写具体 commit 哈希，因为记录本身要落在下一个提交里，写死的哈希每次都会立刻过时。`pytest`/`npm run test` 在本检出上逐项直接执行，并以 `pwsh -NoProfile -File scripts/check.ps1` 端到端复跑核对，exit 0——复跑时 `web/dist` 已存在，773 passed、219 passed 与下表一致，覆盖率相应读作 92.37%（`web/dist` 缺席时的 92.28% 是更早一轮在全新工作树上的测值，见下表说明）。`db32d43` 与 `ea9873c` 上的记录（`git worktree add` 一棵全新工作树，无 `web/dist`、无 `node_modules`，`npm ci` 后端到端执行同样 exit 0，覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）验证的是更早一轮、T1 补上 reparse/硬链接解析之前的 check.ps1，是那一轮的历史存档，不是下表数字的来源：
+下表在本分支最后一次门禁提交（含上述解析后覆盖率配置捕获，以及调用链精确元组、`plugins` 与 `web/scripts/` 清单、类型专用模块副作用扫描、标记编码与 `reportsDirectory` 大小写四项收尾修复）之上重新测得；这里不再写具体 commit 哈希，因为记录本身要落在下一个提交里，写死的哈希每次都会立刻过时。`pytest`/`npm run test` 在本检出上逐项直接执行，并以 `pwsh -NoProfile -File scripts/check.ps1` 端到端复跑核对，exit 0——复跑时 `web/dist` 已存在，775 passed、223 passed 与下表一致，覆盖率相应读作 92.37%（`web/dist` 缺席时的 92.28% 是更早一轮在全新工作树上的测值，见下表说明）。`db32d43` 与 `ea9873c` 上的记录（`git worktree add` 一棵全新工作树，无 `web/dist`、无 `node_modules`，`npm ci` 后端到端执行同样 exit 0，覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）验证的是更早一轮、T1 补上 reparse/硬链接解析之前的 check.ps1，是那一轮的历史存档，不是下表数字的来源：
 
 | 检查 | 当前结果 |
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；96 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 773 passed，0 failed，0 skipped，68 warnings；本树总覆盖率 92.37%（门槛 85%）——本检出存在 `web/dist`；无 `web/dist` 的全新工作树上此前测得 92.28%（本轮未重测），差异来自 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `uv run --group docs pytest --cov=quviz` | 775 passed，0 failed，0 skipped，68 warnings；本树总覆盖率 92.37%（门槛 85%）——本检出存在 `web/dist`；无 `web/dist` 的全新工作树上此前测得 92.28%（本轮未重测），差异来自 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过（2.6 s；仅上游 mkdocs-material 2.0 提示） |
-| `npm run test` | 4 个文件 219 tests passed（`guards.test.ts` 123、`qvpc.test.ts` 65、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`assert-coverage-scope` 先核对 `resolved-coverage.json`：本次运行解析后的覆盖率配置与 `coverage-scope.json` 的 `resolvedCoverage` 逐键一致（provider 为 `v8`，无 `customProviderModule`），再核对 `coverage-final.json`：实际插桩 3 个模块，与 `coverage-scope.json` 完全一致，且三个模块重算出的覆盖率均达到 `thresholds`（语句 90%、分支 85%、函数 90%、行 90%）；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
+| `npm run test` | 4 个文件 223 tests passed（`guards.test.ts` 127、`qvpc.test.ts` 65、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`assert-coverage-scope` 先核对 `resolved-coverage.json`：本次运行解析后的覆盖率配置与 `coverage-scope.json` 的 `resolvedCoverage` 逐键一致（provider 为 `v8`，无 `customProviderModule`，vitest 实际加载的 provider 对象 `name` 也是 `v8`），再核对 `coverage-final.json`：实际插桩 3 个模块，与 `coverage-scope.json` 完全一致，且三个模块重算出的覆盖率均达到 `thresholds`（语句 90%、分支 85%、函数 90%、行 90%）；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
 | `npm run build` | 通过；`index-*.js` 1,203.66 kB（gzip 329.07 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
 | 工作树 | `git status --short` 为空；`git ls-files --eol` 无 CRLF 工作副本 |
 
