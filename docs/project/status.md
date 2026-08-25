@@ -77,13 +77,13 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 ### 本树实测结果
 
-在提交 `db32d43` 上按复审要求的方式测得：`git worktree add` 一棵全新工作树（无 `web/dist`、无 `node_modules`），`npm ci` 后以 `pwsh -NoProfile -File scripts/check.ps1` 端到端执行，exit 0（从另一个目录以绝对路径调用同一脚本的核对在 `ea9873c` 上做过：它打印的根目录是新工作树而不是调用者目录，同样 exit 0，各步数字一致，只有覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）：
+下表在当前 HEAD（`b5b4a85`，含上述四项修复）上重新测得：`pytest`/`npm run test` 在本检出上逐项直接执行，并以 `pwsh -NoProfile -File scripts/check.ps1` 端到端复跑核对，exit 0——复跑时 `web/dist` 已存在，767 passed、178 passed 与下表一致，覆盖率相应读作 92.37%（`web/dist` 缺席时的 92.28% 见下表说明）。`db32d43` 与 `ea9873c` 上的记录（`git worktree add` 一棵全新工作树，无 `web/dist`、无 `node_modules`，`npm ci` 后端到端执行同样 exit 0，覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）验证的是更早一轮、T1 补上 reparse/硬链接解析之前的 check.ps1，是那一轮的历史存档，不是下表数字的来源：
 
 | 检查 | 当前结果 |
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；96 个文件已格式化 |
 | `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 767 passed，0 failed，0 skipped，68 warnings；总覆盖率 92.28%（门槛 85%）——该数字在全新工作树（无 `web/dist`）上测得；`web/dist` 存在时略高，因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `uv run --group docs pytest --cov=quviz` | 767 passed，0 failed，0 skipped，68 warnings；总覆盖率 92.28%（门槛 85%）——该数字在全新工作树（无 `web/dist`）上测得；`web/dist` 存在时为 92.37%（见上文端到端复跑），因为 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过（2.6 s；仅上游 mkdocs-material 2.0 提示） |
 | `npm run test` | 4 个文件 178 tests passed（`qvpc.test.ts` 65、`guards.test.ts` 82、`client.test.ts` 27、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`qvpc.ts`、`client.ts` 与 `color.ts` 语句/分支/函数/行覆盖率均 100% |
