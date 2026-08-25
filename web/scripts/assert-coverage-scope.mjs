@@ -72,15 +72,20 @@
  * below; it is what "the process vouches for itself" means, and no further
  * layer inside the process can close it.
  *
- * What bounds it instead is that WIRING a provider in now costs a reviewed
- * diff: tests/test_check_script.py forbids `--coverage.` in the `test` script,
- * forbids a `plugins` key in vitest.config.ts, pins the `test` chain to an
- * exact stage tuple, and pins the file list under scripts/ -- all from
- * outside, where the run cannot reach them. Closing the class itself means
- * instrumenting independently of this chain (a second, separately configured
- * coverage run) or diffing the coverage configuration against a protected
- * baseline in CI. Both are deliberately out of scope here; see
- * docs/project/status.md, "门禁的防护边界".
+ * What bounds it instead is that each KNOWN way of wiring a provider in costs
+ * a reviewed diff: tests/test_check_script.py forbids `--coverage.` in the
+ * `test` script, forbids a `plugins` key in vitest.config.ts, pins that file's
+ * import list, pins the `test` chain to an exact stage tuple, and pins the
+ * file list under scripts/ -- all from outside, where the run cannot reach
+ * them. Read that as a list of closed spellings, not as a bound on the class.
+ * The import pin is on it because without it the `plugins` array moved one
+ * import away and the rest stayed silent: check.ps1 at exit 0, a forged
+ * coverage-final.json certified by all three passes below, an uncovered
+ * exported function shipping (measured). A wiring none of them names would do
+ * the same. Closing the class itself means instrumenting independently of this
+ * chain (a second, separately configured coverage run) or diffing the coverage
+ * configuration against a protected baseline in CI. Both are deliberately out
+ * of scope here; see docs/project/status.md, "门禁的防护边界".
  *
  * FAIL-CLOSED throughout. A missing, unparseable, non-object or empty report
  * or capture is a failure, never a pass -- `--coverage.enabled=false` and a

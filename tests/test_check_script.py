@@ -53,7 +53,7 @@ say (no coverage override in the invocation), what npm wraps around it (no
 which nothing else in the repo reads -- still exists and still contains its
 blocks.
 
-Two pins in that group are here rather than in ``web/`` for a stronger reason
+Three pins in that group are here rather than in ``web/`` for a stronger reason
 than symmetry: they are the only checks the *run* cannot reach. A Vite plugin's
 ``config()`` hook rewrites the configuration vitest resolves without touching a
 byte of any file the front-end guards read, and a coverage provider reached
@@ -61,9 +61,13 @@ that way hands the run's own gates a report the run wrote itself -- measured,
 with ``check.ps1`` printing "All checks passed!". Nothing inside the process
 can settle that (see the boundary note atop
 ``web/scripts/assert-coverage-scope.mjs`` and ``docs/project/status.md``). What
-these do is make the wiring impossible to add quietly: ``vitest.config.ts``
-must declare no ``plugins``, and ``web/scripts/`` must hold exactly the modules
-listed here.
+these do is put a price on the WIRING, one spelling at a time:
+``vitest.config.ts`` must declare no ``plugins`` and must import exactly the
+modules pinned here, and ``web/scripts/`` must hold exactly the modules listed
+here. Each closes a way of reaching a provider; none closes the provider, and
+the list is a list of the wirings that are known. The import pin is here
+because without it the plugins array simply moved one import away and took
+``check.ps1`` to exit 0 with the other two silent -- measured, on this tree.
 """
 
 from __future__ import annotations
@@ -762,12 +766,20 @@ def test_vitest_config_declares_no_plugins() -> None:
 
     Nothing inside the run can see that, because everything inside the run is
     written by the process the attacker controls (see the boundary note atop
-    ``web/scripts/assert-coverage-scope.mjs``). What this does is make the
-    WIRING impossible to add silently: this repo declares no plugins, so a diff
-    that adds one has to edit this file, and this assertion turns that from a
-    thing a reviewer might notice into a red build. If a plugin is ever
-    genuinely needed, pin the array here the way ``globalSetup`` is pinned in
-    ``web/src/guards.test.ts``.
+    ``web/scripts/assert-coverage-scope.mjs``). What this does is put a price
+    on the cheapest wiring: a ``plugins`` array spelled out in this file has to
+    be added to this file, and this assertion turns that into a red build.
+
+    It is not a wall, and the limit is the pattern's reach -- it reads this
+    file's own text and nothing else. Spread the array in from an imported
+    module and there is nothing here to match: measured on this tree, that
+    took the whole of ``check.ps1`` to exit 0 with a forged coverage report,
+    this assertion silent. ``test_vitest_config_imports_exactly_these_modules``
+    below closes that spelling. The two together bound the wirings that are
+    known, not the attack.
+
+    If a plugin is ever genuinely needed, pin the array here the way
+    ``globalSetup`` is pinned in ``web/src/guards.test.ts``.
     """
 
     source = WEB_VITEST_CONFIG.read_text(encoding="utf-8")
@@ -777,6 +789,99 @@ def test_vitest_config_declares_no_plugins() -> None:
         f"{source[max(0, found.start() - 40) : found.end() + 40]!r}. A plugin's config() hook "
         "rewrites the config vitest resolves without touching any source the front-end guards "
         "read -- including coverage.provider, which decides who writes the coverage report."
+    )
+
+
+#: Every module ``web/vitest.config.ts`` may pull in, in source order.
+WEB_VITEST_CONFIG_IMPORTS = ("vitest/config",)
+
+#: A string literal or a comment, matched by ONE pattern so that whichever
+#: opens first wins: ``//`` inside a string is not a comment, and an
+#: apostrophe inside a comment does not open a string.
+_TS_STRING_OR_COMMENT = re.compile(
+    r"(?P<string>'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\]|\\.)*`)"
+    r"|(?P<comment>//[^\n]*|/\*.*?\*/)",
+    re.DOTALL,
+)
+
+#: Every spelling that pulls another module in: ``import ... from`` and
+#: ``export ... from``, a bare side-effect ``import 'x'``, a dynamic
+#: ``import('x')``, and ``require('x')``. The clause between the keyword and
+#: ``from`` may span lines but may hold no quote, paren or semicolon, so it
+#: cannot run past the end of its own statement into the next one's specifier.
+_TS_MODULE_SPECIFIER = re.compile(
+    r"\b(?:import|export)\b[^'\"();]*?\bfrom\s*['\"]([^'\"]+)['\"]"
+    r"|\bimport\s*['\"]([^'\"]+)['\"]"
+    r"|\b(?:import|require)\s*\(\s*['\"]([^'\"]+)['\"]"
+)
+
+#: What must not survive once every import above has been accounted for.
+_TS_MODULE_KEYWORD = re.compile(r"\b(?:import|require|from)\b")
+
+
+def _blank(match: re.Match[str]) -> str:
+    """``match`` replaced by spaces, so every other offset stays put."""
+    return " " * len(match.group(0))
+
+
+def test_vitest_config_imports_exactly_these_modules() -> None:
+    """The module list is pinned, because a key can be moved behind an import.
+
+    ``test_vitest_config_declares_no_plugins`` reads this file's own text, so
+    it only sees a ``plugins`` key spelled *here*. Spread the array in from
+    somewhere else and it has nothing to match::
+
+        import { shared } from './base.config'
+        export default defineConfig({ ...shared, test: { ... } })
+
+    Two added lines, both well-typed. Measured on this tree: with the fake
+    provider parked outside ``web/scripts/`` as well, that diff took the whole
+    of ``check.ps1`` to exit 0 with a forged ``coverage-final.json`` certified
+    by all three gate lines and every test in this file passing. So the two
+    pins beside this one bound the cheapest spellings, not the attack.
+
+    This pin closes that spelling: ``vitest.config.ts`` imports exactly one
+    module today, and any other one -- static, bare, dynamic or ``require`` --
+    has to arrive as a reviewed edit to the tuple above. It closes ONE MORE
+    WIRING SPELLING and nothing more. A provider wired in by any means still
+    writes the report the rest of the run is scored against, and no pin from
+    out here changes that; see the boundary note atop
+    ``web/scripts/assert-coverage-scope.mjs``.
+
+    Fail-closed on its own reading, too: after the imports it recognises are
+    blanked out, no ``import`` / ``require`` / ``from`` may remain outside a
+    string or comment. A spelling the pattern above cannot read therefore
+    fails this test instead of passing it silently.
+    """
+
+    source = _TS_STRING_OR_COMMENT.sub(
+        lambda match: _blank(match) if match.group("comment") else match.group(0),
+        WEB_VITEST_CONFIG.read_text(encoding="utf-8"),
+    )
+
+    found: list[str] = []
+    residue = list(source)
+    for match in _TS_MODULE_SPECIFIER.finditer(source):
+        specifier = match.group(1) or match.group(2) or match.group(3)
+        found.append(specifier)
+        residue[match.start() : match.end()] = [" "] * (match.end() - match.start())
+
+    assert tuple(found) == WEB_VITEST_CONFIG_IMPORTS, (
+        "web/vitest.config.ts no longer imports exactly the pinned modules. Moving any part of "
+        "this config behind an import puts it where no assertion over this file's text can see "
+        "it -- which is how a `plugins` array carrying a coverage provider gets in without "
+        f"tripping the no-plugins pin.\n  found:    {tuple(found)}\n"
+        f"  expected: {WEB_VITEST_CONFIG_IMPORTS}"
+    )
+
+    leftover = _TS_MODULE_KEYWORD.search(
+        _TS_STRING_OR_COMMENT.sub(_blank, "".join(residue)),
+    )
+    assert not leftover, (
+        f"web/vitest.config.ts contains {leftover.group(0)!r} outside a string or comment that "
+        "the import pattern above did not read as one of the pinned imports. That is a way of "
+        "pulling in a module this test cannot account for, so it fails rather than passing by "
+        "not matching: teach _TS_MODULE_SPECIFIER the spelling, in a reviewed commit."
     )
 
 
