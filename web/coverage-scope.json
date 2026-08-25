@@ -1,5 +1,5 @@
 {
-  "$comment": "The exact set of source modules the coverage gates hold, as web-root-relative posix paths. ONE manifest, read by two independent checks: src/guards.test.ts asserts that the minimatch derivation from vitest.config.ts's coverage.include/exclude produces exactly `coverageGated` (derivation vs manifest), and scripts/assert-coverage-scope.mjs asserts that the coverage report vitest ACTUALLY wrote for this run lists exactly `coverageGated` (runtime vs manifest). Neither check can be satisfied by editing the other's source. Adding a genuinely new gated module therefore requires a reviewed edit to this file -- that human-review latch is deliberate, not an oversight: it is what makes a silently shrunk or widened coverage scope fail the build. `pragmaScanned` is `coverageGated` plus the type-only modules that carry no per-file threshold but are still scanned for coverage-ignore pragmas.",
+  "$comment": "The exact set of source modules the coverage gates hold, as web-root-relative posix paths, and the per-file thresholds they are held to. ONE manifest, read by two independent checks: src/guards.test.ts asserts that the minimatch derivation from vitest.config.ts's coverage.include/exclude produces exactly `coverageGated` and that `thresholds` equals both its own literal EXPECTED_COVERAGE_THRESHOLDS and vitest.config.ts's coverage.thresholds (config vs manifest), and scripts/assert-coverage-scope.mjs asserts that the coverage report vitest ACTUALLY wrote for this run lists exactly `coverageGated` and that each of those modules' recomputed percentages meet `thresholds` (runtime vs manifest). Neither check can be satisfied by editing the other's source: the config-side deep-equal catches an edit to vitest.config.ts, and the runtime side catches a CLI flag or plugin config() hook that changes the resolved config without touching any source the first side reads. Adding a genuinely new gated module, or moving a threshold, therefore requires a reviewed edit to this file -- that human-review latch is deliberate, not an oversight. It is not the only pin on today's three modules: src/guards.test.ts also names them in literal assertions (`scan scope > coverage-gates exactly the modules coverage-scope.json lists` and the gate fixture below it), which is why a coordinated edit to vitest.config.ts, the canonical arrays and this file still fails the build. Those literals cover exactly the modules listed today; a module added later and quietly removed again is caught by the latch alone. `pragmaScanned` is `coverageGated` plus the type-only modules that carry no per-file threshold but are still scanned for coverage-ignore pragmas.",
   "coverageGated": [
     "src/api/client.ts",
     "src/api/qvpc.ts",
@@ -10,5 +10,12 @@
     "src/api/qvpc.ts",
     "src/api/types.ts",
     "src/scene/color.ts"
-  ]
+  ],
+  "thresholds": {
+    "perFile": true,
+    "statements": 90,
+    "branches": 85,
+    "functions": 90,
+    "lines": 90
+  }
 }

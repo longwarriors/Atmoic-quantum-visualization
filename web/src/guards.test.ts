@@ -44,7 +44,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   auditCoverageScope,
+  auditCoverageThresholds,
   readCoverageScope,
+  summarizeFileCoverage,
   toWebRelative,
 } from '../scripts/assert-coverage-scope.mjs'
 import {
@@ -120,6 +122,61 @@ const EXPECTED_COVERAGE_EXCLUDE = [
 ]
 
 /**
+ * The literal `coverage.thresholds` vitest.config.ts declares. Deep-equalled
+ * against the live config below, exactly as the two arrays above are, and
+ * against coverage-scope.json's copy -- three carriers pinned to each other,
+ * because a threshold nobody checks is the same as no threshold at all.
+ *
+ * Measured, so this is not a formality: appending a genuinely uncovered
+ * exported function to src/scene/color.ts makes vitest print
+ * `70.58 | 100 | 75 | 70.58` for it and exit 1. Each of `perFile: true` ->
+ * `false`, the four values zeroed, and the whole `thresholds` key deleted
+ * makes that same uncovered function pass. All three are edits to
+ * vitest.config.ts alone, and until this array existed nothing read the key.
+ *
+ * This is the config-SOURCE half only. A CLI flag persisted into the `test`
+ * script (`--coverage.thresholds.lines=0`) or a plugin `config()` hook doing
+ * `delete cfg.test.coverage.thresholds` changes the RESOLVED config and
+ * leaves this file byte-identical; scripts/assert-coverage-scope.mjs is what
+ * sees those, by recomputing each gated module's real percentages from the
+ * report the run wrote. Neither half covers the other's case.
+ */
+const EXPECTED_COVERAGE_THRESHOLDS = {
+  perFile: true,
+  statements: 90,
+  branches: 85,
+  functions: 90,
+  lines: 90,
+}
+
+/**
+ * Extensions Vite resolves and executes as a runtime module.
+ *
+ * `coverage.include` matches `*.ts` only, so a module under a gated root with
+ * any other runtime extension is instrumented by nothing, held to no per-file
+ * threshold, and scanned for no coverage pragma. Measured: `src/api/
+ * sneaky.mts`, `.cts` and `.js`, each carrying an uncovered exported
+ * function, all left `npm test` at exit 0. It composes, too -- move
+ * client.ts's body into `src/api/impl.mts` and re-export it and client.ts
+ * still reports 100% while the measured file set is unchanged, which would
+ * defeat the threshold gate as well.
+ */
+const RUNTIME_EXTENSION = /\.(?:[mc]?[jt]sx?)$/
+
+/**
+ * Per gated root, the runtime extensions a module there may carry. The rule
+ * differs by root and the difference is deliberate: `src/scene/**` holds
+ * React/three components that need a WebGL/DOM harness this suite does not
+ * provide (they are PR-8, see vitest.config.ts), so `.tsx` there is expected;
+ * `src/api/**` is plain TypeScript with no JSX, so anything but `.ts` is a
+ * scope leak rather than a component.
+ */
+const ALLOWED_RUNTIME_EXTENSIONS = new Map<string, readonly string[]>([
+  ['api', ['.ts']],
+  ['scene', ['.ts', '.tsx']],
+])
+
+/**
  * `walk()` paths are posix, relative to src/ (e.g. `api/qvpc.ts`); the
  * coverage patterns above are `src/...`-prefixed, matching how vitest itself
  * matches them (relative to the vitest.config.ts root, one level up from
@@ -129,6 +186,13 @@ const EXPECTED_COVERAGE_EXCLUDE = [
  * vitest.config.ts -- which is what the deep-equal test below compares.
  */
 const toConfigPath = (path: string): string => `src/${path}`
+
+/**
+ * A web-root-relative posix path as the absolute, forward-slash key vitest
+ * writes into its JSON reports. Shared by the two gate-fixture blocks below
+ * so both describe the same file the same way.
+ */
+const absolute = (spec: string): string => `${WEB_ROOT.split(sep).join('/')}${spec}`
 
 /**
  * `dot: true` is not a preference here, it is what the provider does.
@@ -544,12 +608,48 @@ describe('scan scope', () => {
     expect(looksLikeBareDirectory('src/api/types.ts')).toBe(false)
   })
 
-  it('keeps the HTTP layer inside the coverage include (no .tsx under api/)', () => {
-    // `coverage.include` is `src/api/**/*.ts`; a `.tsx` module under api/
-    // would carry runtime code outside every per-file threshold. The API
-    // layer has no JSX, so any such file is a scope leak, not a component.
-    const leaked = allFiles.filter((path) => path.startsWith('api/') && path.endsWith('.tsx'))
-    expect(leaked, 'runtime modules outside the coverage include').toEqual([])
+  it('keeps every runtime module under a gated root inside the coverage include', () => {
+    // `coverage.include` matches `*.ts` under api/ and scene/ and nothing
+    // else, so ANY other runtime-capable extension parks executable code
+    // outside every per-file threshold AND outside the pragma scan --
+    // measured for `.mts`, `.cts` and `.js`, each of which left `npm test`
+    // green with an uncovered exported function in it. This used to test one
+    // extension (`.tsx` under api/), which is the one leak the API layer
+    // would never actually use.
+    //
+    // The gated roots are derived from EXPECTED_COVERAGE_INCLUDE rather than
+    // written out again, so a root added to the include patterns must be
+    // given an explicit policy here instead of silently going unchecked.
+    //
+    // Spec files are skipped: they are excluded from coverage on purpose and
+    // are not a way in, because vitest collects every one of them and
+    // scripts/assert-no-skips.mjs fails a spec file that ran zero tests, so
+    // runtime code cannot sit in one unexercised.
+    const leaked: string[] = []
+    for (const pattern of EXPECTED_COVERAGE_INCLUDE) {
+      const root = pattern.split('/')[1]
+      const allowed = ALLOWED_RUNTIME_EXTENSIONS.get(root)
+      expect(
+        allowed,
+        `${pattern}: coverage.include gates a root with no entry in ALLOWED_RUNTIME_EXTENSIONS; ` +
+          'add one saying which runtime extensions belong there',
+      ).toBeDefined()
+      for (const path of allFiles) {
+        if (!path.startsWith(`${root}/`) || isTestFile(path) || !RUNTIME_EXTENSION.test(path)) {
+          continue
+        }
+        const extension = path.slice(path.lastIndexOf('.'))
+        if (!allowed?.includes(extension)) {
+          leaked.push(`${path} (${extension} is not gated under ${root}/, ${pattern} matches .ts)`)
+        }
+      }
+    }
+    expect(
+      leaked,
+      'runtime modules Vite will execute but coverage.include does not match: they are held to ' +
+        'no per-file threshold and never scanned for coverage pragmas. Rename to .ts, or widen ' +
+        'coverage.include and coverage-scope.json in the same reviewed commit',
+    ).toEqual([])
   })
 
   it('binds the coverage-gated derivation to the real coverage.include / coverage.exclude in vitest.config.ts', () => {
@@ -569,7 +669,7 @@ describe('scan scope', () => {
     // shape checks and the two `toEqual` calls below actually verify against
     // runtime data.
     const coverage = vitestConfig.test?.coverage as
-      | { include?: unknown; exclude?: unknown }
+      | { include?: unknown; exclude?: unknown; thresholds?: unknown }
       | undefined
     // This whole binding depends on vitest.config.ts exporting a PLAIN
     // OBJECT (defineConfig(identity) -- see the comment on the vitestConfig
@@ -604,8 +704,30 @@ describe('scan scope', () => {
     expect(testConfig?.workspace, `vitestConfig.test.workspace${singleProject}`).toBeUndefined()
     expect(coverage?.include).toEqual(EXPECTED_COVERAGE_INCLUDE)
     expect(coverage?.exclude).toEqual(EXPECTED_COVERAGE_EXCLUDE)
+    // The scope above says WHICH modules are measured; this says what
+    // measuring them has to prove. Deleting the key is the cheapest of the
+    // three source-side bypasses, so its absence must fail as loudly as a
+    // wrong value -- an `undefined` here would sail through `toEqual` against
+    // a partial object, hence the shape guard first.
+    expect(
+      coverage?.thresholds !== null &&
+        typeof coverage?.thresholds === 'object' &&
+        !Array.isArray(coverage?.thresholds),
+      'vitestConfig.test.coverage.thresholds is missing or not an object -- vitest enforces ' +
+        'no per-file coverage at all without it, and every module below could be at 0%',
+    ).toBe(true)
+    expect(coverage?.thresholds).toEqual(EXPECTED_COVERAGE_THRESHOLDS)
+    // The third carrier: scripts/assert-coverage-scope.mjs enforces the
+    // manifest's copy against the run's real numbers, so if that copy could
+    // be lowered on its own the runtime half would certify a run this half
+    // rejects. All three are now one value.
+    expect(
+      COVERAGE_SCOPE.thresholds,
+      'coverage-scope.json: "thresholds" must equal vitest.config.ts coverage.thresholds -- ' +
+        'the runtime gate enforces the manifest copy, so a lower one there would silently ' +
+        'become the real threshold',
+    ).toEqual(EXPECTED_COVERAGE_THRESHOLDS)
   })
-
 })
 
 describe('committed suite integrity', () => {
@@ -742,7 +864,6 @@ describe('coverage scope gate (scripts/assert-coverage-scope.mjs)', () => {
   // on Windows as the v8 provider writes them. Build that shape by hand so
   // the audit logic is exercised on the failure paths too, not only on the
   // happy one a green run happens to produce.
-  const absolute = (spec: string): string => `${WEB_ROOT.split(sep).join('/')}${spec}`
   const report = (specs: readonly string[]): Record<string, unknown> =>
     Object.fromEntries(specs.map((spec) => [absolute(spec), { path: absolute(spec) }]))
 
@@ -840,5 +961,267 @@ describe('coverage scope gate (scripts/assert-coverage-scope.mjs)', () => {
       expect(files.length).toBeGreaterThan(0)
       expect(files.every((file) => file.startsWith('src/'))).toBe(true)
     }
+    expect(COVERAGE_SCOPE.thresholds.perFile).toBe(true)
+  })
+})
+
+describe('coverage threshold gate (scripts/assert-coverage-scope.mjs)', () => {
+  // The gate's other half. Binding the measured file SET to a manifest says
+  // which modules were looked at; it says nothing about what looking at them
+  // proved, and vitest's own per-file thresholds -- the thing that turns a
+  // measured module into a gated one -- live in the RESOLVED config, where a
+  // CLI flag or a plugin config() hook can remove them without touching a
+  // byte of vitest.config.ts. So this recomputes each gated module's real
+  // percentages from the report the run wrote and enforces them here.
+  //
+  // Which makes the arithmetic below load-bearing: a second, silently
+  // divergent implementation of coverage math would be worse than none. It is
+  // istanbul-lib-coverage's FileCoverage.toSummary() (lib/file-coverage.js:
+  // 351-422), the exact function vitest calls, and the fixtures pin it to
+  // numbers vitest itself printed rather than to numbers this file chose.
+
+  /**
+   * One coverage-final.json entry in the istanbul shape @vitest/coverage-v8
+   * writes: `statementMap` + hit counts in `s` (one statement per source
+   * line), one hit count per function in `f`, and one array of per-location
+   * hit counts per branch in `b`.
+   */
+  const coverageEntry = (
+    statements: readonly (readonly [line: number, hits: number])[],
+    functions: readonly number[] = [],
+    branches: readonly (readonly number[])[] = [],
+  ): Record<string, unknown> => ({
+    path: absolute('src/api/client.ts'),
+    statementMap: Object.fromEntries(
+      statements.map(([line], index) => [
+        index,
+        { start: { line, column: 0 }, end: { line, column: 40 } },
+      ]),
+    ),
+    s: Object.fromEntries(statements.map(([, hits], index) => [index, hits])),
+    fnMap: Object.fromEntries(
+      functions.map((_, index) => [index, { name: `fn${index}`, line: index + 1 }]),
+    ),
+    f: Object.fromEntries(functions.map((hits, index) => [index, hits])),
+    branchMap: Object.fromEntries(
+      branches.map((_, index) => [index, { type: 'branch', line: index + 1 }]),
+    ),
+    b: Object.fromEntries(branches.map((hits, index) => [index, [...hits]])),
+  })
+
+  /** `count` statements starting at line `from`, each hit `hits` times. */
+  const lines = (from: number, count: number, hits: number): [number, number][] =>
+    Array.from({ length: count }, (_, index): [number, number] => [from + index, hits])
+
+  /**
+   * THE CONTROL, measured on this tree. Appending one genuinely uncovered
+   * exported function to src/scene/color.ts makes vitest print
+   *
+   *   color.ts  |   70.58 |      100 |      75 |   70.58 | 15-19
+   *   ERROR: Coverage for lines (70.58%) does not meet global threshold (90%)
+   *
+   * and its coverage-final.json entry carries 17 statements of which 12 were
+   * hit, 4 functions of which 3 were hit, and 3 fully-hit branches. Those are
+   * the counts here, so if this file's arithmetic ever drifts from vitest's
+   * it fails on the one row where the difference is already known.
+   */
+  const control = coverageEntry(
+    [...lines(1, 12, 78), ...lines(13, 5, 0)],
+    [78, 78, 234, 0],
+    [[78], [78], [234]],
+  )
+
+  const gated = COVERAGE_SCOPE.coverageGated
+  const manifest = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    coverageGated: gated,
+    pragmaScanned: COVERAGE_SCOPE.pragmaScanned,
+    thresholds: EXPECTED_COVERAGE_THRESHOLDS,
+    ...overrides,
+  })
+  /** A report in which every gated module carries the same entry. */
+  const uniformReport = (entry: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(gated.map((spec) => [absolute(spec), structuredClone(entry)]))
+  const covered = coverageEntry([...lines(1, 10, 3)], [3, 3], [[3], [3]])
+
+  it('computes the four percentages vitest itself printed for the control module', () => {
+    const summary = summarizeFileCoverage(control)
+    expect(summary.statements).toEqual({ total: 17, covered: 12, pct: 70.58 })
+    expect(summary.branches).toEqual({ total: 3, covered: 3, pct: 100 })
+    expect(summary.functions).toEqual({ total: 4, covered: 3, pct: 75 })
+    expect(summary.lines).toEqual({ total: 17, covered: 12, pct: 70.58 })
+  })
+
+  it('truncates a percentage the way istanbul does instead of rounding it', () => {
+    // 12/17 is 70.588...; istanbul's percent() floors at two decimals, and
+    // vitest compares that floored number against the threshold. Rounding
+    // here would report 70.59 -- harmless at 90%, but the same drift at a
+    // threshold of exactly 70.59 would pass a run vitest fails.
+    expect(summarizeFileCoverage(control).statements.pct).toBe(70.58)
+    const twoOfThree = summarizeFileCoverage(coverageEntry([...lines(1, 2, 1), ...lines(3, 1, 0)]))
+    expect(twoOfThree.statements).toEqual({ total: 3, covered: 2, pct: 66.66 })
+  })
+
+  it('folds statements onto the line they start on, keeping the highest count', () => {
+    // istanbul derives line coverage from the statement map -- there is no
+    // separate line data in the report -- so several statements on one line
+    // collapse to one line, covered if any of them was hit. Here: 3
+    // statements on 2 lines, one line hit.
+    const summary = summarizeFileCoverage(
+      coverageEntry([
+        [1, 0],
+        [1, 5],
+        [2, 0],
+      ]),
+    )
+    expect(summary.statements).toEqual({ total: 3, covered: 1, pct: 33.33 })
+    expect(summary.lines).toEqual({ total: 2, covered: 1, pct: 50 })
+  })
+
+  it('scores an empty metric 100%, which is why an empty gated module is rejected outright', () => {
+    // The whole-file-pragma case, and the reason the zero-statement rule
+    // below is a separate check rather than a threshold comparison: istanbul
+    // returns 100 for 0/0, so a module carved out entirely by a coverage
+    // pragma satisfies every threshold vitest has. Measured: such a file
+    // reports 0/0/0/0 in the table and the run still exits 0.
+    const empty = summarizeFileCoverage(coverageEntry([]))
+    for (const metric of ['statements', 'branches', 'functions', 'lines'] as const) {
+      expect(empty[metric], `${metric} of a module with nothing in it`).toEqual({
+        total: 0,
+        covered: 0,
+        pct: 100,
+      })
+    }
+    // A module with no branches at all is the same arithmetic and is normal,
+    // so the rule keys on statements, not on "any empty metric".
+    expect(summarizeFileCoverage(coverageEntry([[1, 1]], [1])).branches.pct).toBe(100)
+  })
+
+  it('refuses to score an entry that is not istanbul-shaped, rather than calling it covered', () => {
+    // Every one of these would otherwise reduce to "no statements, no
+    // functions, no branches" -- which istanbul scores 100% -- so each has to
+    // throw. A report this gate cannot read is a failed gate, not a pass.
+    for (const [label, entry] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['a string', 'text'],
+      ['an array', []],
+      ['no statementMap', { s: {}, f: {}, b: {} }],
+      ['a non-numeric hit count', { statementMap: {}, s: { 0: 'yes' }, f: {}, b: {} }],
+      ['a branch that is not an array', { statementMap: {}, s: {}, f: {}, b: { 0: 4 } }],
+      [
+        'a statement with no start line',
+        { statementMap: { 0: { start: {} } }, s: { 0: 1 }, f: {}, b: {} },
+      ],
+    ] as const) {
+      expect(() => summarizeFileCoverage(entry), `scored ${label} instead of throwing`).toThrow()
+    }
+  })
+
+  it('accepts a run where every gated module meets every threshold', () => {
+    expect(auditCoverageThresholds(uniformReport(covered), manifest(), WEB_ROOT)).toEqual([])
+  })
+
+  it('rejects the control module, naming the metric, the numbers and the file', () => {
+    // The end-to-end shape of A17/A21: vitest was told not to enforce
+    // anything, the scope is untouched, and this is what still fails.
+    const problems = auditCoverageThresholds(
+      { ...uniformReport(covered), [absolute('src/scene/color.ts')]: control },
+      manifest(),
+      WEB_ROOT,
+    )
+    expect(problems).toHaveLength(3)
+    const text = problems.join('\n')
+    expect(text).toContain('src/scene/color.ts')
+    expect(text).toContain('statements 70.58% (12/17)')
+    expect(text).toContain('functions 75% (3/4)')
+    expect(text).toContain('lines 70.58% (12/17)')
+    // branches were 100%, and 85 is met, so exactly the three vitest named.
+    expect(text).not.toContain('branches')
+  })
+
+  it('rejects a gated module with zero coverable statements', () => {
+    const problems = auditCoverageThresholds(
+      { ...uniformReport(covered), [absolute('src/api/qvpc.ts')]: coverageEntry([]) },
+      manifest(),
+      WEB_ROOT,
+    )
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('src/api/qvpc.ts')
+    expect(problems[0]).toContain('zero coverable statements')
+  })
+
+  it('rejects a gated module the report never mentions', () => {
+    const report = uniformReport(covered)
+    delete report[absolute('src/api/client.ts')]
+    const problems = auditCoverageThresholds(report, manifest(), WEB_ROOT)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('src/api/client.ts')
+    expect(problems[0]).toContain('no threshold held it')
+  })
+
+  it('rejects an unreadable entry for a gated module rather than skipping it', () => {
+    const problems = auditCoverageThresholds(
+      { ...uniformReport(covered), [absolute('src/api/qvpc.ts')]: 'not an entry' },
+      manifest(),
+      WEB_ROOT,
+    )
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('src/api/qvpc.ts')
+    expect(problems[0]).toContain('unreadable coverage entry')
+  })
+
+  it('refuses to certify a run against thresholds that would enforce nothing', () => {
+    // A zeroed or absent manifest threshold is the same bypass as a zeroed
+    // config one, just one file over; `perFile: false` is refused because
+    // this gate only implements the per-file reading and must not quietly
+    // enforce something the manifest did not ask for.
+    for (const [label, thresholds] of [
+      ['missing entirely', undefined],
+      ['null', null],
+      ['a number', 90],
+      ['zeroed', { perFile: true, statements: 0, branches: 0, functions: 0, lines: 0 }],
+      ['negative', { perFile: true, statements: -1, branches: 85, functions: 90, lines: 90 }],
+      ['over 100', { perFile: true, statements: 101, branches: 85, functions: 90, lines: 90 }],
+      ['short one metric', { perFile: true, statements: 90, branches: 85, functions: 90 }],
+      ['not per-file', { perFile: false, statements: 90, branches: 85, functions: 90, lines: 90 }],
+    ] as const) {
+      expect(
+        auditCoverageThresholds(uniformReport(covered), manifest({ thresholds }), WEB_ROOT).length,
+        `certified a run against thresholds ${label}`,
+      ).toBeGreaterThan(0)
+    }
+    // readCoverageScope applies the same rules when it loads the real
+    // manifest, so a zeroed threshold on disk never reaches the comparison at
+    // all: it throws at import time and takes this whole file down with it.
+    expect(auditCoverageThresholds(uniformReport(covered), COVERAGE_SCOPE, WEB_ROOT)).toEqual([])
+  })
+
+  it('refuses a missing, malformed or empty report or expectation instead of passing vacuously', () => {
+    for (const [label, document] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['a string', 'text'],
+      ['an array', []],
+    ] as const) {
+      expect(
+        auditCoverageThresholds(document, manifest(), WEB_ROOT).length,
+        `audited ${label} clean as a coverage report`,
+      ).toBeGreaterThan(0)
+    }
+    for (const [label, coverageGated] of [
+      ['undefined', undefined],
+      ['an empty array', []],
+      ['a bare string', 'src/api/client.ts'],
+    ] as const) {
+      expect(
+        auditCoverageThresholds(uniformReport(covered), manifest({ coverageGated }), WEB_ROOT)
+          .length,
+        `certified a run against ${label} as the gated set`,
+      ).toBeGreaterThan(0)
+    }
+    expect(
+      auditCoverageThresholds(uniformReport(covered), undefined, WEB_ROOT).length,
+      'certified a run against no manifest at all',
+    ).toBeGreaterThan(0)
   })
 })

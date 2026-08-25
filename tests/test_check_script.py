@@ -1,4 +1,4 @@
-"""Gates on the gate runners themselves: ``scripts/check.ps1`` and ``ci.yml``.
+"""Gates on the gate runners themselves: ``check.ps1``, ``ci.yml``, ``npm test``.
 
 ``check.ps1`` once ran its Python/docs steps in the *caller's* current
 directory while anchoring only the npm steps on ``$PSScriptRoot``. Invoked by
@@ -27,10 +27,22 @@ image, and ``tests/conftest.py`` turns a skip into a failed session, so a
 machine without them fails these tests loudly rather than passing by omission.
 On Windows the ``bash`` on ``PATH`` is usually the WSL launcher, so the one
 shipped with Git for Windows is located through ``git --exec-path``.
+
+The last group pins ``web/package.json``'s ``test`` script, which is what
+``check.ps1`` and ``ci.yml`` both reach the front-end gates through. Those
+gates cannot defend their own invocation: deleting ``&& node
+scripts/assert-coverage-scope.mjs`` from that one line leaves every remaining
+check green, and deleting the pre-clean together with ``--coverage`` leaves
+the verifier certifying the *previous* run's report. That is squarely in the
+threat model the front-end gates adopted -- persisting a coverage flag into
+this same ``test`` script is the bypass they exist to catch, and deleting a
+gate from the chain is cheaper than editing one -- so the chain is pinned from
+outside the chain, exactly as ``ci.yml`` and ``check.ps1`` already are.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -46,6 +58,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SCRIPT = ROOT / "scripts" / "check.ps1"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+WEB_PACKAGE_JSON = ROOT / "web" / "package.json"
 ZERO_SHA = "0" * 40
 
 _INVOKE = re.compile(r"^\s*Invoke-Checked\s", re.MULTILINE)
@@ -581,3 +594,62 @@ def test_probe_step_sweeps_every_link_when_asked(tmp_path: Path) -> None:
     out = _run_probe_step(tmp_path, sweep="true")
     assert re.search(r"^\[stub uv\] .*check_links\.py --include-doi$", out, re.M), out
     assert "--changed-since" not in out
+
+
+# --- web/package.json test chain -------------------------------------------
+
+#: Every front-end gate ``npm test`` must still run, in the order it must run
+#: them. ``clean-coverage.mjs`` first, or the two verifiers can be handed the
+#: previous run's reports; ``--coverage`` on the vitest invocation, or no
+#: coverage report is produced for ``assert-coverage-scope.mjs`` to read at
+#: all; then the two post-run verifiers, which are the only checks that see
+#: what the run actually measured and enforced rather than what the config
+#: source declares.
+NPM_TEST_STAGES = (
+    "scripts/clean-coverage.mjs",
+    "vitest run --coverage",
+    "scripts/assert-no-skips.mjs",
+    "scripts/assert-coverage-scope.mjs",
+)
+
+
+def _npm_test_script() -> str:
+    package = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+    script = package["scripts"]["test"]
+    assert isinstance(script, str), "web/package.json has no string `test` script"
+    return script
+
+
+def test_npm_test_still_runs_every_front_end_gate_in_order() -> None:
+    """Each gate is its own ``&&``-joined stage, and the order is fixed."""
+
+    stages = [segment.strip() for segment in _npm_test_script().split("&&")]
+
+    previous = -1
+    for stage in NPM_TEST_STAGES:
+        matches = [index for index, segment in enumerate(stages) if stage in segment]
+        assert matches, (
+            f"web/package.json's `test` script no longer runs {stage!r}; "
+            f"deleting a gate from the chain disables it as thoroughly as editing it. Stages: {stages}"
+        )
+        assert matches[0] > previous, (
+            f"{stage!r} runs before the stage that must precede it. Stages: {stages}"
+        )
+        previous = matches[0]
+
+
+def test_npm_test_stops_at_the_first_failing_gate() -> None:
+    """Only ``&&`` may join the stages.
+
+    ``;`` and a bare ``&`` both run the next stage regardless of the previous
+    one's exit code, and ``||`` runs it only when the previous one failed. Any
+    of the three would leave the chain looking complete while a red gate no
+    longer failed the command.
+    """
+
+    script = _npm_test_script()
+    assert ";" not in script, f"`;` ignores the previous stage's exit code: {script}"
+    assert "||" not in script, f"`||` inverts the previous stage's exit code: {script}"
+    assert "&" not in script.replace("&&", ""), (
+        f"a bare `&` ignores the previous stage's exit code: {script}"
+    )
