@@ -172,7 +172,7 @@ def test_check_script_resolves_the_script_file_and_proves_the_root_with_git() ->
 
     So all four must be present, and the order matters: refuse a hard link
     before anything else can resolve it away, follow a file symlink to its
-    target, resolve that target's *directory* (the junction case the
+    target, resolve that target's *directory* (the aliased-directory case the
     behavioural test below covers), and only then ask git.
 
     The behavioural tests below prove the effect; this one runs everywhere and
@@ -194,7 +194,8 @@ def test_check_script_resolves_the_script_file_and_proves_the_root_with_git() ->
     resolve_dir = _RESOLVE_SCRIPT_DIR.search(text)
     assert resolve_dir, (
         "check.ps1 must resolve the resolved script's DIRECTORY too; ResolveLinkTarget follows the "
-        "final path component only, so a junctioned scripts/ survives resolving the file alone"
+        "final path component only, so an aliased scripts/ -- a junction, or a directory "
+        "symlink -- survives resolving the file alone"
     )
     rev_parse = _GIT_REV_PARSE.search(text)
     assert rev_parse, (
@@ -315,17 +316,62 @@ def test_check_script_refuses_to_run_without_a_script_root(tmp_path: Path) -> No
     assert "[stub" not in run.stdout, f"a gate ran without a resolved repo root:\n{run.stdout}"
 
 
-def test_check_script_dereferences_a_junctioned_scripts_directory(tmp_path: Path) -> None:
-    """A directory junction at ``scripts`` must not redirect the repo root.
+def _alias_directory(alias: Path, target: Path) -> None:
+    """Point ``alias`` at the directory ``target`` using the platform's alias.
 
-    ``$PSScriptRoot`` is never dereferenced by PowerShell itself: a junction
-    at ``foreign/scripts`` pointing at this repo's real ``scripts/`` used to
-    leave ``$repoRoot`` at the junction, so every gate ran inside the empty
+    The property under test is the same on both: a reparse alias whose final
+    component PowerShell hands to the script undereferenced. Only the way to
+    create one differs, and neither way needs a privilege. On Windows that is
+    a junction -- a directory *symlink* there would need
+    ``SeCreateSymbolicLinkPrivilege`` exactly as a file symlink does, which is
+    why the file-symlink test below is the privileged case and this one is
+    not. On POSIX it is a directory symlink, which needs nothing; there is no
+    ``cmd`` to run ``mklink`` there, and this test used to shell out to it
+    unconditionally and die with ``FileNotFoundError: 'cmd'`` on every Linux
+    runner (measured in CI once the workflow was able to run at all).
+    """
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        os.symlink(target, alias, target_is_directory=True)
+
+
+def _unalias_directory(alias: Path) -> None:
+    """Remove the alias itself, never anything it points at.
+
+    ``rmdir`` on a junction and ``os.unlink`` on a symlink both unlink the
+    alias and leave the target untouched. A recursive delete of ``alias`` or
+    of any parent holding it would instead walk through it into this repo's
+    real ``scripts/`` and delete the checkout's own files, so no test here may
+    use one while an alias exists inside ``tmp_path``.
+    """
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "rmdir", str(alias)], check=True, capture_output=True, text=True
+        )
+    else:
+        os.unlink(alias)
+
+
+def test_check_script_dereferences_an_aliased_scripts_directory(tmp_path: Path) -> None:
+    """A directory alias at ``scripts`` must not redirect the repo root.
+
+    ``$PSScriptRoot`` is never dereferenced by PowerShell itself: an alias at
+    ``foreign/scripts`` pointing at this repo's real ``scripts/`` used to
+    leave ``$repoRoot`` at the alias, so every gate ran inside the empty
     ``foreign/`` tree and the run still exited 0 -- certifying neither tree.
-    No admin/Developer-Mode privilege is needed to create a junction (unlike
-    a symlink), so this is reachable by an unprivileged operator or process.
-    The fix must resolve the junction back to the real repo before any gate
-    runs.
+    Creating one needs no admin/Developer-Mode privilege on either platform
+    (a junction on Windows, a directory symlink on POSIX -- see
+    ``_alias_directory``), so this is reachable by an unprivileged operator or
+    process. The fix must resolve the alias back to the real repo before any
+    gate runs.
     """
 
     pwsh = shutil.which("pwsh")
@@ -338,19 +384,14 @@ def test_check_script_dereferences_a_junctioned_scripts_directory(tmp_path: Path
 
     foreign = tmp_path / "foreign"
     (foreign / "web").mkdir(parents=True)
-    junction = foreign / "scripts"
+    alias = foreign / "scripts"
     real_scripts = ROOT / "scripts"
 
-    subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(junction), str(real_scripts)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _alias_directory(alias, real_scripts)
     try:
         env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
         run = subprocess.run(
-            [pwsh, "-NoProfile", "-File", str(junction / "check.ps1")],
+            [pwsh, "-NoProfile", "-File", str(alias / "check.ps1")],
             cwd=foreign,
             env=env,
             capture_output=True,
@@ -367,21 +408,19 @@ def test_check_script_dereferences_a_junctioned_scripts_directory(tmp_path: Path
             expected = ROOT if program == "uv" else ROOT / "web"
             assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
             assert not _same_dir(cwd, foreign), (
-                f"{program} {args!r} ran in the junctioned foreign tree, not the real repo"
+                f"{program} {args!r} ran in the aliased foreign tree, not the real repo"
             )
 
         announced = re.search(r"^check\.ps1: running every gate in (.+)$", run.stdout, re.MULTILINE)
         assert announced, run.stdout
         assert _same_dir(announced.group(1).strip(), ROOT), (
-            "check.ps1 announced the junction's foreign tree instead of the real repo"
+            "check.ps1 announced the alias's foreign tree instead of the real repo"
         )
     finally:
-        subprocess.run(
-            ["cmd", "/c", "rmdir", str(junction)], check=True, capture_output=True, text=True
-        )
-        assert not junction.exists(), "the junction must be removed after the test"
+        _unalias_directory(alias)
+        assert not alias.exists(), "the alias must be removed after the test"
         assert (real_scripts / "check.ps1").exists(), (
-            "removing the junction must not have touched the real scripts/ directory"
+            "removing the alias must not have touched the real scripts/ directory"
         )
 
 
@@ -524,8 +563,9 @@ def test_check_script_refuses_a_real_git_repo_that_is_not_this_project(tmp_path:
 def test_check_script_follows_a_file_symlink_to_its_real_repo(tmp_path: Path) -> None:
     """A file symlink at ``scripts/check.ps1`` must resolve back to this repo.
 
-    The junction test above covers a reparse point on the *directory*. This is
-    the reparse point on the *file*, which asking ``$PSScriptRoot`` never sees
+    The aliased-directory test above covers a reparse point on the
+    *directory*. This is the reparse point on the *file*, which
+    asking ``$PSScriptRoot`` never sees
     at all: the directory is a perfectly ordinary directory, and only the file
     inside it is a link. Unlike a hard link there is a target to follow, so the
     script must follow it and run the full gate against the real checkout --
@@ -534,9 +574,9 @@ def test_check_script_follows_a_file_symlink_to_its_real_repo(tmp_path: Path) ->
     On POSIX a symlink always creates, so a refusal there is a real failure and
     is raised as one. On Windows creating a *file* symlink needs
     ``SeCreateSymbolicLinkPrivilege`` -- an elevated process, or Developer Mode
-    -- while creating a junction needs nothing, which is why the junction test
-    above is the unprivileged Windows case and this one is not. That asymmetry
-    is already the stated reasoning of the junction test, and it is a threat
+    -- while creating a junction needs nothing, which is why the
+    aliased-directory test above is the unprivileged Windows case and this one
+    is not. That asymmetry is already the stated reasoning there, and it is a threat
     statement as much as a convenience one: on Windows an actor who can plant a
     file symlink is already elevated, and an elevated actor can simply edit this
     script.

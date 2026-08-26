@@ -13,6 +13,7 @@ from types import ModuleType
 
 import markdown
 import pytest
+from markdown.htmlparser import htmlparser as md_htmlparser
 
 from quviz.docs.bibliography import BibEntry, keywords, parse_bibtex, parse_bibtex_file
 from quviz.docs.pins import _host, _host_in, is_code_host, url_ref, validate_source_pins
@@ -390,6 +391,45 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
     return markdown.Markdown(extensions=extensions, extension_configs=configs).convert(body)
 
 
+def _unterminated_pi_is_reported_as_a_pi() -> bool:
+    """Whether this interpreter's ``html.parser`` closes a ``<?`` at EOF.
+
+    CPython rewrote ``html.parser`` to follow the WHATWG parsing spec for
+    invalid markup (gh-135661 and its follow-ups). The old ``goahead`` gave up
+    on an unterminated construct at end of input and re-emitted it as text; the
+    rewritten one calls ``handle_pi`` with everything up to EOF, and
+    python-markdown's ``HTMLExtractor.handle_pi`` stashes ``<?...?>`` away as a
+    raw block that no later processor sees.
+
+    The generation is asked for by behaviour rather than read off
+    ``sys.version_info``, because the version does not carry it: the rewrite is
+    in CPython's 3.12 and 3.13 maintenance branches, and the ``python3.12`` this
+    project's CI runs (Ubuntu 24.04's) ships it while still reporting 3.12.3 --
+    the very version whose upstream tarball does not have it. It is not a
+    platform difference either: a Windows interpreter carrying the rewrite
+    behaves exactly like that CI runner, measured by running this file against a
+    copy of the rewritten module.
+
+    The parser probed is the private, monkey-patched copy python-markdown itself
+    drives, so this answers for the build rather than for whichever stdlib the
+    test process happens to import.
+    """
+
+    seen: list[str] = []
+
+    class _Probe(md_htmlparser.HTMLParser):
+        def handle_pi(self, data: str) -> None:
+            seen.append(data)
+
+    probe = _Probe(convert_charrefs=False)
+    probe.feed("<?x")
+    probe.close()
+    return bool(seen)
+
+
+_UNTERMINATED_PI_IS_A_PI = _unterminated_pi_is_reported_as_a_pi()
+
+
 @pytest.mark.parametrize(
     ("text", "cited"),
     [
@@ -482,7 +522,15 @@ def _build(text: str, bib_path: Path, site: tuple[list[str], dict[str, dict[str,
         ("[@k] <", True),
         ("[@k] &", True),
         ("<div>a</div> [@k] <", True),
-        ("<?php [@k]\n", True),
+        # The one case here whose answer moves with the interpreter. With the
+        # rewritten ``html.parser`` the build stashes ``<?php [@k]\n\n\n?>``
+        # whole and emits no citation; without it ``[@k]`` stays prose and is
+        # cited. The scanner drives python-markdown's own extractor, so it moves
+        # with the build: what changes is the shared answer, not the agreement
+        # this test pins. ``_unterminated_pi_is_reported_as_a_pi`` says why the
+        # generation is probed rather than inferred from a version or an OS.
+        ("<?php [@k]\n", not _UNTERMINATED_PI_IS_A_PI),
+        # Terminated, so both generations close it at the ``?>`` and stash it.
         ("<?php [@k] ?>\n", False),
         ("<!DOCTYPE html> [@k]\n", True),
         ("<script>\n[@k]\n", False),
