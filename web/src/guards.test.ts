@@ -105,21 +105,26 @@ const isTestFile = (path: string): boolean => TEST_FILE.test(path)
 
 /**
  * The literal `coverage.include` / `coverage.exclude` arrays vitest.config.ts
- * declares. Deep-equalled against the real, resolved config in the "coverage
- * scope binding" test below: editing either array in vitest.config.ts
- * without a matching, reviewed edit here fails `npm test` instead of
- * silently shrinking what `isCoverageGatedSource` / `isPragmaScannedSource`
- * below (and therefore `scan scope` and the pragma scan in "committed suite
- * integrity") treat as gated.
+ * declares. Deep-equalled against the DECLARED config -- the object
+ * vitest.config.ts exports -- in the "coverage scope binding" test below:
+ * editing either array in vitest.config.ts without a matching, reviewed edit
+ * here fails `npm test` instead of silently shrinking what
+ * `isCoverageGatedSource` / `isPragmaScannedSource` below (and therefore `scan
+ * scope` and the pragma scan in "committed suite integrity") treat as gated.
+ *
+ * Declared, not RESOLVED, and the distinction is the whole reason the gate
+ * script exists: what vitest actually ran under is recorded by the globalSetup
+ * capture and checked by scripts/assert-coverage-scope.mjs. A CLI flag or a
+ * plugin `config()` hook changes the resolved config and leaves every array
+ * here byte-identical.
  *
  * `isCoverageGatedSource` derives its matching from THESE arrays via
  * `minimatch`, not from a separately hand-maintained regex, so there is no
  * second piece of gating logic that could be narrowed independently of what
- * the deep-equal test binds to the live config.
+ * the deep-equal test binds to the declared config.
  */
 const EXPECTED_COVERAGE_INCLUDE = ['src/api/**/*.ts', 'src/scene/**/*.ts']
 const EXPECTED_COVERAGE_EXCLUDE = [
-  'src/scene/shaders/**',
   'src/**/*.{test,spec}.{ts,tsx}',
   'src/**/__tests__/**',
   'src/api/types.ts',
@@ -161,9 +166,9 @@ const EXPECTED_COVERAGE_THRESHOLDS = {
  * `--coverage.provider=custom --coverage.customProviderModule=./scripts/
  * fake-coverage-provider.mjs` persisted into the `test` script (or set by a
  * plugin `config()` hook), a module in this repo hand-writes a report listing
- * the three gated modules at 100%, and `check.ps1` prints "All checks
- * passed!" at exit 0 with a genuinely uncovered exported function shipping.
- * Every content check downstream then certifies a forgery.
+ * every gated module at 100%, and the whole of `check.ps1` exits 0 with a
+ * genuinely uncovered exported function shipping. Every content check
+ * downstream then certifies a forgery.
  *
  * This literal is the config-SOURCE half and it is deliberately NOT the fix:
  * a CLI flag and a plugin hook both leave it byte-identical. The fix is
@@ -741,7 +746,14 @@ describe('scan scope', () => {
     expect(coverageGatedSources).toContain('api/qvpc.ts')
     expect(coverageGatedSources).toContain('api/client.ts')
     expect(coverageGatedSources).toContain('scene/color.ts')
-    expect(coverageGatedSources).not.toContain('scene/shaders/orbitalPoints.ts')
+    // Nested as deep as the include's globstar reaches. src/scene/shaders/
+    // used to be excluded whole ("GLSL strings, nothing to count"), and
+    // nothing enforced that description: an ordinary .ts helper with an
+    // uncovered branch, dropped in there and called from color.ts, left
+    // `npm test` at exit 0 with every gate green and the branch in the
+    // production bundle (measured). The exclusion is gone; a shader module is
+    // gated like any other module and carries an import-and-assert spec.
+    expect(coverageGatedSources).toContain('scene/shaders/orbitalPoints.ts')
     expect(coverageGatedSources).not.toContain('api/qvpc.test.ts')
     expect(coverageGatedSources.some((path) => path.endsWith('.tsx'))).toBe(false)
   })
@@ -788,10 +800,11 @@ describe('scan scope', () => {
     expect(isCoverageGatedSource('api/.hidden.ts')).toBe(true)
     expect(isCoverageGatedSource('api/.hidden/x.ts')).toBe(true)
     expect(isCoverageGatedSource('scene/.hidden.ts')).toBe(true)
+    expect(isCoverageGatedSource('scene/shaders/.hidden.ts')).toBe(true)
     expect(isPragmaScannedSource('api/.hidden.ts')).toBe(true)
     // Excludes keep applying to hidden paths for the same reason.
-    expect(isCoverageGatedSource('scene/shaders/.hidden.ts')).toBe(false)
     expect(isCoverageGatedSource('api/.hidden.test.ts')).toBe(false)
+    expect(isCoverageGatedSource('api/__tests__/.hidden.ts')).toBe(false)
   })
 
   it('excludes every committed spec file through a canonical exclude pattern', () => {
@@ -883,11 +896,16 @@ describe('scan scope', () => {
   it('binds the coverage-gated derivation to the real coverage.include / coverage.exclude in vitest.config.ts', () => {
     // `isCoverageGatedSource` derives its matching from EXPECTED_COVERAGE_INCLUDE
     // / EXPECTED_COVERAGE_EXCLUDE via minimatch; nothing before this test made
-    // those canonical arrays agree with the config vitest actually runs
-    // coverage against. This reads the resolved config object itself (not a
+    // those canonical arrays agree with the config vitest.config.ts declares.
+    // This reads the DECLARED config object itself (the export, not a
     // re-parsed copy) and fails the moment the two disagree, e.g. a file
     // appended to `coverage.exclude` to drop it from measured coverage
     // without a matching edit to EXPECTED_COVERAGE_EXCLUDE.
+    //
+    // Declared, not RESOLVED: the config vitest actually ran under is the one
+    // the globalSetup capture records and scripts/assert-coverage-scope.mjs
+    // deep-equals. Everything asserted here is byte-identical under a CLI flag
+    // or a plugin `config()` hook, which is exactly why that half exists.
     // `test.coverage` is typed as a `provider`-discriminated union (v8 /
     // istanbul / custom), and the `custom` branch has no `include` /
     // `exclude` at all, so TS won't let those fields be read without first
@@ -1404,13 +1422,25 @@ describe('coverage scope gate (scripts/assert-coverage-scope.mjs)', () => {
     // The bypass this gate exists for: `--coverage.include=src/scene/color.ts`
     // on the command line (or a plugin config() hook) leaves vitest.config.ts
     // byte-for-byte intact, so every other assertion in this file stays green
-    // while two modules drop out of coverage AND out of the per-file
+    // while every other module drops out of coverage AND out of the per-file
     // thresholds that are supposed to hold them at 90%.
-    const problems = auditCoverageScope(report(['src/scene/color.ts']), gated, WEB_ROOT)
-    expect(problems).toHaveLength(2)
-    expect(problems.join('\n')).toContain('src/api/client.ts')
-    expect(problems.join('\n')).toContain('src/api/qvpc.ts')
-    expect(problems.join('\n')).toContain('NOT measured')
+    //
+    // The survivor is named and the vanished set is derived from the manifest
+    // rather than listed again, so this keeps naming every module whatever the
+    // manifest holds -- the count is still asserted, and the guard below stops
+    // a one-module manifest from making that count vacuously right.
+    const survivor = 'src/scene/color.ts'
+    const vanished = gated.filter((spec) => spec !== survivor)
+    expect(gated, 'the manifest must list the survivor').toContain(survivor)
+    expect(vanished.length, 'nothing left to vanish').toBeGreaterThan(0)
+    const problems = auditCoverageScope(report([survivor]), gated, WEB_ROOT)
+    expect(problems).toHaveLength(vanished.length)
+    for (const spec of vanished) {
+      expect(problems.join('\n')).toContain(spec)
+    }
+    // "not listed in the report", not "not measured": this gate reads a
+    // report, so that is the strongest thing it can say.
+    expect(problems.join('\n')).toContain('NOT listed in this run')
   })
 
   it('rejects a module measured but absent from the manifest', () => {

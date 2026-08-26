@@ -44,10 +44,21 @@ export default defineConfig({
       //              and never execute TypeScript, so they cannot stand in
       //              for this -- a broken path in client.ts left `npm test`
       //              green until this file gained its own spec.
-      //   Excluded:  src/scene/shaders/** (GLSL string modules: no branches,
-      //              verified by the WebGL compiler, not by a statement
-      //              counter); test files themselves; src/api/types.ts
-      //              (type-only, no runtime statements).
+      //              This includes src/scene/shaders/: those modules export
+      //              GLSL as template literals, which a statement counter has
+      //              nothing useful to say about, and the directory used to be
+      //              excluded whole for that reason. That was an escape hatch,
+      //              not a scope decision -- nothing checked that the
+      //              directory still held only GLSL strings, so an ordinary
+      //              .ts helper with an uncovered branch could live there, be
+      //              imported by a gated module, ship in the bundle and leave
+      //              every gate green (measured: `npm test` at exit 0 with
+      //              color.ts still reporting 100%). Gating the directory like
+      //              any other costs one import-and-assert spec per shader
+      //              module (src/scene/shaders/orbitalPoints.test.ts) and
+      //              leaves no exclusion to police.
+      //   Excluded:  test files themselves; src/api/types.ts (type-only, no
+      //              runtime statements).
       //   Not covered on purpose: React/three components (src/**/*.tsx,
       //              src/state/, src/components/) -- they need a WebGL/DOM
       //              harness this suite does not provide. Those, together
@@ -72,7 +83,6 @@ export default defineConfig({
       // neglected one behind an aggregate number.
       include: ['src/api/**/*.ts', 'src/scene/**/*.ts'],
       exclude: [
-        'src/scene/shaders/**',
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',
         'src/api/types.ts',
