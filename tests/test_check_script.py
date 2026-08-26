@@ -53,21 +53,28 @@ say (no coverage override in the invocation), what npm wraps around it (no
 which nothing else in the repo reads -- still exists and still contains its
 blocks.
 
-Three pins in that group are here rather than in ``web/`` for a stronger reason
-than symmetry: they are the only checks the *run* cannot reach. A Vite plugin's
-``config()`` hook rewrites the configuration vitest resolves without touching a
-byte of any file the front-end guards read, and a coverage provider reached
-that way hands the run's own gates a report the run wrote itself -- measured,
-with ``check.ps1`` printing "All checks passed!". Nothing inside the process
-can settle that (see the boundary note atop
-``web/scripts/assert-coverage-scope.mjs`` and ``docs/project/status.md``). What
-these do is put a price on the WIRING, one spelling at a time:
-``vitest.config.ts`` must declare no ``plugins`` and must import exactly the
-modules pinned here, and ``web/scripts/`` must hold exactly the modules listed
-here. Each closes a way of reaching a provider; none closes the provider, and
-the list is a list of the wirings that are known. The import pin is here
-because without it the plugins array simply moved one import away and took
-``check.ps1`` to exit 0 with the other two silent -- measured, on this tree.
+Three pins in that group are here rather than in ``web/`` because they are
+DIFF-REVIEW TRIPWIRES: each fires the moment a known wiring is written down,
+which happens before the run rather than during it. A Vite plugin's ``config()``
+hook rewrites the configuration vitest resolves without touching a byte of any
+file the front-end guards read, and a coverage provider reached that way hands
+the run's own gates a report the run wrote itself -- measured, with the whole of
+``check.ps1`` exiting 0. No further layer *in the same trust domain* can settle
+that: vitest, its config, its provider, the front-end gates and the artefacts
+they read are all one mutable, equally-privileged checkout, and a domain like
+that cannot vouch for itself (see the boundary note atop
+``web/scripts/assert-coverage-scope.mjs`` and ``docs/project/status.md``).
+
+Being in ``tests/`` is not itself that boundary, and nothing here should be read
+as claiming it is: these are ordinary files in the same checkout, and a diff
+that edits them is simply a bigger diff. What they do is put a price on the
+WIRING, one spelling at a time: ``vitest.config.ts`` must declare no ``plugins``
+and must import exactly the modules pinned here, and ``web/scripts/`` must hold
+exactly the modules listed here. Each closes a way of reaching a provider; none
+closes the provider, and the list is a list of the wirings that are known. The
+import pin is here because without it the plugins array simply moved one import
+away and took ``check.ps1`` to exit 0 with the other two silent -- measured, on
+this tree.
 """
 
 from __future__ import annotations
@@ -79,6 +86,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,7 +103,19 @@ ZERO_SHA = "0" * 40
 
 _INVOKE = re.compile(r"^\s*Invoke-Checked\s", re.MULTILINE)
 _PUSH_ROOT = re.compile(r"Push-Location\s+\$repoRoot")
-_REPO_ROOT = re.compile(r"\$repoRoot\s*=.*\$PSScriptRoot.*'\.\.'")
+#: ``$repoRoot`` must come out of ``git rev-parse``, not out of string surgery
+#: on ``$PSScriptRoot``. It used to be ``Join-Path <scripts dir> '..'``, which
+#: is the caller's directory whenever the invoked path is not where the script
+#: really lives.
+_REPO_ROOT = re.compile(r"\$repoRoot\s*=.*\$gitLines\[0\]")
+_GIT_REV_PARSE = re.compile(
+    r"git\s+-C\s+\$scriptsDirectory\s+rev-parse\s+--show-toplevel\s+--show-prefix"
+)
+#: The script FILE, resolved through the link-following helper -- not just the
+#: directory the invoked path happened to sit in.
+_RESOLVE_SCRIPT_FILE = re.compile(r"\$scriptPath\s*=\s*Resolve-FinalTarget\s+\$PSCommandPath")
+_RESOLVE_SCRIPT_DIR = re.compile(r"\$scriptsDirectory\s*=\s*Resolve-FinalTarget\s")
+_REFUSE_HARD_LINK = re.compile(r"\.LinkType\s+-eq\s+'HardLink'")
 
 
 def _same_dir(a: str | Path, b: str | Path) -> bool:
@@ -121,7 +141,7 @@ def test_check_script_pushes_to_its_own_repo_root_before_any_gate() -> None:
     last_gate = invocations[-1].end()
 
     root_assignment = _REPO_ROOT.search(text)
-    assert root_assignment, "check.ps1 must derive $repoRoot from $PSScriptRoot/.."
+    assert root_assignment, "check.ps1 must derive $repoRoot from git rev-parse --show-toplevel"
     push = _PUSH_ROOT.search(text)
     assert push, "check.ps1 must Push-Location $repoRoot"
     assert root_assignment.end() < push.start() < first_gate, (
@@ -133,6 +153,73 @@ def test_check_script_pushes_to_its_own_repo_root_before_any_gate() -> None:
     closing = text.rfind("finally", last_gate)
     assert closing != -1 and "Pop-Location" in text[closing:], (
         "the last gate must be followed by a finally block that pops the location"
+    )
+
+
+def test_check_script_resolves_the_script_file_and_proves_the_root_with_git() -> None:
+    """Static guard: the four pieces of the root resolution, in order.
+
+    ``$PSScriptRoot`` is the directory the *invoked path* sits in, so it
+    answers "where was I called from", not "where do I live". Resolving it
+    alone left two ways to redirect the root: a file symlink at
+    ``scripts/check.ps1`` (a reparse point on the file, which asking the
+    directory never sees) and a hard link to it (a second directory entry for
+    the same file, with no reparse point at all). The identity check that was
+    supposed to catch the second was ``Test-Path`` on ``.git`` and
+    ``pyproject.toml`` -- two *empty* files satisfied it, and a hard-linked
+    script in a directory carrying them ran all eight gates there and exited 0
+    announcing that tree (reproduced).
+
+    So all four must be present, and the order matters: refuse a hard link
+    before anything else can resolve it away, follow a file symlink to its
+    target, resolve that target's *directory* (the junction case the
+    behavioural test below covers), and only then ask git.
+
+    The behavioural tests below prove the effect; this one runs everywhere and
+    is independent of ``pwsh``, exactly as the ``Push-Location`` guard above is.
+    """
+
+    text = CHECK_SCRIPT.read_text(encoding="utf-8")
+
+    refusal = _REFUSE_HARD_LINK.search(text)
+    assert refusal, (
+        "check.ps1 must refuse a hard-linked script ((Get-Item ...).LinkType -eq 'HardLink'); "
+        "a hard link has no reparse point to follow, so it can only be refused"
+    )
+    resolve_file = _RESOLVE_SCRIPT_FILE.search(text)
+    assert resolve_file, (
+        "check.ps1 must resolve $PSCommandPath -- the script FILE -- through Resolve-FinalTarget; "
+        "resolving only $PSScriptRoot leaves a file symlink pointing the root at the caller's tree"
+    )
+    resolve_dir = _RESOLVE_SCRIPT_DIR.search(text)
+    assert resolve_dir, (
+        "check.ps1 must resolve the resolved script's DIRECTORY too; ResolveLinkTarget follows the "
+        "final path component only, so a junctioned scripts/ survives resolving the file alone"
+    )
+    rev_parse = _GIT_REV_PARSE.search(text)
+    assert rev_parse, (
+        "check.ps1 must prove the resolved root with `git -C $scriptsDirectory rev-parse "
+        "--show-toplevel --show-prefix`; two empty files named .git and pyproject.toml satisfied "
+        "the Test-Path check this replaces"
+    )
+    assert "-ne 'scripts/'" in text, (
+        "check.ps1 must require git's --show-prefix to be exactly 'scripts/'; without it the "
+        "resolved root could be a parent, a sibling or a subdirectory of the real checkout"
+    )
+    assert "QuViz" in text, (
+        "check.ps1 must require pyproject.toml to declare this project by name; every git "
+        "checkout satisfies rev-parse, only this one declares itself"
+    )
+
+    root_assignment = _REPO_ROOT.search(text)
+    assert root_assignment, "check.ps1 must derive $repoRoot from git rev-parse --show-toplevel"
+    assert refusal.start() < resolve_file.start() < resolve_dir.start() < rev_parse.start(), (
+        "check.ps1 must refuse a hard link, then follow a file symlink, then resolve that "
+        "target's directory, then ask git -- in that order"
+    )
+    first_gate = _INVOKE.search(text)
+    assert first_gate and root_assignment.end() < first_gate.start(), (
+        "the whole root resolution must complete before the first Invoke-Checked"
     )
 
 
@@ -298,57 +385,216 @@ def test_check_script_dereferences_a_junctioned_scripts_directory(tmp_path: Path
         )
 
 
-def test_check_script_refuses_a_hard_linked_copy_outside_its_repo(tmp_path: Path) -> None:
-    """A hard link to ``check.ps1`` has no reparse point to resolve.
-
-    Unlike a junction, a hard link is just a second directory entry for the
-    same file record -- there is no reparse point for the fix to dereference,
-    so the script must recognise that the resolved root is not a genuine
-    checkout (missing ``.git``/``pyproject.toml``) and refuse to run any gate
-    there, rather than certifying the foreign tree the way the junction
-    bypass once did.
-    """
-
-    pwsh = shutil.which("pwsh")
-    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+def _stub_path(tmp_path: Path) -> dict[str, str]:
+    """An environment whose ``uv`` and ``npm`` are the printing stubs."""
 
     stubs = tmp_path / "stubs"
-    stubs.mkdir()
+    stubs.mkdir(exist_ok=True)
     _write_stub(stubs, "uv", "[stub uv]")
     _write_stub(stubs, "npm", "[stub npm]")
+    return dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
+
+
+def _run_check_script(
+    script: Path, cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "pwsh is required to exercise scripts/check.ps1 (installed on GitHub runners)"
+    return subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script)],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def test_check_script_refuses_a_hard_link_even_with_both_repo_markers(tmp_path: Path) -> None:
+    """The reproduced bypass: a hard link plus two EMPTY marker files.
+
+    A hard link is a second directory entry for the same file record -- no
+    reparse point to dereference, and nothing in the file that says which entry
+    came first. The identity check that was supposed to catch it was
+    ``Test-Path`` on ``.git`` and ``pyproject.toml``, and two files created
+    empty satisfied both: the script announced the foreign root, ran all six
+    ``uv`` gates and both ``npm`` gates there, and exited 0 (measured). So the
+    markers are created here, empty, exactly as the bypass did -- a version of
+    this test without them passes against a script that still has the hole.
+
+    The refusal is deliberately blunt, and its cost is real: Windows reports
+    ``LinkType`` ``HardLink`` on *every* entry once a second one exists, so
+    while this test's link is alive the repo's own ``scripts/check.ps1``
+    refuses too. That is the fail-closed direction, and it is why the link is
+    removed in a ``finally``.
+    """
 
     foreign = tmp_path / "foreign2"
     (foreign / "scripts").mkdir(parents=True)
     (foreign / "web").mkdir()
+    # The bypass, verbatim: both markers present, both empty.
+    (foreign / ".git").write_text("", encoding="ascii")
+    (foreign / "pyproject.toml").write_text("", encoding="ascii")
+
     linked_script = foreign / "scripts" / "check.ps1"
     os.link(CHECK_SCRIPT, linked_script)
     try:
-        env = dict(os.environ, PATH=os.pathsep.join([str(stubs), os.environ.get("PATH", "")]))
-        run = subprocess.run(
-            [pwsh, "-NoProfile", "-File", str(linked_script)],
-            cwd=foreign,
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        run = _run_check_script(linked_script, foreign, _stub_path(tmp_path))
         assert run.returncode != 0, (
-            f"a hard-linked check.ps1 outside the repo must fail, not exit 0:\n{run.stdout + run.stderr}"
+            "a hard-linked check.ps1 in a directory carrying empty .git and pyproject.toml "
+            f"markers must fail, not exit 0:\n{run.stdout + run.stderr}"
         )
         assert "[stub" not in run.stdout, (
             f"a gate ran against the foreign hard-linked tree before the script refused:\n{run.stdout}"
+        )
+        assert "hard link" in run.stderr, (
+            f"the refusal must say what it refused and why:\n{run.stderr}"
         )
     finally:
         # A hard link is a second directory entry for the real file's inode:
         # unlinking it here only decrements the link count, it never touches
         # the real scripts/check.ps1 (pytest's own tmp_path cleanup is lazy
         # and cross-session, so leaving this to it would pile up extra hard
-        # links on the real file across repeated runs).
+        # links on the real file across repeated runs -- and each of them
+        # would keep the real script refusing to run).
         linked_script.unlink()
         assert CHECK_SCRIPT.exists(), (
             "unlinking the foreign hard link must not remove the real check.ps1"
         )
+
+
+def test_check_script_refuses_a_copy_in_a_foreign_tree_that_is_not_a_checkout(
+    tmp_path: Path,
+) -> None:
+    """The same bypass without the hard link: a plain copy plus empty markers.
+
+    Nothing stops anyone copying this script into another directory, and a copy
+    legitimately resolves to the tree it was copied into -- which is why the
+    identity check, not the link resolution, is what has to refuse here. Two
+    empty files satisfied the old one. ``git rev-parse`` does not: an empty
+    ``.git`` is ``fatal: invalid gitfile format``.
+    """
+
+    foreign = tmp_path / "copied"
+    (foreign / "scripts").mkdir(parents=True)
+    (foreign / "web").mkdir()
+    (foreign / ".git").write_text("", encoding="ascii")
+    (foreign / "pyproject.toml").write_text("", encoding="ascii")
+    copied = foreign / "scripts" / "check.ps1"
+    shutil.copy2(CHECK_SCRIPT, copied)
+
+    run = _run_check_script(copied, foreign, _stub_path(tmp_path))
+    assert run.returncode != 0, (
+        f"a copy of check.ps1 in a tree that is not a checkout must fail:\n{run.stdout + run.stderr}"
+    )
+    assert "[stub" not in run.stdout, f"a gate ran in the foreign tree:\n{run.stdout}"
+
+
+def test_check_script_refuses_a_real_git_repo_that_is_not_this_project(tmp_path: Path) -> None:
+    """``git init`` is cheap, so git alone cannot be the whole identity proof.
+
+    ``git rev-parse --show-toplevel`` answers for *any* checkout. This is the
+    second half: ``pyproject.toml`` must declare this project. It is a content
+    check rather than a ``Test-Path`` precisely because an empty file is what
+    defeated the previous one -- and an empty file very nearly defeated this
+    one too, because ``Get-Content -Raw`` returns ``$null`` for it and
+    ``$null -notmatch ...`` evaluates to ``$null``, not ``$true`` (measured:
+    exit 0, all eight gates run in this temporary repository, before the cast
+    that fixes it).
+    """
+
+    foreign = tmp_path / "otherproject"
+    (foreign / "scripts").mkdir(parents=True)
+    (foreign / "web").mkdir()
+    (foreign / "pyproject.toml").write_text("", encoding="ascii")
+    copied = foreign / "scripts" / "check.ps1"
+    shutil.copy2(CHECK_SCRIPT, copied)
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True, capture_output=True)
+
+    run = _run_check_script(copied, foreign, _stub_path(tmp_path))
+    assert run.returncode != 0, (
+        "a real git checkout whose pyproject.toml does not declare this project must fail:\n"
+        f"{run.stdout + run.stderr}"
+    )
+    assert "[stub" not in run.stdout, f"a gate ran in the foreign checkout:\n{run.stdout}"
+    assert "QuViz" in run.stderr, f"the refusal must name what it looked for:\n{run.stderr}"
+
+
+def test_check_script_follows_a_file_symlink_to_its_real_repo(tmp_path: Path) -> None:
+    """A file symlink at ``scripts/check.ps1`` must resolve back to this repo.
+
+    The junction test above covers a reparse point on the *directory*. This is
+    the reparse point on the *file*, which asking ``$PSScriptRoot`` never sees
+    at all: the directory is a perfectly ordinary directory, and only the file
+    inside it is a link. Unlike a hard link there is a target to follow, so the
+    script must follow it and run the full gate against the real checkout --
+    refusing would be a false red on a legitimate way to install a script.
+
+    On POSIX a symlink always creates, so a refusal there is a real failure and
+    is raised as one. On Windows creating a *file* symlink needs
+    ``SeCreateSymbolicLinkPrivilege`` -- an elevated process, or Developer Mode
+    -- while creating a junction needs nothing, which is why the junction test
+    above is the unprivileged Windows case and this one is not. That asymmetry
+    is already the stated reasoning of the junction test, and it is a threat
+    statement as much as a convenience one: on Windows an actor who can plant a
+    file symlink is already elevated, and an elevated actor can simply edit this
+    script.
+
+    So where Windows refuses, this warns loudly and falls back to asserting
+    that the file-side resolution is still WIRED, rather than either failing the
+    whole gate for an OS privilege or passing as though the case had run. Note
+    what that fallback does and does not buy: the end-to-end proof is the run
+    above, and on a machine that warns, only CI (and any POSIX checkout) has
+    actually made it. Do not read a green run on such a machine as evidence
+    that a symlinked script resolves correctly.
+    """
+
+    foreign = tmp_path / "symlinked"
+    (foreign / "scripts").mkdir(parents=True)
+    (foreign / "web").mkdir()
+    link = foreign / "scripts" / "check.ps1"
+    try:
+        os.symlink(CHECK_SCRIPT, link)
+    except OSError as exc:  # pragma: no cover - environment-dependent
+        if sys.platform != "win32":
+            raise
+        text = CHECK_SCRIPT.read_text(encoding="utf-8")
+        warnings.warn(
+            "the symlinked-script case was NOT exercised: this Windows machine cannot create a "
+            "file symlink (needs an elevated process or Developer Mode -- Settings > System > "
+            f"For developers). Underlying error: {exc}. Only the static wiring below was checked; "
+            "the end-to-end resolution is proved on POSIX and in CI.",
+            stacklevel=1,
+        )
+        assert _RESOLVE_SCRIPT_FILE.search(text), (
+            "check.ps1 must resolve $PSCommandPath through Resolve-FinalTarget -- and this "
+            "machine could not create the symlink that proves it end to end"
+        )
+        assert _RESOLVE_SCRIPT_DIR.search(text), (
+            "check.ps1 must resolve the resolved script's directory too -- and this machine "
+            "could not create the symlink that proves it end to end"
+        )
+        return
+
+    run = _run_check_script(link, foreign, _stub_path(tmp_path))
+    assert run.returncode == 0, run.stdout + run.stderr
+
+    steps = re.findall(r"^\[stub (uv|npm)\] cwd=(.+?) args=(.*)$", run.stdout, re.MULTILINE)
+    programs = [program for program, _, _ in steps]
+    assert programs == ["uv"] * 6 + ["npm"] * 2, run.stdout
+    for program, cwd, args in steps:
+        expected = ROOT if program == "uv" else ROOT / "web"
+        assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
+        assert not _same_dir(cwd, foreign), (
+            f"{program} {args!r} ran in the symlinked foreign tree, not the real repo"
+        )
+
+    announced = re.search(r"^check\.ps1: running every gate in (.+)$", run.stdout, re.MULTILINE)
+    assert announced, run.stdout
+    assert _same_dir(announced.group(1).strip(), ROOT), (
+        "check.ps1 announced the symlink's foreign tree instead of the real repo"
+    )
 
 
 # --- ci.yml changed-links base resolution ----------------------------------
@@ -628,6 +874,165 @@ def test_probe_step_sweeps_every_link_when_asked(tmp_path: Path) -> None:
     assert "--changed-since" not in out
 
 
+# --- ci.yml web job ---------------------------------------------------------
+
+#: ``on:`` parses to the YAML 1.1 boolean ``True``, not to the string "on".
+_ON_KEY = True
+
+#: The front-end gates, in the order CI must run them. ``npm run test`` is the
+#: whole chain ``NPM_TEST_STAGES`` pins; ``npm run build`` is what proves the
+#: bundle -- which no test imports -- still compiles.
+WEB_JOB_COMMANDS = ("npm run test", "npm run build")
+
+
+def _workflow() -> dict[object, object]:
+    parsed = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert isinstance(parsed, dict), "ci.yml does not parse as a mapping"
+    return parsed
+
+
+def _web_job() -> dict[str, object]:
+    """The ``web`` job, or a failure that says the front-end gates are gone.
+
+    Every other assertion in this group goes through here, so deleting the job
+    fails all of them with this message rather than with a ``KeyError``.
+    """
+
+    jobs = _workflow().get("jobs")
+    assert isinstance(jobs, dict), "ci.yml declares no jobs"
+    assert "web" in jobs, (
+        "ci.yml has no `web` job: nothing in CI runs `npm run test` or `npm run build`, so every "
+        "front-end gate -- the pinned test chain, both coverage verifiers, the guard spec and the "
+        "production build -- is absent from CI while the workflow still reports green. Deleting "
+        f"the job left every test in this file passing (measured). Jobs found: {sorted(jobs)}"
+    )
+    job = jobs["web"]
+    assert isinstance(job, dict), "ci.yml's `web` job is not a mapping"
+    return job
+
+
+def _web_steps() -> list[dict[str, object]]:
+    steps = _web_job().get("steps")
+    assert isinstance(steps, list) and steps, "ci.yml's `web` job has no steps"
+    for step in steps:
+        assert isinstance(step, dict), f"ci.yml's `web` job has a non-mapping step: {step!r}"
+    return steps
+
+
+def test_ci_runs_on_push_and_pull_request() -> None:
+    """Both triggers, or the gates below run on neither event that matters.
+
+    This repository merges by fast-forward push, so ``push`` is not redundant
+    with ``pull_request``: dropping it would leave every merge to master
+    unchecked while pull requests still went green.
+    """
+
+    triggers = _workflow().get(_ON_KEY)
+    assert isinstance(triggers, dict), (
+        "ci.yml declares no `on:` mapping, so nothing says when this workflow runs"
+    )
+    for event in ("push", "pull_request"):
+        assert event in triggers, (
+            f"ci.yml no longer runs on `{event}`; this repository merges by fast-forward push, so "
+            f"both events must trigger CI. Triggers found: {sorted(map(str, triggers))}"
+        )
+
+
+def test_ci_web_job_runs_every_step_inside_web() -> None:
+    """``working-directory: web`` is what makes the npm steps mean anything.
+
+    Without it ``npm run test`` runs at the repository root, where there is no
+    ``package.json`` with a ``test`` script -- and a job that fails for that
+    reason is a job somebody will "fix" by deleting it.
+    """
+
+    job = _web_job()
+    defaults = job.get("defaults")
+    assert isinstance(defaults, dict), (
+        "ci.yml's `web` job declares no `defaults:`; every npm step would run at the repository "
+        "root instead of in web/"
+    )
+    run_defaults = defaults.get("run")
+    assert isinstance(run_defaults, dict), "ci.yml's `web` job declares no `defaults.run:`"
+    assert run_defaults.get("working-directory") == "web", (
+        "ci.yml's `web` job must set `defaults.run.working-directory: web`; found "
+        f"{run_defaults.get('working-directory')!r}"
+    )
+
+
+def test_ci_web_job_sets_up_node_and_installs_with_npm_ci() -> None:
+    """A Node toolchain, and a lockfile-faithful install.
+
+    ``npm ci`` installs exactly ``package-lock.json``; ``npm install`` is free
+    to resolve something else, which would let CI test a dependency tree no
+    checkout has. The step keeps ``npm install`` as the no-lockfile fallback,
+    so what is pinned here is that ``npm ci`` is the path taken when the
+    lockfile exists.
+    """
+
+    steps = _web_steps()
+    uses = [str(step.get("uses", "")) for step in steps]
+    assert any(u.startswith("actions/setup-node@") for u in uses), (
+        "ci.yml's `web` job has no actions/setup-node step, so the job runs on whatever Node the "
+        f"runner image happens to ship. Steps used: {uses}"
+    )
+    assert any(u.startswith("actions/checkout@") for u in uses), (
+        f"ci.yml's `web` job never checks the repository out. Steps used: {uses}"
+    )
+    scripts = "\n".join(str(step.get("run", "")) for step in steps)
+    assert "npm ci" in scripts, (
+        "ci.yml's `web` job never runs `npm ci`; an `npm install` on its own can resolve a "
+        f"dependency tree package-lock.json does not describe. Steps run:\n{scripts}"
+    )
+
+
+def test_ci_web_job_runs_the_front_end_gates_in_order() -> None:
+    """``npm run test`` then ``npm run build``, both present, in that order.
+
+    The whole job could be deleted and every test in this file still passed
+    (measured), which is the hole this closes. Order matters for the reason it
+    matters locally in ``check.ps1``: a build that succeeds says nothing about
+    a suite that was never run, and running the build first would let a failing
+    build mask which gate actually broke.
+    """
+
+    runs = [" ".join(str(step.get("run", "")).split()) for step in _web_steps()]
+    positions = {}
+    for command in WEB_JOB_COMMANDS:
+        matched = [index for index, script in enumerate(runs) if script == command]
+        assert matched, (
+            f"ci.yml's `web` job never runs `{command}` as a step of its own. Steps run: {runs}"
+        )
+        positions[command] = matched[0]
+    ordered = [positions[command] for command in WEB_JOB_COMMANDS]
+    assert ordered == sorted(ordered), (
+        "ci.yml's `web` job must run "
+        + " then ".join(f"`{command}`" for command in WEB_JOB_COMMANDS)
+        + f", in that order; found them at step indices {ordered}"
+    )
+
+
+def test_no_step_of_the_web_job_can_be_skipped() -> None:
+    """No ``if:`` and no ``continue-on-error:``, on the job or on any step.
+
+    Either one turns the job green without running -- or without honouring --
+    the gates, which is the same outcome as deleting it but harder to see in a
+    diff. The ``changed-links`` job is held to the same rule above.
+    """
+
+    job = _web_job()
+    for escape in ("if", "continue-on-error"):
+        assert escape not in job, (
+            f"ci.yml's `web` job carries `{escape}: {job[escape]!r}`; the front-end gates must "
+            "not be conditional or advisory"
+        )
+        for index, step in enumerate(_web_steps()):
+            assert escape not in step, (
+                f"step {index} of ci.yml's `web` job carries `{escape}: {step[escape]!r}`; a "
+                f"skipped or advisory step is a gate that is not enforced: {step!r}"
+            )
+
+
 # --- web/package.json test chain -------------------------------------------
 
 #: The ``test`` script's ``&&``-joined stages, in full and in order.
@@ -724,12 +1129,16 @@ def test_npm_test_configures_coverage_only_from_vitest_config() -> None:
     repo, and ``--coverage.thresholds.lines=0`` deletes what the report is
     scored against.
 
-    The resolved-config capture catches all of them from inside the run
+    The resolved-config capture catches those overrides
     (``coverage/resolved-coverage.json`` records what vitest resolved, and
     ``scripts/assert-coverage-scope.mjs`` deep-equals it against
-    ``coverage-scope.json``). This is the cheap outer layer: the invocation
-    itself carries no coverage configuration at all, so there is only one
-    place that configuration can come from.
+    ``coverage-scope.json``) -- with one exception it cannot catch, because the
+    capture is written from a config object the provider itself returned: a
+    custom provider that reports ``provider: 'v8'`` out of ``resolveOptions()``
+    hands the capture module a clean-looking config while instrumenting
+    nothing. This assertion is the cheap outer layer: the invocation itself
+    carries no coverage configuration at all, so there is only one place that
+    configuration can come from.
     """
 
     script = _npm_test_script()
@@ -761,12 +1170,13 @@ def test_vitest_config_declares_no_plugins() -> None:
     ``{...options, provider: 'v8'}``. vitest assigns that return value onto the
     config object *before* ``globalSetup`` runs, so the pristine capture module
     writes a perfectly clean capture while nothing is instrumented: ``npm test``
-    exit 0, every test in this file passing, ``check.ps1`` printing "All checks
-    passed!", with an uncovered exported function shipping in a gated module.
+    exit 0, every test in this file passing, the whole of ``check.ps1`` at exit
+    0, with an uncovered exported function shipping in a gated module.
 
-    Nothing inside the run can see that, because everything inside the run is
-    written by the process the attacker controls (see the boundary note atop
-    ``web/scripts/assert-coverage-scope.mjs``). What this does is put a price
+    Nothing in the same trust domain can see that: the evidence and every
+    reader of it are one mutable, equally-privileged checkout, so whoever can
+    write the provider can write what the readers read (see the boundary note
+    atop ``web/scripts/assert-coverage-scope.mjs``). What this does is put a price
     on the cheapest wiring: a ``plugins`` array spelled out in this file has to
     be added to this file, and this assertion turns that into a red build.
 
@@ -1014,6 +1424,16 @@ def test_web_guard_spec_still_exists_and_still_carries_its_gates() -> None:
     a gate disables it as thoroughly as editing it -- the file's existence and
     its named blocks are asserted here, where deleting the guard cannot also
     delete the assertion.
+
+    What this closes, exactly: DELETING the file, EMPTYING it, and replacing it
+    with a placeholder that does not carry the anchor strings below. What it
+    does NOT close: a placeholder that keeps them. The check is a substring
+    search, so a file containing these names -- as ``describe`` blocks with
+    empty bodies, or even in a comment -- passes it while asserting nothing.
+    Read this as a tripwire on the cheap ways to remove the guard, not as a
+    guarantee that the guard still works; what proves the assertions are still
+    real is that they still go red, which is the business of the whole suite
+    rather than of this one test.
     """
 
     assert WEB_GUARD_SPEC.is_file(), (
@@ -1024,6 +1444,8 @@ def test_web_guard_spec_still_exists_and_still_carries_its_gates() -> None:
     source = WEB_GUARD_SPEC.read_text(encoding="utf-8")
     missing = [name for name in GUARD_SPEC_CONTENTS if name not in source]
     assert not missing, (
-        f"web/src/guards.test.ts no longer contains {missing}; emptying the file passes an "
-        "existence check while disabling every guard in it"
+        f"web/src/guards.test.ts no longer contains {missing}; deleting the file, emptying it, or "
+        "swapping in a placeholder that drops these names all pass a bare existence check while "
+        "disabling every guard in it. (A placeholder that KEEPS these names passes this check "
+        "too -- it is a substring search, not a proof that the assertions still run.)"
     )
