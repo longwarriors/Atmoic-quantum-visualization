@@ -73,7 +73,8 @@
 - ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
 - ✅ binary parser 单测 — `web/src/api/qvpc.test.ts`，含**跨语言黄金向量**（见下）；
 - ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
-- ✅ `src/api/**`、`src/scene/**` 下全部 `.ts`（含 `qvpc.ts`、`client.ts`、`color.ts`；只排除 GLSL 字符串模块、测试文件与 `types.ts`）的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%，按文件评估） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1；
+- ✅ `src/api/**`、`src/scene/**` 下全部 `.ts`（含 `qvpc.ts`、`client.ts`、`color.ts`、`shaders/orbitalPoints.ts`；只排除测试文件与 `types.ts`）的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%，按文件评估） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1。`src/scene/shaders/` 曾作为"GLSL 字符串模块"整目录排除，但没有任何检查保证该目录里只有 GLSL 字符串：往里放一个带未覆盖分支的普通 `.ts` 并从 `color.ts` 调用，三道覆盖率门禁全绿、`npm run build` exit 0、那个分支照样进生产 bundle（实测）。该排除项已删除，shader 模块与其他模块一样受门禁，由 `src/scene/shaders/orbitalPoints.test.ts` 断言导出的着色器源码含场景真正依赖的 GLSL 入口点、uniform 与 varying；
+- ✅ 前端门禁在 CI 里真的会跑 — `.github/workflows/ci.yml` 的 `web` job（`working-directory: web`、`actions/setup-node`、`npm ci`、`npm run test`、`npm run build`）与 `push` / `pull_request` 两个触发条件都由 `tests/test_check_script.py` 按结构钉住，且该 job 及其任何步骤都不得带 `if:` 或 `continue-on-error:`。此前整个 `web` job 可以被删掉而全部 pytest 照常通过，CI 会在前端门禁完全缺席的情况下变绿（实测）；
 - ✅ 前端零 skip — `npm run test` 在 vitest 之后运行 `web/scripts/assert-no-skips.mjs` 核对 `coverage/vitest-results.json` 的运行结果：任何非 passed 的测试、缺席的 spec 文件或非零 pending/todo/failed 计数都失败；`web/src/guards.test.ts` 另对 spec 源码扫描 skip/todo/only/skipIf/runIf 的各种拼写与受门禁模块里的 coverage ignore 注释；
 - 🕒 geometry/material 正确 dispose；
 - 🕒 截图视觉回归仅作为辅助；

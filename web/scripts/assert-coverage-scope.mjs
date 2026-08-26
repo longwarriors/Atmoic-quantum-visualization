@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 /**
- * Gate `npm test` on the coverage vitest ACTUALLY measured and ACTUALLY
- * enforced, not on what its config source says it should measure and enforce.
+ * Gate `npm test` on what this run's own REPORT says it measured and enforced,
+ * not on what the config source says it should measure and enforce.
+ *
+ * Read that sentence literally. This file reads two artefacts the run left
+ * behind; it does not watch the instrumentation happen, and it cannot tell a
+ * report produced by real instrumentation from one a module in this repo wrote
+ * by hand. What it compares is a report against a manifest. Everything below
+ * is worth exactly as much as the report is honest, and the section on what
+ * this does not defend against says when that stops being true.
  *
  * src/guards.test.ts binds coverage by importing vitest.config.ts and
  * deep-equalling its `coverage.include` / `coverage.exclude` / `thresholds`.
@@ -26,9 +33,10 @@
  *               config (wired in as `globalSetup`). This is the config the
  *               run really used, overrides folded in. Compared against
  *               `resolvedCoverage`.
- *   SCOPE       coverage-final.json's key set is exactly the files the
- *               provider instrumented, so it IS the measured scope. Compared
- *               against `coverageGated`.
+ *   SCOPE       coverage-final.json's key set is what the provider REPORTED
+ *               instrumenting. From a real v8 run that is the measured scope;
+ *               from a provider that writes the file by hand it is whatever
+ *               that provider chose to claim. Compared against `coverageGated`.
  *   THRESHOLDS  its per-file `s` / `b` / `f` hit maps are what vitest's own
  *               threshold check reduces to percentages, so recomputing them
  *               here re-runs that check independently of whether vitest still
@@ -63,29 +71,49 @@
  * deleted or zeroed thresholds, `perFile:false`, a stale report, a deleted
  * chain stage, a pragma, a module parked under an extension the include misses
  * -- whether that weakening was careless or deliberate. It does not stop code
- * written to lie about coverage. Every observer above runs inside the vitest
- * process, and vitest assigns `config.coverage = coverageProvider
- * .resolveOptions()` before globalSetup runs, so a custom provider hands the
- * capture module a clean-looking config while instrumenting nothing --
- * measured, `check.ps1` at exit 0 with an uncovered exported function
- * shipping. The capture file is never touched. That is not a bug in the layers
- * below; it is what "the process vouches for itself" means, and no further
- * layer inside the process can close it.
+ * written to lie about coverage.
  *
- * What bounds it instead is that each KNOWN way of wiring a provider in costs
- * a reviewed diff: tests/test_check_script.py forbids `--coverage.` in the
- * `test` script, forbids a `plugins` key in vitest.config.ts, pins that file's
- * import list, pins the `test` chain to an exact stage tuple, and pins the
- * file list under scripts/ -- all from outside, where the run cannot reach
- * them. Read that as a list of closed spellings, not as a bound on the class.
- * The import pin is on it because without it the `plugins` array moved one
- * import away and the rest stayed silent: check.ps1 at exit 0, a forged
+ * The reason is NOT "every observer runs inside the vitest process". This file
+ * is a separate Node process; `npm test` starts it after vitest has exited,
+ * and it still cannot settle the question. Being a separate process was never
+ * the property that mattered. The property that matters is that everything in
+ * this chain -- vitest, its config, its provider, the capture module, this
+ * gate, and the two files it reads -- lives in ONE mutable, equally-privileged
+ * trust domain: the checkout. A single such domain cannot reliably vouch for
+ * itself, because whatever produces the evidence and whatever reads it are
+ * modifiable by the same hand, and the reader has no independent copy of what
+ * the evidence should have been. Concretely: vitest assigns `config.coverage =
+ * coverageProvider.resolveOptions()` before globalSetup runs, so a custom
+ * provider hands the capture module a clean-looking config while instrumenting
+ * nothing -- measured, the whole of check.ps1 at exit 0 with an uncovered
+ * exported function shipping, the capture file never touched.
+ *
+ * The counterexample says the same thing from the other side. A runner
+ * ISOLATED at the OS level -- its own tooling and configuration, not supplied
+ * by the checkout, with the source mounted read-only -- would sit inside this
+ * very npm chain and WOULD form a trusted boundary, because the thing under
+ * test cannot rewrite the thing doing the testing. So the fix is separate
+ * PRIVILEGE, not a separate process, and nothing here has it.
+ *
+ * What bounds it instead is cost at review time, not enforcement at run time.
+ * tests/test_check_script.py forbids `--coverage.` in the `test` script,
+ * forbids a `plugins` key in vitest.config.ts, pins that file's import list,
+ * pins the `test` chain to an exact stage tuple, and pins the file list under
+ * scripts/. Those are DIFF-REVIEW TRIPWIRES: each one fires the moment a known
+ * wiring is written down, which is before the run rather than during it, and
+ * each turns "a reviewer might notice this" into "the build is red". They are
+ * not out of the run's reach in any deeper sense -- they are ordinary files in
+ * the same checkout, and a diff that edits them is simply a bigger diff. Read
+ * the list as a list of closed spellings, not as a bound on the class. The
+ * import pin is on it because without it the `plugins` array moved one import
+ * away and the rest stayed silent: the whole of check.ps1 at exit 0, a forged
  * coverage-final.json certified by all three passes below, an uncovered
  * exported function shipping (measured). A wiring none of them names would do
- * the same. Closing the class itself means instrumenting independently of this
- * chain (a second, separately configured coverage run) or diffing the coverage
- * configuration against a protected baseline in CI. Both are deliberately out
- * of scope here; see docs/project/status.md, "门禁的防护边界".
+ * the same. Closing the class itself means giving the observer privilege the
+ * checkout does not have: an isolated runner as above, a second independently
+ * configured instrumentation run, or CI diffing the coverage configuration
+ * against a protected baseline. All three are deliberately out of scope here;
+ * see docs/project/status.md, "门禁的防护边界".
  *
  * FAIL-CLOSED throughout. A missing, unparseable, non-object or empty report
  * or capture is a failure, never a pass -- `--coverage.enabled=false` and a
@@ -171,8 +199,8 @@ export function auditCoverageScope(coverage, expected, webRoot) {
   const measured = new Set(Object.keys(coverage).map((key) => toWebRelative(webRoot, key)))
   if (measured.size === 0) {
     problems.push(
-      `${COVERAGE_REPORT}: lists zero files -- nothing was instrumented, so no ` +
-        'per-file threshold held anything',
+      `${COVERAGE_REPORT}: lists zero files -- the report claims nothing was ` +
+        'instrumented, so no per-file threshold held anything',
     )
     return problems
   }
@@ -180,12 +208,16 @@ export function auditCoverageScope(coverage, expected, webRoot) {
   const wanted = new Set(expected)
   for (const file of [...wanted].sort()) {
     if (!measured.has(file)) {
-      problems.push(`${file}: in ${MANIFEST} but NOT measured by this run (coverage scope shrank)`)
+      problems.push(
+        `${file}: in ${MANIFEST} but NOT listed in this run's report (coverage scope shrank)`,
+      )
     }
   }
   for (const file of [...measured].sort()) {
     if (!wanted.has(file)) {
-      problems.push(`${file}: measured by this run but NOT in ${MANIFEST} (unreviewed gated module)`)
+      problems.push(
+        `${file}: listed in this run's report but NOT in ${MANIFEST} (unreviewed gated module)`,
+      )
     }
   }
 
@@ -761,8 +793,8 @@ function main() {
   const scopeProblems = auditCoverageScope(coverage, manifest.coverageGated, webRoot)
   if (scopeProblems.length > 0) {
     console.error(
-      `assert-coverage-scope: ${scopeProblems.length} problem(s) -- the coverage scope this run ` +
-        `MEASURED does not match ${MANIFEST}:`,
+      `assert-coverage-scope: ${scopeProblems.length} problem(s) -- the coverage scope this run's ` +
+        `report LISTS does not match ${MANIFEST}:`,
     )
     for (const problem of scopeProblems) {
       console.error(`  - ${problem}`)
@@ -780,8 +812,8 @@ function main() {
   const thresholdFailures = auditCoverageThresholds(coverage, manifest, webRoot)
   if (thresholdFailures.length > 0) {
     console.error(
-      `assert-coverage-scope: ${thresholdFailures.length} problem(s) -- the coverage this run ` +
-        `MEASURED does not meet the thresholds ${MANIFEST} carries:`,
+      `assert-coverage-scope: ${thresholdFailures.length} problem(s) -- the coverage this run's ` +
+        `report LISTS does not meet the thresholds ${MANIFEST} carries:`,
     )
     for (const problem of thresholdFailures) {
       console.error(`  - ${problem}`)
@@ -802,13 +834,13 @@ function main() {
       "vitest's own resolved config by globalSetup.",
   )
   console.log(
-    `assert-coverage-scope: ${manifest.coverageGated.length} module(s) instrumented, ` +
+    `assert-coverage-scope: the report lists ${manifest.coverageGated.length} module(s), ` +
       `exactly matching ${MANIFEST}.`,
   )
   console.log(
     `assert-coverage-scope: all ${manifest.coverageGated.length} meet the per-file thresholds ` +
       `(${METRICS.map((metric) => `${metric} ${thresholds[metric]}%`).join(', ')}), ` +
-      "recomputed from this run's report.",
+      "recomputed from the report this run wrote (not observed while instrumenting).",
   )
 }
 
