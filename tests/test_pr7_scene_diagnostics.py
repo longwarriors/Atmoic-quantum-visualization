@@ -60,6 +60,37 @@ def test_stationary_streamline_defaults_are_dimensionless(n: int, z: float) -> N
     assert payload.continuity_residual < 1e-3
 
 
+@pytest.mark.parametrize("fraction", [1.0 / 4_096.0, 1.0 / 8.0])
+def test_explicit_arc_step_accepts_the_closed_dimensionless_boundaries(fraction: float) -> None:
+    payload = build_current_field(1, 0, 0, arc_step=fraction, seed_count=1)
+
+    assert payload.arc_step_bohr == fraction
+
+
+@pytest.mark.parametrize(
+    "fraction",
+    [
+        np.nextafter(1.0 / 4_096.0, 0.0),
+        np.nextafter(1.0 / 8.0, np.inf),
+    ],
+)
+def test_explicit_arc_step_rejects_values_just_outside_dimensionless_boundaries(
+    fraction: float,
+) -> None:
+    with pytest.raises(ValueError, match="arc_step / support_length"):
+        build_current_field(1, 0, 0, arc_step=fraction, seed_count=1)
+
+
+def test_streamline_point_budget_caps_before_an_unsafe_float_division() -> None:
+    with np.errstate(over="raise", invalid="raise"):
+        budget = scene_builders._streamline_point_budget(
+            float(np.finfo(np.float64).max),
+            float(np.finfo(np.float64).tiny),
+        )
+
+    assert budget == 4_096
+
+
 def test_analytic_zero_stationary_current_reports_that_no_probes_ran() -> None:
     payload = build_current_field(2, 1, 0, basis=BasisKind.COMPLEX, seed_count=4)
 

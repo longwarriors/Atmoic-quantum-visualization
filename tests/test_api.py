@@ -120,6 +120,68 @@ def test_openapi_describes_the_current_field_contract() -> None:
 BOHR_PAIR = "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"
 
 
+@pytest.mark.parametrize(
+    ("path", "params"),
+    [
+        (
+            "/api/orbitals/current-field",
+            {"n": 3, "l": 2, "m": 2, "basis": "complex", "seed_count": 1},
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": BOHR_PAIR, "time": 0.0, "seed_count": 1},
+        ),
+    ],
+)
+@pytest.mark.parametrize("arc_step", [5e-324, 1e308], ids=["subnormal", "too-large"])
+def test_current_field_routes_reject_arc_steps_outside_dimensionless_contract(
+    path: str,
+    params: dict[str, object],
+    arc_step: float,
+) -> None:
+    fail_safe_client = TestClient(create_app(mount_frontend=False), raise_server_exceptions=False)
+    response = fail_safe_client.get(path, params={**params, "arc_step": arc_step})
+
+    assert response.status_code == 422
+    assert "arc_step / support_length" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("path", "params", "arc_step"),
+    [
+        (
+            "/api/orbitals/current-field",
+            {"n": 3, "l": 2, "m": 2, "basis": "complex", "seed_count": 1},
+            0.27,
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": BOHR_PAIR, "time": 0.0, "seed_count": 1},
+            0.03,
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": "1,0,0,1.0", "time": 0.0, "seed_count": 1, "a_mu": 0.01},
+            0.01 / 4_096.0,
+        ),
+        (
+            "/api/orbitals/current-field",
+            {"n": 6, "l": 0, "m": 0, "basis": "complex", "seed_count": 1},
+            36.0 / 8.0,
+        ),
+    ],
+)
+def test_current_field_routes_accept_explicit_dimensionless_arc_step(
+    path: str,
+    params: dict[str, object],
+    arc_step: float,
+) -> None:
+    response = client.get(path, params={**params, "arc_step": arc_step})
+
+    assert response.status_code == 200
+    assert response.json()["arc_step_bohr"] == pytest.approx(arc_step)
+
+
 def test_superposition_catalog_includes_a_degenerate_control() -> None:
     entries = client.get("/api/superposition/catalog").json()
     ids = {entry["id"] for entry in entries}

@@ -53,7 +53,7 @@ Little-endian：
 - `seed_count` 是最终保留下来的输出流线数；`seed_density_floor` / `arc_step_bohr` / `integration_rule` 报告主要离散化尺度。候选 lattice 与请求 seed budget 尚未进入 payload，因此这些字段不足以单独重算整束流线；
 - `max_speed`：当前 payload 内的着色归一化基准。颜色表达同一状态内的相对速度；跨状态比较应读取数值 `max_speed`，不能直接比较颜色。
 
-默认离散化按物理尺度定义。单态以 $L=n^2/Z$，叠加态分别以最紧致与最宽的 $L_k=n_k^2a_\mu/Z$：`arc_step_bohr` 为最紧致尺度的 0.03，播种下限满足 $\rho_{\min}L_{\max}^3=10^{-4}$；连续性差分则用更短的 $L_d=\min(n_ka_\mu/Z)$。显式传入 `arc_step` 时它仍是 bohr。
+默认离散化按物理尺度定义。单态以 $L=n^2/Z$，叠加态分别以最紧致与最宽的 $L_k=n_k^2a_\mu/Z$：`arc_step_bohr` 为最紧致尺度的 0.03，播种下限满足 $\rho_{\min}L_{\max}^3=10^{-4}$；连续性差分则用更短的 $L_d=\min(n_ka_\mu/Z)$。显式传入 `arc_step` 时它仍是 bohr，但必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$：下界绑定 4096 点积分预算，上界使半径为一个最紧致支撑尺度的圆周仍约有 50 步；超界请求 fail-safe 为 HTTP 422。积分路径本身仍有 4096 点硬上限，`lines` 的实际顶点数会直接暴露是否触顶，payload 不声称走完某个预设物理弧长。
 
 对单一本征态，实基或 $m=0$ 时 `lines` 为空且 `max_speed` 为 0，并附 warning。这是**物理上正确的答案**（实定态概率流恒为零），不是错误。叠加态不能套用这一捷径：实基分量若带相对复相位仍可有流，必须按上面的共相位/共轭关系判定。
 

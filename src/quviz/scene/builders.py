@@ -55,6 +55,9 @@ from quviz.scene.models import (
 from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamlines
 
 _STREAMLINE_ARC_FRACTION = 0.03
+_STREAMLINE_MAX_POINTS = 4_096
+_STREAMLINE_MIN_ARC_FRACTION = 1.0 / _STREAMLINE_MAX_POINTS
+_STREAMLINE_MAX_ARC_FRACTION = 1.0 / 8.0
 _SEED_DENSITY_SCALED_FLOOR = 1e-4
 _CONTINUITY_PROBE_COUNT = 8
 _REALITY_RELATION_TOLERANCE = 64.0 * np.finfo(np.float64).eps
@@ -383,6 +386,28 @@ def _stationary_continuity_diagnostic(
     return absolute / scale, absolute, scale, "stationary_current", probes.shape[0]
 
 
+def _resolve_arc_step(arc_step: float | None, support_length: float) -> float:
+    """Resolve and validate the dimensionless streamline sampling contract."""
+
+    resolved = _STREAMLINE_ARC_FRACTION * support_length if arc_step is None else arc_step
+    minimum = _STREAMLINE_MIN_ARC_FRACTION * support_length
+    maximum = _STREAMLINE_MAX_ARC_FRACTION * support_length
+    if not np.isfinite(resolved) or not minimum <= resolved <= maximum:
+        raise ValueError("arc_step / support_length must be between 1/4096 and 1/8 inclusive")
+    return resolved
+
+
+def _streamline_point_budget(path_length: float, arc_step: float) -> int:
+    """Cap before division so extreme finite lengths cannot overflow."""
+
+    if path_length < 0.0 or not np.isfinite(path_length):
+        raise ValueError("streamline path length must be non-negative and finite")
+    uncapped_points = _STREAMLINE_MAX_POINTS - 8
+    if arc_step <= path_length / uncapped_points:
+        return _STREAMLINE_MAX_POINTS
+    return int(path_length / arc_step) + 8
+
+
 def build_current_field(
     n: int,
     l: int,
@@ -398,7 +423,10 @@ def build_current_field(
     Seeds are placed on a deterministic lattice in the :math:`(s,z)` half-plane
     at :math:`\phi=0`.  The default arc step is ``0.03 n²/Z`` and the density
     cutoff obeys ``rho_min (n²/Z)³ = 1e-4``; both are dimensionless contracts
-    rather than fixed ordinary-Bohr numbers.
+    rather than fixed ordinary-Bohr numbers. Explicit steps must satisfy
+    ``1/4096 <= arc_step / (n²/Z) <= 1/8``: the lower limit is tied to the
+    integration point budget and the upper limit retains about 50 samples on
+    a circular path whose radius is one characteristic support length.
 
     That seeding exploits the azimuthal symmetry of a *stationary* state, where
     every flow line is a circle of constant :math:`s` and :math:`z` and so one
@@ -413,9 +441,7 @@ def build_current_field(
     if seed_count < 1:
         raise ValueError("seed_count must be positive")
     support_length = n * n / z
-    resolved_arc_step = _STREAMLINE_ARC_FRACTION * support_length if arc_step is None else arc_step
-    if resolved_arc_step <= 0.0 or not np.isfinite(resolved_arc_step):
-        raise ValueError("arc_step must be positive")
+    resolved_arc_step = _resolve_arc_step(arc_step, support_length)
     basis_kind = BasisKind(basis)
 
     extent = _radial_extent_for_mass(n, l, z)
@@ -463,7 +489,7 @@ def build_current_field(
             # One budget for the bundle: the widest orbit sets it, and closure
             # retires the tighter ones early.
             widest = float(np.max(np.hypot(seeds[:, 0], seeds[:, 1])))
-            budget = min(int(2.0 * pi * widest / resolved_arc_step) + 8, 4_096)
+            budget = _streamline_point_budget(2.0 * pi * widest, resolved_arc_step)
             for line in integrate_streamlines(
                 velocity,
                 seeds,
@@ -711,6 +737,8 @@ def build_superposition_current_field(
     Seeding is fully three-dimensional here, unlike the stationary single-state
     builder. A superposition has no azimuthal symmetry to exploit: its flow
     lines generally do not close, so one azimuth no longer enumerates them.
+    An explicit arc step is accepted only between ``1/4096`` and ``1/8`` of
+    the most compact active support length.
     """
 
     if seed_count < 1:
@@ -719,9 +747,7 @@ def build_superposition_current_field(
         raise ValueError("current-field diagnostics support at most 8 active terms")
     analytic_zero_current = _has_analytic_zero_stationary_current(state)
     differential_length, compact_support, wide_support = state_support_lengths(state)
-    resolved_arc_step = _STREAMLINE_ARC_FRACTION * compact_support if arc_step is None else arc_step
-    if resolved_arc_step <= 0.0 or not np.isfinite(resolved_arc_step):
-        raise ValueError("arc_step must be positive")
+    resolved_arc_step = _resolve_arc_step(arc_step, compact_support)
 
     extent = _superposition_extent(state)
     axis = np.linspace(-extent, extent, lattice, dtype=np.float64)
@@ -753,7 +779,7 @@ def build_superposition_current_field(
             velocity,
             candidates[keep],
             arc_step=resolved_arc_step,
-            max_points=min(int(4.0 * extent / resolved_arc_step) + 8, 4_096),
+            max_points=_streamline_point_budget(4.0 * extent, resolved_arc_step),
             close_tolerance=0.5 * resolved_arc_step,
         ):
             if line.vertices.shape[0] < 4:

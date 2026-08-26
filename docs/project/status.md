@@ -106,7 +106,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 |---|---|
 | `ruff check .` / `ruff format --check .` | 通过；101 个文件已格式化 |
 | `mypy`（strict） | 31 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 859 passed，0 failed，0 skipped，77 warnings；本树总覆盖率 92.11%（门槛 85%），本检出存在 `web/dist` |
+| `uv run --group docs pytest --cov=quviz` | 872 passed，0 failed，0 skipped，77 warnings；本树总覆盖率 92.36%（门槛 85%），本检出存在 `web/dist` |
 | 引用索引 `--check` | 通过 |
 | `mkdocs build --strict` | 通过；仅有上游 mkdocs-material 2.0 提示 |
 | `npm run test` | 7 个文件 242 tests passed（`Inspector.test.tsx` 7 项、`sceneStatus.test.ts` 2 项），0 skipped，0 todo；报告列出的 4 个门禁模块与 `coverage-scope.json` 完全一致，四个模块语句/分支/函数/行覆盖率均为 100% |
@@ -127,7 +127,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 本轮冻结并实现的契约如下；所有回归均先由旧实现真实变红，再修复为绿，未放宽既有数值容差：
 
-1. 长度真源是 $a_\mu/Z$。流线默认 `arc_step` 为最紧致 active term 的 $0.03n^2a_\mu/Z$；播种阈值满足 $\rho_{\min}(\max n^2a_\mu/Z)^3=10^{-4}$；探针覆盖每个 active shell 的 $n^2a_\mu/Z$ 支撑尺度，梯度/散度差分分别为 $10^{-5}$ 与 $10^{-3}$ 倍的 $\min(na_\mu/Z)$；
+1. 长度真源是 $a_\mu/Z$。流线默认 `arc_step` 为最紧致 active term 的 $0.03n^2a_\mu/Z$；显式 override 必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$，下界绑定 4096 点预算，上界使一个支撑尺度半径的圆周仍约有 50 步，超界 API 请求返回 422；播种阈值满足 $\rho_{\min}(\max n^2a_\mu/Z)^3=10^{-4}$；探针覆盖每个 active shell 的 $n^2a_\mu/Z$ 支撑尺度，梯度/散度差分分别为 $10^{-5}$ 与 $10^{-3}$ 倍的 $\min(na_\mu/Z)$；
 2. 非定态连续性分母改为时间无关的 transition-coherence 平方和开根参照尺度：相同能隙的 $2\omega(c_a\phi_a)^*c_b\phi_b$ 先相干相加，不同能隙作二范数组合；它是明确的 reference，不冒充多频瞬时和的上包络。builder 另对每个不同能隙取四个辅助相位的最大残差，故转折点不再只靠“非零分母”装成有效检查；真正 stationary 的非零流改用 $\max|\mathbf j|/L_d$，实基共相位或复基 $c_m=\kappa(-1)^mc_{-m}^*$ 的解析零流单独标识并跳过数值积分；
 3. render-grid Gram matrix 与真实有限 cube 分开报告。每个径向尾部由 Laguerre 多项式平方后的有限不完全-Gamma 级数解析计算；奇偶性与 Cauchy–Schwarz 给出有限盒真实质量变化上界，同能隙离散交叉项先相干求和，再由反三角不等式给 grid alias 的变化下界。单个网格不能证明 boundary flux，因此 schema 没有这类状态；
 4. 每个 term 先校验量子数与系数有限性；state 随后剔除**精确零**（不按容差吞掉小系数），再依次检查全零、active duplicate、归一化。因而零系数 duplicate 不报错，全零报错，$10^{-12}$ 乃至 $10^{-200}$ active term 保留；极小 coherence 用 `hypot` 组合避免平方下溢，无法得到非零参照时失效安全报错；
