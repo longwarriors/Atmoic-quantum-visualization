@@ -1,8 +1,10 @@
 """Hydrogenic orbitals in explicit, tested conventions.
 
-All coordinates are expressed in reduced-Bohr-radius units unless ``a_mu`` is
-changed. The angular convention follows :func:`scipy.special.sph_harm_y`:
-``theta`` is polar/colatitudinal and ``phi`` is azimuthal.
+Coordinates are reported in ordinary Bohr radii. ``a_mu=m_e/mu`` is the
+dimensionless reduced-Bohr-radius scale in those units; changing it rescales
+the wavefunction and its reciprocal rescales energy. The angular convention
+follows :func:`scipy.special.sph_harm_y`: ``theta`` is polar/colatitudinal and
+``phi`` is azimuthal.
 """
 
 from __future__ import annotations

@@ -2,22 +2,22 @@
 
 !!! success "Phase 0 可演示基线"
 
-    2026-08-23，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 把五个功能分支整合进同一棵树并让门禁按其声明真正执行。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+    截至 2026-08-27，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
 | 能力 | 实现与验证 | 当前边界 |
 |---|---|---|
-| 氢与类氢解析波函数 | [质量门禁](../reference/quality-gates.md)“解析态”九项全部 ✅：归一化、正交性、通式节点数、$H\psi-E\psi$、$L^2$/$L_z$、$\langle r\rangle$/$\langle1/r\rangle$、约化质量、角度范围、Condon–Shortley | 解析 Coulomb 单电子态 |
+| 氢与类氢解析波函数 | [质量门禁](../reference/quality-gates.md)覆盖归一化、正交性、通式节点数、尺度化 $H\psi-E\psi$、$L^2$/$L_z$、高阶径向矩、约化质量、角度范围与 Condon–Shortley | 解析 Coulomb 单电子态 |
 | 概率密度、相位与定态概率流 | 概率流对照 $\operatorname{Im}(\psi^*\nabla\psi)$、定态连续性残差与 $\pm m$ 反向性测试通过 | 概率流 oracle 测试仅在 $Z=1$ 下验证；含时概率流已随 M1 叠加态交付（见下），数值 TDSE 的概率流属 M2 |
 | 分离逆 CDF 点采样 | 径向/极角/方位角 KS 检验、三维矩、seed 重现测试通过；marker 统一权重 | 单一可分离氢样态，不是一般线性组合 sampler |
-| 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像与轴上遮罩测试通过；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 定态播种利用方位对称性；叠加态播种按密度排序取三维网格点，但密度下限、`arc_step` 与探针位置仍是固定常数而非随尺度变化（PR-7） |
-| 解析含时叠加态（M1） | 单态退化一致性、范数/$\langle H\rangle$ 守恒、1s–2p 偶极闭式、简并 negative control、含时连续性残差测试通过；`/api/superposition/*` 与前端时间轴 | 叠加态点云采样属 M5；等值面仍限 $n\le4$ |
+| 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像与轴上遮罩测试通过；弧长、播种 cutoff、连续性探针和差分步长均按 $n/Z/a_\mu$ 尺度化；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 定态播种仍利用方位对称性；叠加态按三维网格密度排序；scene 连续性审计最多接收 8 个 active terms，并采用每个不同能隙四相位采样而非完整 Fourier 分解 |
+| 解析含时叠加态（M1） | 单态退化一致性、范数/$\langle H\rangle$ 守恒、1s–2p 偶极闭式、简并 negative control、转折点非空洞连续性审计与有限盒/网格 alias 分离测试通过；`/api/superposition/*` 与前端时间轴 | 叠加态点云采样属 M5；等值面仍限 $n\le4$ |
 | 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性、按面计数的绕向一致率和法向朝外测试通过 | API 保守限制为 $n\le4$；拓扑回归覆盖 1s、2p、3p 与复 2p，并未穷举全部轨道 |
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮与测试套件自检的 vitest 单测（233 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,203 kB（gzip 329 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser、HTTP client、相位色轮、scene 科学诊断显示与测试套件自检的 vitest 单测（242 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；2pz、3dz² 浏览器视觉复核通过 | 视觉回归仍是人工检查（PR-8）；主 bundle 1,206 kB（gzip 330 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -100,20 +100,20 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 ### 本树实测结果
 
-下表在本分支最后一次门禁提交（含上述解析后覆盖率配置捕获，以及调用链精确元组、`plugins` 键、`vitest.config.ts` 的 import 列表与 `web/scripts/` 清单、类型专用模块副作用扫描、标记编码与 `reportsDirectory` 大小写四项收尾修复）之上重新测得；这里不再写具体 commit 哈希，因为记录本身要落在下一个提交里，写死的哈希每次都会立刻过时。`pytest`/`npm run test` 在本检出上逐项直接执行，并以 `pwsh -NoProfile -File scripts/check.ps1` 端到端复跑核对，exit 0——复跑时 `web/dist` 已存在，785 passed、233 passed 与下表一致，覆盖率相应读作 92.37%（`web/dist` 缺席时的 92.28% 是更早一轮在全新工作树上的测值，见下表说明）。`db32d43` 与 `ea9873c` 上的记录（`git worktree add` 一棵全新工作树，无 `web/dist`、无 `node_modules`，`npm ci` 后端到端执行同样 exit 0，覆盖率因第一轮留下的 `web/dist` 从 92.03% 变为 92.12%）验证的是更早一轮、T1 补上 reparse/硬链接解析之前的 check.ps1，是那一轮的历史存档，不是下表数字的来源：
+下表于 2026-08-27 在 Windows 11、CPython 3.12.10、Node/Vite 现有锁定依赖与已存在 `web/dist` 的本检出上实测。先逐项运行定向测试，再执行 `pwsh -NoProfile -File scripts/check.ps1`；以下“通过”均来自整条命令的 exit 0，而不是第一道 Ruff 打印的 `All checks passed!`：
 
 | 检查 | 当前结果 |
 |---|---|
-| `ruff check .` / `ruff format --check .` | 通过；96 个文件已格式化 |
-| `mypy`（strict） | 29 个源码文件无问题 |
-| `uv run --group docs pytest --cov=quviz` | 785 passed，0 failed，0 skipped，69 warnings；本树总覆盖率 92.37%（门槛 85%）——本检出存在 `web/dist`；无 `web/dist` 的全新工作树上此前测得 92.28%（本轮未重测），差异来自 `src/quviz/api/app.py:37` 只在 `web/dist` 存在时才挂载前端 |
+| `ruff check .` / `ruff format --check .` | 通过；101 个文件已格式化 |
+| `mypy`（strict） | 31 个源码文件无问题 |
+| `uv run --group docs pytest --cov=quviz` | 859 passed，0 failed，0 skipped，77 warnings；本树总覆盖率 92.11%（门槛 85%），本检出存在 `web/dist` |
 | 引用索引 `--check` | 通过 |
-| `mkdocs build --strict` | 通过（本轮五次实测落在 1.74–1.78 s：单独执行两次均 1.78 s，`check.ps1` 内三次为 1.77 / 1.75 / 1.74 s。此前写的 2.6 s 与本树对不上；这一栏记的是逐次实测的区间，不是一个定值——按定值写下来，下一次运行就又不对了）；仅上游 mkdocs-material 2.0 提示 |
-| `npm run test` | 5 个文件 233 tests passed（`guards.test.ts` 127、`qvpc.test.ts` 65、`client.test.ts` 27、`orbitalPoints.test.ts` 10、`color.test.ts` 4）；`assert-no-skips` 核对运行结果：0 skipped，0 todo；`assert-coverage-scope` 先核对 `resolved-coverage.json`：本次运行解析后的覆盖率配置与 `coverage-scope.json` 的 `resolvedCoverage` 逐键一致（provider 为 `v8`，无 `customProviderModule`，vitest 实际加载的 provider 对象 `name` 也是 `v8`），再核对 `coverage-final.json`：报告列出 4 个模块，与 `coverage-scope.json` 完全一致，且四个模块重算出的覆盖率均达到 `thresholds`（语句 90%、分支 85%、函数 90%、行 90%）；`qvpc.ts`、`client.ts`、`color.ts` 与 `shaders/orbitalPoints.ts` 语句/分支/函数/行覆盖率均 100% |
-| `npm run build` | 通过；`index-*.js` 1,203.66 kB（gzip 329.07 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
-| 工作树 | `git status --short` 为空；`git ls-files --eol` 无 CRLF 工作副本 |
+| `mkdocs build --strict` | 通过；仅有上游 mkdocs-material 2.0 提示 |
+| `npm run test` | 7 个文件 242 tests passed（`Inspector.test.tsx` 7 项、`sceneStatus.test.ts` 2 项），0 skipped，0 todo；报告列出的 4 个门禁模块与 `coverage-scope.json` 完全一致，四个模块语句/分支/函数/行覆盖率均为 100% |
+| `npm run build` | 通过；`index-*.js` 1,206.27 kB（gzip 329.78 kB），CSS gzip 3.60 kB；仍有 chunk > 500 kB 警告 |
+| 完整门禁 | `pwsh -NoProfile -File scripts/check.ps1` exit 0 |
 
-68 条 pytest 警告来自 FastAPI/TestClient 与 scikit-image 的上游弃用提示，与 M0R 时相同，未被处理。
+77 条 pytest 警告来自 FastAPI/TestClient、scikit-image，以及 Windows 无权限创建文件符号链接时的显式 fallback 提示；本轮未处理。
 
 ## 剩余限制
 
@@ -123,18 +123,29 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 4. 原计划在进入解析含时叠加前先实现切片和节点面 representation，实际顺序没有遵守：概率流已交付，M1 叠加态先于切片完成，$\psi$/相位 SLICE 与相位节点遮罩推迟到 M1 之后（PR-8）；
 5. 清理 FastAPI/TestClient 与 scikit-image 上游弃用警告。
 
-### PR-7 待办：已核实但推迟的 P1
+### PR-7 科学正确性：八项 P1 已实现
 
-以下问题在本次独立核查中确认存在，但不阻断当前声明范围，留待 PR-7：
+本轮冻结并实现的契约如下；所有回归均先由旧实现真实变红，再修复为绿，未放宽既有数值容差：
 
-- 流线 `arc_step`、播种密度下限（最大密度的 $10^{-3}$）与连续性探针位置都是固定常数，不随 $Z$ 或 $n$ 缩放；
-- 含时连续性残差以 $\max|\partial\rho/\partial t|$ 归一化，而该尺度在密度振荡的转折点恰为零（实系数 1s–2p 在 $t=0$ 时实测为 0），builder 此时把残差报告为 0，判据空洞地通过；
-- 同宇称跨壳层叠加的交叉项在对称有限立方体内不再恰好积分为零：1s+2s 在 49³ 网格上的概率质量从 $t=0$ 的 0.951 漂移到半周期的 0.990，而 1s+2p 保持 0.979 不变，现有警告没有区分这两种情形；
-- 系数为零的项没有被规范化剔除：`1|1,0,0> + 0|2,1,0>` 被判为非定态并进入含时路径；
-- 约化质量 `a_mu` 只进入空间波函数，不进入 `energies` 的相位因子（`a_mu=0.5` 与 `1.0` 得到相同能量）；
-- 系数校验不拒绝 NaN；`label()` 只显示实系数的模，`-0.707` 被写成 `0.707`；
-- $H\psi-E\psi$ 残差使用固定差分步长，$n=6$ 或 $Z=0.05$ 超出容差；
-- 径向矩 $\langle r^p\rangle$ 在 $p\ge31$ 起无尾部截断检查。
+1. 长度真源是 $a_\mu/Z$。流线默认 `arc_step` 为最紧致 active term 的 $0.03n^2a_\mu/Z$；播种阈值满足 $\rho_{\min}(\max n^2a_\mu/Z)^3=10^{-4}$；探针覆盖每个 active shell 的 $n^2a_\mu/Z$ 支撑尺度，梯度/散度差分分别为 $10^{-5}$ 与 $10^{-3}$ 倍的 $\min(na_\mu/Z)$；
+2. 非定态连续性分母改为时间无关的 transition-coherence 平方和开根参照尺度：相同能隙的 $2\omega(c_a\phi_a)^*c_b\phi_b$ 先相干相加，不同能隙作二范数组合；它是明确的 reference，不冒充多频瞬时和的上包络。builder 另对每个不同能隙取四个辅助相位的最大残差，故转折点不再只靠“非零分母”装成有效检查；真正 stationary 的非零流改用 $\max|\mathbf j|/L_d$，实基共相位或复基 $c_m=\kappa(-1)^mc_{-m}^*$ 的解析零流单独标识并跳过数值积分；
+3. render-grid Gram matrix 与真实有限 cube 分开报告。每个径向尾部由 Laguerre 多项式平方后的有限不完全-Gamma 级数解析计算；奇偶性与 Cauchy–Schwarz 给出有限盒真实质量变化上界，同能隙离散交叉项先相干求和，再由反三角不等式给 grid alias 的变化下界。单个网格不能证明 boundary flux，因此 schema 没有这类状态；
+4. 每个 term 先校验量子数与系数有限性；state 随后剔除**精确零**（不按容差吞掉小系数），再依次检查全零、active duplicate、归一化。因而零系数 duplicate 不报错，全零报错，$10^{-12}$ 乃至 $10^{-200}$ active term 保留；极小 coherence 用 `hypot` 组合避免平方下溢，无法得到非零参照时失效安全报错；
+5. 在 `SuperpositionState`→scene/API 链路冻结 `a_mu=m_e/μ`、`reduced_mass_ratio=1/a_mu`。同一输入同时进入空间波函数、$E_n=-Z^2/(2a_\mu n^2)$、时间相位、概率流 prefactor、连续性、Hamiltonian 与 scene extent；superposition API/metadata 同时携带 `z`、`a_mu` 与 reciprocal。低层 energy primitive 保留显式 ratio 参数；
+6. 实部或虚部为 NaN/Inf 的系数在进入 state 前即拒绝，有限但会令平方溢出的巨大系数也以 normalization error 拒绝；Python `label()` 与前端 Inspector 都保留负实系数、复相位和极小非零项，不再显示模长或假零冒充代数系数；
+7. 径向 Hamiltonian 使用按 $na_\mu/Z$ 缩放的五点中心差分、$h$/$h/2$ Richardson 外推和独立差分误差门禁；显式步长测试要求折半收敛比大于 32，并证明默认路径实际细化，不能用调松 $5\times10^{-6}$ 物理残差门槛过关；
+8. 径向矩在无量纲坐标上用 $N$/$N/2$ Gauss–Legendre 规则，并要求连续两次有限域扩张收敛；正项在 log space 累加，可表示结果必须 finite，不可表示结果明确 overflow；除 1s 外另由 $n=6,l=5,p=60$ circular-state Gamma 比率作独立负控制。
+
+定向测量（2026-08-27，本机 CPython 3.12.10；同一最终工作树上的单一脚本）如下：
+
+| 复现条件 | 修复后实测 |
+|---|---|
+| 实系数 1s–2p，$t=0$，8 个尺度化探针、4 个相位 | 瞬时 `density_rate_scale = 0`；transition reference $4.1112662\times10^{-3}$；绝对残差 $3.9328180\times10^{-9}$；phase-audited normalized residual $9.5659531\times10^{-7}$。把 current 替换为恒零的负控制得到 residual $1.0$ |
+| $a_\mu=0.5$ 的 1s–2p | energies $(-1,-0.25)$ Ha，$\langle H\rangle=-0.625$ Ha；不再与 $a_\mu=1$ 相同 |
+| $n=6,\ell=0,Z=0.05$，1500 个 $r\in[0.6n/Z,6n^2/Z]$ 探针 | $\max\lvert H\psi-E\psi\rvert/\max\lvert E\psi\rvert=1.4932093\times10^{-10}$；初始/最终步长 17.28/1.08 bohr，实际细化 4 次，门槛仍为 $5\times10^{-6}$ |
+| 1s，512 nodes：$(p,Z,a_\mu)=(31,1,1),(60,2,0.5),(170,1,1)$ | 对各自闭式的相对误差依次为 $3.8626490\times10^{-13}$、$4.4366841\times10^{-13}$、$5.8787848\times10^{-14}$ |
+| 1s+2s，49³，cube half-extent 19.8448875 bohr | grid mass 从 $t=0$ 的 0.951133397 到半周期的 0.990280394；cube 外质量上界 $2.35944\times10^{-5}$，真实 cube 质量变化上界 $9.51747\times10^{-10}$，grid phase variation 0.039146997，alias variation 下界 0.019573498，报告阈值 0.002，分类 `phase_dependent_quadrature_error` |
+| 1s+2p，49³，cube half-extent 18.6711075 bohr | grid mass 从 $t=0$ 的 0.978543619 到半周期的 0.978543619；反宇称令真实 cube 质量变化上界为 0，grid phase variation $5.01335\times10^{-16}$，报告阈值 0.002，分类 `time_invariant_quadrature_error` |
 
 ### PR-8 待办
 

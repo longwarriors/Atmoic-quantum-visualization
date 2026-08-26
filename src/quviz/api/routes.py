@@ -175,7 +175,7 @@ def _cached_current_field(
     z: float,
     basis: BasisKind,
     seed_count: int,
-    arc_step: float,
+    arc_step: float | None,
 ) -> CurrentFieldPayload:
     return build_current_field(n, l, m, z=z, basis=basis, seed_count=seed_count, arc_step=arc_step)
 
@@ -188,7 +188,7 @@ def current_field(
     z: float = Query(1.0, gt=0.0, le=20.0),
     basis: BasisKind = BasisKind.COMPLEX,
     seed_count: int = Query(48, ge=1, le=256),
-    arc_step: float = Query(0.12, gt=0.01, le=1.0),
+    arc_step: float | None = Query(None, gt=0.0),
 ) -> CurrentFieldPayload:
     """Probability-flow streamlines.
 
@@ -211,7 +211,13 @@ _TERM_SPEC_HELP = (
 )
 
 
-def _parse_superposition(spec: str, basis: BasisKind) -> SuperpositionState:
+def _parse_superposition(
+    spec: str,
+    basis: BasisKind,
+    *,
+    z: float = 1.0,
+    a_mu: float = 1.0,
+) -> SuperpositionState:
     """Parse the compact query encoding, turning any error into a 422."""
 
     terms: list[SuperpositionTerm] = []
@@ -228,10 +234,13 @@ def _parse_superposition(spec: str, basis: BasisKind) -> SuperpositionState:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"unparsable term {chunk!r}") from exc
         _validate_or_422(n, l, m)
-        terms.append(SuperpositionTerm(n, l, m, complex(real, imag)))
+        try:
+            terms.append(SuperpositionTerm(n, l, m, complex(real, imag)))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        return SuperpositionState(terms=tuple(terms), basis=basis)
+        return SuperpositionState(terms=tuple(terms), z=z, a_mu=a_mu, basis=basis)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -274,9 +283,15 @@ def superposition_catalog() -> list[dict[str, object]]:
 
 @lru_cache(maxsize=32)
 def _cached_superposition_isosurface(
-    spec: str, basis: BasisKind, time: float, resolution: int, probability_mass: float
+    spec: str,
+    basis: BasisKind,
+    z: float,
+    a_mu: float,
+    time: float,
+    resolution: int,
+    probability_mass: float,
 ) -> SuperpositionIsosurfacePayload:
-    state = _parse_superposition(spec, basis)
+    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
     return build_superposition_isosurface(
         state, time=time, resolution=resolution, probability_mass=probability_mass
     )
@@ -287,22 +302,38 @@ def superposition_isosurface(
     terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
     time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
     basis: BasisKind = BasisKind.COMPLEX,
+    z: float = Query(1.0, gt=0.0, le=20.0),
+    a_mu: float = Query(1.0, gt=0.0, le=20.0),
     resolution: int = Query(65, ge=49, le=81),
     probability_mass: float = Query(0.90, ge=0.50, le=0.99),
 ) -> SuperpositionIsosurfacePayload:
     r"""The :math:`|\Psi(t)|^2` level set of a superposition at one instant."""
 
     try:
-        return _cached_superposition_isosurface(terms, basis, time, resolution, probability_mass)
+        return _cached_superposition_isosurface(
+            terms,
+            basis,
+            z,
+            a_mu,
+            time,
+            resolution,
+            probability_mass,
+        )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @lru_cache(maxsize=16)
 def _cached_superposition_current(
-    spec: str, basis: BasisKind, time: float, seed_count: int, arc_step: float
+    spec: str,
+    basis: BasisKind,
+    z: float,
+    a_mu: float,
+    time: float,
+    seed_count: int,
+    arc_step: float | None,
 ) -> SuperpositionCurrentPayload:
-    state = _parse_superposition(spec, basis)
+    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
     return build_superposition_current_field(
         state, time=time, seed_count=seed_count, arc_step=arc_step
     )
@@ -313,12 +344,22 @@ def superposition_current_field(
     terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
     time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
     basis: BasisKind = BasisKind.COMPLEX,
+    z: float = Query(1.0, gt=0.0, le=20.0),
+    a_mu: float = Query(1.0, gt=0.0, le=20.0),
     seed_count: int = Query(24, ge=1, le=128),
-    arc_step: float = Query(0.15, gt=0.01, le=1.0),
+    arc_step: float | None = Query(None, gt=0.0),
 ) -> SuperpositionCurrentPayload:
     """Probability-flow streamlines of a superposition, with its continuity residual."""
 
     try:
-        return _cached_superposition_current(terms, basis, time, seed_count, arc_step)
+        return _cached_superposition_current(
+            terms,
+            basis,
+            z,
+            a_mu,
+            time,
+            seed_count,
+            arc_step,
+        )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

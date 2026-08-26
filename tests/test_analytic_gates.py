@@ -360,8 +360,8 @@ def test_sampled_moments_match_analytic_expectations(n: int, l: int, m: int) -> 
 
 
 def test_energy_scales_with_reduced_mass_ratio() -> None:
-    # conventions.md:29 requires the reduced mass to be an explicit input
-    # rather than a silently hard-coded electron mass.
+    # The low-level energy primitive keeps the dimensionless mass ratio
+    # explicit. SuperpositionState derives it uniquely as 1/a_mu.
     proton_to_electron = 1836.152_673_43
     ratio = proton_to_electron / (1.0 + proton_to_electron)
 

@@ -48,15 +48,24 @@ Little-endian：
 ## 概率流字段 `CurrentFieldPayload`
 
 - `lines` / `speed`：逐条流线的顶点与逐顶点 $|\mathbf j|/\rho$。顶点按**弧长**等间距，速度只由 `speed` 承载——不得再用顶点疏密表示速度，否则同一个量被编码两次；
-- `continuity_residual`：实测的 $\max|\nabla\cdot\mathbf j|/\max|\mathbf j|$。定态要求它为零，payload 报告实测值而不是宣称该性质；
-- `seed_count` / `seed_density_floor` / `arc_step_bohr` / `integration_rule`：复现流线所需的全部离散化参数；
-- `max_speed`：着色归一化基准，使颜色在不同状态间可比。
+- `continuity_absolute_residual` / `continuity_scale` / `continuity_residual`：分别为连续性方程残差的绝对值、同量纲参照尺度和二者之比。非定态先把相同能隙的 transition coherence 相干合并，再把不同能隙作平方和开根，形成时间无关的参照尺度，并对每个不同能隙取四个辅助相位的最大残差；该尺度是严格定义的 reference，不宣称是多频瞬时和的上包络。定态非零流使用 $\max|\mathbf j|/L_d$，解析零流则明确标成 `analytic_zero_current`，不拿零分母伪造一个“通过”；
+- `continuity_scale_kind` / `continuity_probe_count`（叠加态另有 `continuity_phase_count`）：说明上述判据实际使用哪条路径、多少空间探针和多少辅助相位；若由实基共相位关系，或复基的 $c_m=\kappa(-1)^m c_{-m}^*$ 共轭关系解析证明零流，探针数与相位数都为 0。`density_rate_scale` 只报告画面时刻的 $\max|\partial_t\rho|$，不再作为归一化分母；
+- `seed_count` 是最终保留下来的输出流线数；`seed_density_floor` / `arc_step_bohr` / `integration_rule` 报告主要离散化尺度。候选 lattice 与请求 seed budget 尚未进入 payload，因此这些字段不足以单独重算整束流线；
+- `max_speed`：当前 payload 内的着色归一化基准。颜色表达同一状态内的相对速度；跨状态比较应读取数值 `max_speed`，不能直接比较颜色。
 
-实基或 $m=0$ 时 `lines` 为空且 `max_speed` 为 0，并附 warning。这是**物理上正确的答案**（实定态概率流恒为零），不是错误。
+默认离散化按物理尺度定义。单态以 $L=n^2/Z$，叠加态分别以最紧致与最宽的 $L_k=n_k^2a_\mu/Z$：`arc_step_bohr` 为最紧致尺度的 0.03，播种下限满足 $\rho_{\min}L_{\max}^3=10^{-4}$；连续性差分则用更短的 $L_d=\min(n_ka_\mu/Z)$。显式传入 `arc_step` 时它仍是 bohr。
+
+对单一本征态，实基或 $m=0$ 时 `lines` 为空且 `max_speed` 为 0，并附 warning。这是**物理上正确的答案**（实定态概率流恒为零），不是错误。叠加态不能套用这一捷径：实基分量若带相对复相位仍可有流，必须按上面的共相位/共轭关系判定。
 
 ## 等值面质量字段
 
 - `requested_probability_mass`：用户要求的绝对 superlevel-set 质量；
 - `captured_probability_mass`：离散阈值实际包含的 Simpson 加权质量；
 - `finite_grid_density_integral`：有限网格上的数值 $\int\rho dV$，可能因求积误差略高于 1；
-- `grid_resolution` / `grid_spacing_bohr` / `integration_rule`：复现阈值与质量估计所需的离散化参数。
+- `grid_resolution` / `grid_spacing_bohr` / `integration_rule`：复现阈值与质量估计所需的离散化参数；
+- 叠加态另报告 `finite_box_tail_mass_upper_bound` 与 `finite_box_mass_variation_upper_bound`：前者把有限阶 Laguerre 多项式平方后用整数阶不完全 Gamma 的终止级数求球外径向尾部解析上界，后者再用奇偶性、全空间正交性和 Cauchy–Schwarz 限制真实有限盒质量的时间变化；
+- `finite_grid_phase_variation_bound` 是离散 Simpson Gram matrix 的相位变化上包络；相同能隙的交叉项必须先作复数相干求和。`finite_grid_aliasing_variation_lower_bound` 用反三角不等式扣除有限盒允许的真实变化，只有这个**下界**超过 `finite_grid_reporting_tolerance` 时才能标为 `phase_dependent_quadrature_error`；
+- `finite_grid_mass_error_lower_bound` 是画面时刻的网格质量到物理允许区间 $[1-T,1]$ 的距离；`finite_grid_reporting_tolerance` 当前固定为 $2\times10^{-3}$，随 payload 明示，消费者无需猜 builder 常数；
+- `finite_grid_mass_status` 只在证据允许的范围内区分相位相关 alias、由对称性证明的 `time_invariant_quadrature_error`、只在当前时刻确认的 `quadrature_error_at_reported_time` 与 `no_error_above_tolerance_proven`。最后一种只表示现有**误差下界**没有证明误差超过阈值，不表示网格误差已被上界证明小于阈值；单网格结果也不会被宣称成已证明的边界通量。
+
+`SuperpositionMetadata` 必须同时携带 `z`、`a_mu` 与 `reduced_mass_ratio=1/a_mu`。空间长度用 $a_\mu/Z$，相位能量用 $-(Z^2/a_\mu)/(2n^2)$；两者来自同一个质量输入。

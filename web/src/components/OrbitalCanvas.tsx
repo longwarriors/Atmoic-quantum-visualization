@@ -22,6 +22,7 @@ import { CurrentStreamlines } from '../scene/CurrentStreamlines'
 import { ElectronCloud } from '../scene/ElectronCloud'
 import { OrbitalSurface } from '../scene/OrbitalSurface'
 import { useSceneStore } from '../state/useSceneStore'
+import { statusFromCurrentField, statusFromSuperpositionIsosurface } from './sceneStatus'
 
 interface OrbitalCanvasProps {
   onStatus: (status: SceneStatus) => void
@@ -127,19 +128,7 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
       fetchSuperpositionIsosurface(superpositionTerms, timeAu, 65, controller.signal)
         .then((data) => {
           setSuperpositionData(data)
-          onStatus({
-            loading: false,
-            triangleCount: data.faces.length,
-            extentBohr: data.extent_bohr,
-            densityLevel: data.density_level,
-            capturedProbabilityMass: data.captured_probability_mass,
-            finiteGridDensityIntegral: data.finite_grid_density_integral,
-            gridResolution: data.grid_resolution,
-            gridSpacingBohr: data.grid_spacing_bohr,
-            timeAu: data.metadata.time_au,
-            superposition: data.metadata,
-            warnings: data.metadata.warnings,
-          })
+          onStatus(statusFromSuperpositionIsosurface(data))
         })
         .catch((error: unknown) => {
           if (!controller.signal.aborted) {
@@ -168,15 +157,7 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
       fetchCurrentField(orbital, seedCount, controller.signal)
         .then((data) => {
           setCurrentData(data)
-          onStatus({
-            loading: false,
-            lineCount: data.lines.length,
-            maxSpeed: data.max_speed,
-            continuityResidual: data.continuity_residual,
-            extentBohr: data.extent_bohr,
-            metadata: data.metadata,
-            warnings: data.metadata.warnings,
-          })
+          onStatus(statusFromCurrentField(data))
         })
         .catch((error: unknown) => {
           if (!controller.signal.aborted) {

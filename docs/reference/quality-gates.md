@@ -20,10 +20,10 @@
 - ✅ $\int|\psi|^2dV=1$ — `tests/test_hydrogenic.py::test_radial_functions_are_normalized`；
 - ✅ 正交性（径向、角向、跨 $n$ 跨 $\ell$ 全波函数） — `tests/test_analytic_gates.py` 三项 `*_orthonormal_*`；
 - ✅ 节点数 $N_{\text{radial}}=n-\ell-1$（$n\le6$ 全部 $(n,\ell)$） — `test_radial_node_count_matches_n_minus_l_minus_one`；
-- ✅ $H\psi-E\psi$ 残差 — `test_radial_hamiltonian_residual_vanishes_for_eigenstates`；已验证的参数盒仅 $Z=1$、$n\le4$——固定差分步长下 $n=6$ 或 $Z=0.05$ 会超出容差（PR-7 事项）；
+- ✅ $H\psi-E\psi$ 残差 — `test_radial_hamiltonian_residual_vanishes_for_eigenstates` 与 `tests/test_pr7_mass_hamiltonian.py`；五点差分经 Richardson 外推并按 $na_\mu/Z$ 缩放，门禁覆盖 $n=6$、$Z=0.05$、$a_\mu=0.5$，要求折半收敛比大于 32，并证明默认路径确实从会超过原物理门槛的初始步长继续细化；
 - ✅ $\langle L^2\rangle$ 与 $\langle L_z\rangle$ — `test_spherical_harmonics_are_angular_momentum_eigenfunctions`；
-- ✅ 已知 $\langle r\rangle$、$\langle1/r\rangle$ — `test_expectation_radial_matches_known_closed_forms`；仅验证 $p\in\{1,-1\}$、$Z=1$——$p\ge31$ 起径向尾部截断误差不会触发任何报错；
-- ✅ 约化质量比进入能量而非写死电子质量 — `test_energy_scales_with_reduced_mass_ratio`；
+- ✅ 已知 $\langle r^p\rangle$ — `test_expectation_radial_matches_known_closed_forms` 与 `tests/test_pr7_radial_moments.py`；高阶门禁以 1s 闭式独立验证 $p=31,60,170$，并用 $n=6,l=5,p=60$ circular-state Gamma 比率排除 1s 特化；同时要求节点折半与连续两次计算域扩张收敛，不可表示的 $p=200$ 明确报 overflow，不返回 `inf`；
+- ✅ `SuperpositionState`→scene/API 链路中的约化质量只有一个真源：`a_mu=m_e/μ` 同时决定 $a_\mu/Z$ 空间尺度、`reduced_mass_ratio=1/a_mu` 能量/相位、概率流 prefactor 与 scene extent — `test_energy_scales_with_reduced_mass_ratio` 及 `tests/test_pr7_mass_hamiltonian.py`；低层 energy primitive 保留显式 ratio 参数；
 - ✅ $\theta\in[0,\pi]$、$\phi\in[0,2\pi)$ 角度范围约定 — `test_cartesian_to_spherical_uses_documented_angle_ranges`；
 - ✅ Condon–Shortley 相位与实轨道 Cartesian 形式（$\ell=1,2$） — `test_real_p_harmonics_match_cartesian_directions`、`test_real_d_harmonics_match_cartesian_closed_forms`。
 
@@ -55,8 +55,8 @@
 - ✅ 定态连续性残差 $\nabla\cdot\mathbf j=0$ — `test_stationary_current_satisfies_continuity`；
 - ✅ $\pm m$ 密度相同而流反向 — `test_current_reverses_sign_with_m_while_density_is_unchanged`；
 - ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`，同样仅在 $Z=1$ 下验证；
-- ✅ payload 报告实测 $\nabla\cdot\mathbf j$ 残差而非宣称该性质 — `CurrentFieldPayload.continuity_residual`；
-- ✅ 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$ — `tests/test_superposition.py`；$\partial\rho/\partial t$ 取闭式而非差分，因此该检验衡量的是电流，而不是时间差分格式的误差；
+- ✅ payload 报告绝对残差、归一化尺度、尺度种类与探针数，而非只宣称 $\nabla\cdot\mathbf j=0$ — `CurrentFieldPayload.continuity_*` 与 `tests/test_pr7_scene_diagnostics.py`；空间探针、差分步长、弧长步长和密度 cutoff 均有 $n/Z/a_\mu$ 协变门禁；
+- ✅ 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$ — `tests/test_superposition.py` 与 `tests/test_pr7_scene_diagnostics.py`；$\partial\rho/\partial t$ 取闭式，归一化先按同能隙相干合并、再按不同能隙平方和开根，builder 对每个不同能隙审计四个相位；恒零 current 的负控制在 1s–2p 转折点会得到 1 而不是空洞的 0；
 - ✅ 叠加态范数与 $\langle H\rangle$ 守恒（依赖上面的正交性门禁）；
 - ✅ 1s–2p 偶极振幅与 Bohr 频率对照闭式；简并叠加密度不动。
 
@@ -66,6 +66,7 @@
 - ✅ 节点连通性（1s、2p、3p） — `test_pz_isosurface_...`、`test_3p_surface_...`；
 - ✅ 面绕向一致率 > 99%（按面计数，不用面积加权均值） — `test_pz_isosurface_preserves_nodal_plane_and_winding`；
 - ✅ 法向朝密度降低方向 — `test_isosurface_normals_point_away_from_higher_density`；
+- ✅ 有限盒真实质量变化与 render-grid alias 分开报告 — `tests/test_pr7_scene_diagnostics.py`；1s+2s 的同宇称离散漂移必须超过保守有限盒变化界至少 $10^6$ 倍，1s+2p 的反宇称质量必须在半周期保持不变，同能隙相干相消的四项负控制不得误报 phase-dependent error；
 - 🕒 $n>4$ 的收敛策略与拓扑回归。
 
 ## 前端

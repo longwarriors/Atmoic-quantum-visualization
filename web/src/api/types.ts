@@ -1,5 +1,14 @@
 export type BasisKind = 'real' | 'complex'
 export type RepresentationKind = 'point_cloud' | 'isosurface' | 'streamlines'
+export type ContinuityScaleKind =
+  | 'transition_coherence'
+  | 'stationary_current'
+  | 'analytic_zero_current'
+export type FiniteGridMassStatus =
+  | 'no_error_above_tolerance_proven'
+  | 'phase_dependent_quadrature_error'
+  | 'time_invariant_quadrature_error'
+  | 'quadrature_error_at_reported_time'
 
 export interface OrbitalParameters {
   n: number
@@ -66,6 +75,10 @@ export interface CurrentFieldPayload {
   seed_density_floor: number
   extent_bohr: number
   continuity_residual: number
+  continuity_absolute_residual: number
+  continuity_scale: number
+  continuity_scale_kind: Exclude<ContinuityScaleKind, 'transition_coherence'>
+  continuity_probe_count: number
   integration_rule: string
 }
 
@@ -81,6 +94,9 @@ export interface SuperpositionMetadata {
   terms: SuperpositionTermSpec[]
   label: string
   basis: BasisKind
+  z: number
+  a_mu: number
+  reduced_mass_ratio: number
   time_au: number
   energy_expectation_hartree: number
   is_stationary: boolean
@@ -114,6 +130,21 @@ export interface SuperpositionIsosurfacePayload extends SurfaceGeometry {
   grid_spacing_bohr: number
   integration_rule: string
   extent_bohr: number
+  finite_box_tail_mass_upper_bound: number
+  finite_box_mass_variation_upper_bound: number
+  finite_grid_phase_variation_bound: number
+  finite_grid_aliasing_variation_lower_bound: number
+  finite_grid_mass_error_lower_bound: number
+  finite_grid_reporting_tolerance: number
+  finite_grid_mass_status: FiniteGridMassStatus
+}
+
+export interface SuperpositionCurrentPayload
+  extends Omit<CurrentFieldPayload, 'metadata' | 'continuity_scale_kind'> {
+  metadata: SuperpositionMetadata
+  continuity_scale_kind: ContinuityScaleKind
+  continuity_phase_count: number
+  density_rate_scale: number
 }
 
 export interface SuperpositionPreset {
@@ -144,6 +175,18 @@ export interface SceneStatus {
   lineCount?: number
   maxSpeed?: number
   continuityResidual?: number
+  continuityAbsoluteResidual?: number
+  continuityScale?: number
+  continuityScaleKind?: ContinuityScaleKind
+  continuityProbeCount?: number
+  continuityPhaseCount?: number
+  finiteBoxTailMassUpperBound?: number
+  finiteBoxMassVariationUpperBound?: number
+  finiteGridPhaseVariationBound?: number
+  finiteGridAliasingVariationLowerBound?: number
+  finiteGridMassErrorLowerBound?: number
+  finiteGridReportingTolerance?: number
+  finiteGridMassStatus?: FiniteGridMassStatus
   timeAu?: number
   superposition?: SuperpositionMetadata
   metadata?: OrbitalMetadata

@@ -60,7 +60,6 @@ def hydrogenic_flow_velocity(
     *,
     z: float = 1.0,
     a_mu: float = 1.0,
-    reduced_mass_atomic_units: float = 1.0,
     basis: BasisKind | str = BasisKind.COMPLEX,
     density_floor: float = 1e-14,
 ) -> VelocityField:
@@ -88,7 +87,6 @@ def hydrogenic_flow_velocity(
             azimuth,
             z=z,
             a_mu=a_mu,
-            reduced_mass_atomic_units=reduced_mass_atomic_units,
             basis=basis_kind,
             density_floor=density_floor,
         )
