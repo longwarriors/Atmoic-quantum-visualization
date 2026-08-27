@@ -217,6 +217,13 @@ h1, h2, p { margin: 0; }
   white-tinted top. A legend swatch that drifts from the texture beside it is
   worse than no swatch, so these stops are the only thing in this file that may
   change when that module's constants do.
+
+  That is now CHECKED rather than promised: SliceField.test.tsx reads these two
+  gradients out of this file and asserts that the slice renders each stop's
+  colour -- which is why the slice's DataTexture is tagged sRGB, so the
+  renderer's decode and its output encode cancel and a byte here is the byte on
+  screen. Measured before that tag was set: #383838 reached the canvas as
+  #818181, and the plane's dark baseline came up a light grey.
 */
 .diverging-ramp { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #46fafa, #383838, #fa4646); }
 /* The knee sits at 50%, exactly where sequentialRgb's SEQUENTIAL_KNEE is. */

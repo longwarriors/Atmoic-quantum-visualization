@@ -534,11 +534,14 @@ test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL })
     ],
   })
 
-  // The picture. arg psi = phi on this plane, so the colour must wind once
-  // through the full cycle going counter-clockwise from +u -- the direction
-  // fixed by the frame's right-handedness (u x v = +z here). A mirrored normal
-  // winds it the other way and passes every numeric check in the repo; the
-  // masked origin must be a hole, not a coloured pixel.
+  // The picture. arg psi = wrap(phi + pi) on this plane -- Y_1^1 carries the
+  // Condon-Shortley minus sign, so phase 0 sits at -u, not at +u
+  // (tests/test_slice_science.py:397 pins that, and the committed fixture reads
+  // exactly pi on +x). The colour must still wind once through the full cycle
+  // going counter-clockwise from +u -- the direction fixed by the frame's
+  // right-handedness (u x v = +z here), which the pi offset shifts but cannot
+  // reverse. A mirrored normal winds it the other way and passes every numeric
+  // check in the repo; the masked origin must be a hole, not a coloured pixel.
   await expect(canvasOf(page)).toHaveScreenshot('2p+1-phase-xy.png', screenshotOptions(page))
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })

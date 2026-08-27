@@ -8,12 +8,13 @@
  * genuinely needs three: a `DataTexture`, a `PlaneGeometry`, a rotation, and
  * the disposal of all three.
  *
- * The four texture settings below are each written out even though every one of
- * them is three@0.185.1's own `DataTexture` default. A default is a fact about
- * a dependency's version, not a decision this scene has made, and all four are
- * load-bearing: a minor upgrade that changed one would silently change the
- * physics the picture asserts, with no diff anywhere in this repo. Their
- * reasons are on the lines themselves.
+ * Three of the four texture settings below -- the two filters and `flipY` --
+ * are three@0.185.1's own `DataTexture` defaults, and are written out anyway. A
+ * default is a fact about a dependency's version, not a decision this scene has
+ * made, and each is load-bearing: a minor upgrade that changed one would
+ * silently change the physics the picture asserts, with no diff anywhere in
+ * this repo. The fourth, `colorSpace`, is a departure from the default rather
+ * than a restatement of it. Their reasons are on the lines themselves.
  *
  * Two shapes here are dictated by react-three-fiber rather than by three, and
  * both were measured rather than guessed:
@@ -21,11 +22,13 @@
  * **The material is an object, not a `<meshBasicMaterial>` child.** r3f's
  * `applyProps` auto-tags any RGBA8 texture assigned to a `map` prop with
  * `SRGBColorSpace` whenever the root is not `linear` (events-*.js: the
- * `colorMaps` list). That fires AFTER this module sets `NoColorSpace`, so the
- * declarative spelling silently produces a double-decoded colormap that no
- * longer matches the isosurface's vertex colours -- measured: the texture came
- * back tagged `"srgb"`. Owning the material keeps `map` out of r3f's reach, and
- * costs one more `dispose`.
+ * `colorMaps` list), overwriting whatever this module set -- measured: the
+ * texture came back tagged `"srgb"` however it was declared here. That tag now
+ * happens to be the one this colormap wants, which is exactly why the material
+ * still has to be owned rather than declared: a colour space the renderer
+ * picked from the root's linear flag is a coincidence, not a decision, and the
+ * next person to read this file could not tell which it was. Owning the
+ * material keeps `map` out of r3f's reach and costs one more `dispose`.
  *
  * **The rotation is handed over as an array.** r3f copies a value onto
  * `mesh.quaternion` only when `target.constructor === value.constructor`, and
@@ -101,11 +104,17 @@ export function SliceField({ data }: SliceFieldProps) {
     // is already the right way up in the frame the quad is oriented onto;
     // flipping it would mirror the slice about u.
     value.flipY = false
-    // The texels come out of `sliceColor.ts` in the same working space
-    // `phaseToRgb` writes the isosurface's vertex colours in. Tagging them sRGB
-    // would have the renderer decode them a second time, and one phase would
-    // then be two different colours depending on the representation.
-    value.colorSpace = THREE.NoColorSpace
+    // sRGB, because that is what `sliceColor.ts` computes. Its constants are
+    // chosen by arithmetic that is only defined on sRGB-encoded channels: the
+    // ramp's monotone-luminance claim is checked in sliceColor.test.ts through
+    // the WCAG transfer function, and NEUTRAL_DEPTH is set so the neutral lands
+    // "on #383838 ... about 1.7:1 against this scene's background" -- a ratio
+    // that comes out at 1.69 only if #383838 is the colour a viewer sees.
+    // Declaring the texture NoColorSpace made the renderer read each byte as a
+    // LINEAR value and then encode it on the way out, so the neutral reached the
+    // screen at #818181 (measured) and the plane's dark baseline came up a light
+    // grey that competed with the data it was supposed to sit behind.
+    value.colorSpace = THREE.SRGBColorSpace
     // A DataTexture starts at version 0 and is never uploaded until this says
     // its pixels are real.
     value.needsUpdate = true

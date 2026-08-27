@@ -17,11 +17,16 @@
  * of a real phase colour -- i.e. it would invent a phase in the one region the
  * payload went to the trouble of saying has none.
  *
- * **The colour space.** The texels come out of `sliceColor.ts`, which is the
- * same working space `phaseToRgb` writes the isosurface's vertex colours in.
- * Tagging the texture sRGB would make the renderer decode it once more, and the
- * same phase would then be a different colour depending on which representation
- * you were looking at.
+ * **The colour space.** The texels come out of `sliceColor.ts`, whose constants
+ * are chosen by arithmetic defined on sRGB-encoded channels -- the WCAG
+ * transfer function in sliceColor.test.ts, and a contrast ratio against the
+ * scene background that only works out if the bytes are what a viewer sees. So
+ * the texture is tagged sRGB, and the renderer decodes it once and encodes it
+ * once, which is the identity. Tagging it `NoColorSpace` instead reads every
+ * byte as a LINEAR value and encodes it on the way out, which lifted the dark
+ * neutral #383838 to #818181 on screen and put the legend and the plane beside
+ * it in disagreement -- the one thing this material turns tone mapping off to
+ * prevent.
  *
  * **The quaternion.** Asserted by what it DOES to the plane's own axes -- local
  * +x lands on `u_axis`, +y on `v_axis`, +z on `normal` -- rather than by
@@ -42,12 +47,14 @@
  * environment is enough: this component reads no `window`.
  */
 import ReactThreeTestRenderer from '@react-three/test-renderer'
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PLANE_FRAMES, parseSlicePayload, type AnySlicePayload } from '../api/sliceContract'
 import type { PrincipalPlane } from '../api/types'
+import { divergingRgb, sequentialRgb, SLICE_NEUTRAL_RGB, type Rgb } from './sliceColor'
 import { SliceField } from './SliceField'
 import { slicePlaneSize, sliceTexels } from './sliceTexture'
 
@@ -167,6 +174,49 @@ const materialOf = (renderer: Renderer): THREE.MeshBasicMaterial =>
 const textureOf = (renderer: Renderer): THREE.DataTexture =>
   materialOf(renderer).map as THREE.DataTexture
 
+/* --------------------------------------------------- legend and canvas */
+
+/**
+ * The colour stops of one legend ramp, read out of the stylesheet the app
+ * actually ships.
+ *
+ * Read rather than transcribed: styles.css says of these stops that they "are
+ * the colours scene/sliceColor.ts computes, not colours picked to look
+ * similar", and a second copy of them here would let the two drift together
+ * while the claim went on being made.
+ */
+function rampStops(className: string): string[] {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf-8')
+  const rule = new RegExp(`\\.${className}\\s*\\{[^}]*?linear-gradient\\(([^)]*)\\)`).exec(css)
+  if (rule === null) {
+    throw new Error(`styles.css has no .${className} rule with a linear-gradient.`)
+  }
+  return [...rule[1].matchAll(/#[0-9a-f]{6}/gi)].map((match) => match[0].toLowerCase())
+}
+
+/**
+ * The colour the RENDERER ends up putting on screen for one colour-map value,
+ * given the colour space the texture declares it in.
+ *
+ * Expressed through three's own `ColorManagement` rather than through a
+ * reimplemented transfer function, so this is the conversion the fragment
+ * shader performs and not a second opinion about it: `setRGB(..., source)`
+ * takes the value into the working space exactly as the texture fetch does,
+ * and `getHexString(SRGBColorSpace)` takes it out again exactly as
+ * `<colorspace_fragment>` does for a renderer whose `outputColorSpace` is sRGB
+ * (OrbitalCanvas pins that). `NoColorSpace` means "no conversion", i.e. the
+ * value is used as it stands in the working space, which is linear-sRGB.
+ *
+ * The round trip through bytes is `sliceTexture.ts`'s own quantisation: what
+ * reaches the GPU is `Math.round(channel * 255)`, not the double.
+ */
+function onScreenHex(rgb: Readonly<Rgb>, textureColorSpace: string): string {
+  const source =
+    textureColorSpace === THREE.SRGBColorSpace ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace
+  const [r, g, b] = rgb.map((channel) => Math.round(channel * 255) / 255)
+  return `#${new THREE.Color().setRGB(r, g, b, source).getHexString(THREE.SRGBColorSpace)}`
+}
+
 /* ---------------------------------------------------------------- tests */
 
 describe('SliceField', () => {
@@ -205,14 +255,17 @@ describe('SliceField', () => {
     // Read off a MOUNTED texture, not a freshly constructed one, and that is
     // the point of this test rather than an accident of the harness: r3f's
     // applyProps auto-tags any RGBA8 texture assigned to a `map` PROP with
-    // SRGBColorSpace whenever the root is not `linear`. Measured -- the
-    // declarative `<meshBasicMaterial map={texture} />` spelling hands back a
-    // texture tagged "srgb", double-decoding the colormap. This assertion is
-    // what fails if anyone ever "simplifies" the material back into JSX.
+    // SRGBColorSpace whenever the root is not `linear`, overwriting whatever
+    // the module set -- measured, the declarative `<meshBasicMaterial
+    // map={texture} />` spelling hands back a texture tagged "srgb" however it
+    // was declared. Reading the tag off a mounted texture is what makes this
+    // assertion about the colour space the RENDERER ends up using rather than
+    // the one this module asked for.
 
-    // Every one of these happens to be three@0.185.1's DataTexture default.
-    // They are asserted -- and set -- anyway: a default is a fact about a
-    // dependency's version, and each of these four is load-bearing physics.
+    // The first three happen to be three@0.185.1's DataTexture defaults. They
+    // are asserted -- and set -- anyway: a default is a fact about a
+    // dependency's version, and each of these four is load-bearing physics. The
+    // fourth is a departure from the default, not a restatement of it.
     // Interpolating a masked texel against an opaque one invents a phase where
     // the payload said there is none...
     expect(texture.magFilter).toBe(THREE.NearestFilter)
@@ -220,10 +273,13 @@ describe('SliceField', () => {
     // ...row 0 of the payload is v = -extent, which is where the plane's own
     // v axis starts, so flipping the image would mirror the slice about u...
     expect(texture.flipY).toBe(false)
-    // ...and the texels are already in the working space the isosurface's
-    // vertex colours are written in, so a second sRGB decode would make one
-    // phase two colours depending on the representation.
-    expect(texture.colorSpace).toBe(THREE.NoColorSpace)
+    // ...and the texels are sRGB, because that is the space sliceColor.ts's own
+    // arithmetic is defined in, so the renderer's decode and its output encode
+    // cancel and the plane shows the colours the legend prints. The test below
+    // measures that end of it; this line is here because the tag is also what
+    // r3f would otherwise pick on the app's behalf, from the root's linear flag
+    // rather than from anything about this colour map.
+    expect(texture.colorSpace).toBe(THREE.SRGBColorSpace)
 
     await renderer.unmount()
   })
@@ -256,6 +312,53 @@ describe('SliceField', () => {
     // would make the same value read as a different colour at a different
     // exposure, and disagree with the legend beside it.
     expect(material.toneMapped).toBe(false)
+
+    await renderer.unmount()
+  })
+
+  it('renders the very colours the legend beside it prints', async () => {
+    const renderer = await mountSlice(slicePayload('xz'))
+    const space = textureOf(renderer).colorSpace
+
+    // The legend is not decoration: it is the key by which every number on the
+    // plane is read, and the slice turns tone mapping off (see the material
+    // test above) for the sole purpose of keeping these two the same colour.
+    // What settles WHICH side is right is sliceColor.ts's own arithmetic:
+    // sliceColor.test.ts feeds its output through the WCAG transfer function --
+    // which is defined on sRGB-encoded channels -- and NEUTRAL_DEPTH is chosen
+    // so the neutral lands "on #383838 ... about 1.7:1 against this scene's
+    // background", a contrast ratio that only comes out at 1.69 if #383838 is
+    // what a viewer actually sees. These are sRGB values by construction, so
+    // the texture that carries them has to say so.
+    expect(onScreenHex(SLICE_NEUTRAL_RGB, space)).toBe(rampStops('density-ramp')[0])
+    expect(onScreenHex(sequentialRgb(0.5), space)).toBe(rampStops('density-ramp')[1])
+    expect(onScreenHex(sequentialRgb(1), space)).toBe(rampStops('density-ramp')[2])
+
+    expect(onScreenHex(divergingRgb(-1), space)).toBe(rampStops('diverging-ramp')[0])
+    expect(onScreenHex(divergingRgb(0), space)).toBe(rampStops('diverging-ramp')[1])
+    expect(onScreenHex(divergingRgb(1), space)).toBe(rampStops('diverging-ramp')[2])
+
+    await renderer.unmount()
+  })
+
+  it('lands texel column 0 on -u and texel row 0 on -v, on the quad itself', async () => {
+    const renderer = await mountSlice(slicePayload('xz'))
+    const geometry = meshOf(renderer).geometry
+    const position = geometry.getAttribute('position')
+    const uv = geometry.getAttribute('uv')
+
+    // THE ONE LINK IN THE ORIENTATION CHAIN NOTHING ELSE PINS. The quaternion
+    // test below fixes local +X onto u and local +Y onto v; `flipY = false`
+    // fixes texel row 0 onto texture coordinate v = 0. What joins them is
+    // `PlaneGeometry`'s own UV convention -- which corner of the quad carries
+    // v = 0 -- and that is three's decision, not this repo's. Negate both of
+    // these and the picture turns through 180 degrees: a winding still winds
+    // the same way, a nodal line stays where it was, and every array-level
+    // oracle in this repo still passes.
+    for (let index = 0; index < position.count; index += 1) {
+      expect(uv.getX(index)).toBe(position.getX(index) > 0 ? 1 : 0)
+      expect(uv.getY(index)).toBe(position.getY(index) > 0 ? 1 : 0)
+    }
 
     await renderer.unmount()
   })
