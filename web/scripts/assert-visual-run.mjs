@@ -52,6 +52,16 @@ import { fileURLToPath } from 'node:url'
 /** Mirrors `testMatch`'s effect in playwright.config.ts (testDir `e2e`). */
 const SPEC_FILE = /\.(test|spec)\.tsx?$/
 
+/**
+ * `testDir` from playwright.config.ts, relative to the web root.
+ *
+ * Named once and used twice -- to find the specs on disk, and to strip the same
+ * segment off an expected path when matching it against a report. Those two
+ * uses have to agree or the gate compares paths rooted differently, which is
+ * exactly the defect this constant was introduced to close.
+ */
+const TEST_DIR = 'e2e'
+
 /** The only per-test status Playwright uses for "this test asserted and passed". */
 const PASSING_TEST_STATUS = 'expected'
 /** The only per-attempt status that means the attempt itself passed. */
@@ -79,8 +89,16 @@ function walk(dir) {
 
 /**
  * Every e2e spec file on disk, as a sorted list of posix-style paths relative
- * to the web root (`e2e/webgl.spec.ts`) -- the same spelling Playwright's JSON
- * reporter uses for `spec.file`.
+ * to the WEB ROOT (`e2e/webgl.spec.ts`).
+ *
+ * That is NOT the spelling Playwright's JSON reporter uses. The reporter writes
+ * `spec.file` relative to `testDir`, i.e. `webgl.spec.ts` -- measured on the
+ * report from CI run 33098730686, where every `spec.file` is a bare filename
+ * and `config.rootDir` is the absolute path of `<web>/e2e`. The two are the
+ * same files described from different roots, and `matchesReportedFile` below is
+ * what reconciles them. This comment used to claim they were the same spelling,
+ * which is why the gate reported both specs "not run" against a run in which
+ * all seven tests had passed.
  *
  * Read off disk rather than written out as a literal so that adding a second
  * e2e spec cannot leave this gate quietly checking only the first one. A
@@ -89,10 +107,35 @@ function walk(dir) {
  */
 export function listVisualSpecFiles(webRoot) {
   const root = toPosix(resolve(webRoot))
-  return walk(resolve(webRoot, 'e2e'))
+  return walk(resolve(webRoot, TEST_DIR))
     .map((file) => posix.relative(root, toPosix(file)))
     .filter((path) => SPEC_FILE.test(path))
     .sort()
+}
+
+/**
+ * Did this expected spec file run, according to the paths the report carries?
+ *
+ * An expected path is rooted at the web root and a reported one at `testDir`,
+ * so exactly two spellings are accepted: the expected path itself, and the
+ * expected path with its leading `testDir` segment removed. Both are compared
+ * WHOLE.
+ *
+ * Deliberately not a basename comparison, which is the obvious shortcut and is
+ * wrong: it would let a `webgl.spec.ts` from any other directory satisfy an
+ * expectation of `e2e/webgl.spec.ts`, and a gate that accepts the right name
+ * from the wrong place is a gate that cannot see `testDir` moving -- failure
+ * mode 2 in the header, and one of the three this script exists for. Stripping
+ * a known prefix keeps every other segment significant, so a nested spec
+ * (`e2e/sub/a.spec.ts` reported as `sub/a.spec.ts`) still matches on its whole
+ * relative path.
+ */
+function matchesReportedFile(expected, reportedFiles) {
+  if (reportedFiles.has(expected)) {
+    return true
+  }
+  const prefix = `${TEST_DIR}/`
+  return expected.startsWith(prefix) && reportedFiles.has(expected.slice(prefix.length))
 }
 
 /** Every spec in the report, flattened out of the nested suite tree. */
@@ -133,7 +176,7 @@ export function auditVisualRun(report, expectedSpecs) {
   const specs = collectSpecs(report)
   const ran = new Set(specs.map((spec) => toPosix(spec.file)))
   for (const spec of expectedSpecs) {
-    if (!ran.has(spec)) {
+    if (!matchesReportedFile(spec, ran)) {
       problems.push(`${spec}: not run (absent from the Playwright report)`)
     }
   }

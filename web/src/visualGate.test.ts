@@ -33,19 +33,41 @@ import { describe, expect, it } from 'vitest'
 
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
-/** The spec files the visual suite must always have run. */
+/**
+ * The spec files the visual suite must always have run, as the GATE names them:
+ * relative to the web root, which is what `listVisualSpecFiles` reads off disk.
+ */
 const WEBGL_SPEC = 'e2e/webgl.spec.ts'
 const SLICE_SPEC = 'e2e/slice.spec.ts'
+
+/**
+ * The same two files as PLAYWRIGHT'S REPORTER writes them -- relative to
+ * `testDir`, so with no `e2e/` on the front.
+ *
+ * Measured, not assumed: in the JSON report from the first all-green CI run
+ * (33098730686) every `spec.file` reads `"slice.spec.ts"` or `"webgl.spec.ts"`,
+ * while `config.rootDir` and `config.projects[0].testDir` are both the absolute
+ * path of `.../web/e2e`. The two spellings are the same files described from
+ * different roots.
+ *
+ * The synthetic reports below are built in THIS shape, and that is the whole
+ * point of this constant existing. They were built in the expected shape once,
+ * which meant every case here validated a document Playwright never produces --
+ * so a gate that could not match a single real report passed its own tests, and
+ * the first run against a genuine one reported both specs "not run".
+ */
+const REPORTED_WEBGL = 'webgl.spec.ts'
+const REPORTED_SLICE = 'slice.spec.ts'
 
 /**
  * A report of one passing test per given spec file, in the shape Playwright's
  * `json` reporter writes: a file-level suite, a `describe`-level suite nested
  * inside it, and specs carrying `tests[].results[]`. Defaults to every
  * committed e2e spec; tests that need an ABSENT spec pass a shorter list.
- * `WEBGL_SPEC` stays first so mutation tests can address `suites[0]`.
+ * `REPORTED_WEBGL` stays first so mutation tests can address `suites[0]`.
  */
 function passingReport(...files: string[]): PlaywrightJsonReport {
-  const reported = files.length > 0 ? files : [WEBGL_SPEC, SLICE_SPEC]
+  const reported = files.length > 0 ? files : [REPORTED_WEBGL, REPORTED_SLICE]
   return {
     config: { updateSnapshots: 'none' },
     errors: [],
@@ -91,7 +113,9 @@ describe('assert-visual-run: a test that did not pass', () => {
       const problems = auditVisualRun(report, [WEBGL_SPEC])
       expect(problems).toHaveLength(1)
       expect(problems[0]).toContain(status)
-      expect(problems[0]).toContain(WEBGL_SPEC)
+      // Named in the message by the spelling the REPORT used, because that is
+      // the string a reader will search the report for.
+      expect(problems[0]).toContain(REPORTED_WEBGL)
     },
   )
 
@@ -121,16 +145,42 @@ describe('assert-visual-run: an expected spec file that never ran', () => {
   // nothing all produce a report that is internally consistent and green
   // while the screenshot comparison this suite exists for never happened.
   it('fails when an expected spec file is absent from the report', () => {
-    const report = passingReport(WEBGL_SPEC)
+    // A report carrying only webgl, in the reporter's own shape, against an
+    // expectation of both. The slice spec is genuinely missing -- which is the
+    // state this block is for, and is NOT the same thing as a slice spec that
+    // ran under a different spelling.
+    const report = passingReport(REPORTED_WEBGL)
     const problems = auditVisualRun(report, [WEBGL_SPEC, SLICE_SPEC])
+    // Named by the EXPECTED spelling: nothing in the report mentions it, so the
+    // reporter's spelling of it is not available to be printed.
     expect(problems).toEqual([expect.stringContaining(SLICE_SPEC) as unknown as string])
     expect(problems[0]).toContain('not run')
   })
 
-  it('accepts a spec path written with backslashes, as Windows would report it', () => {
+  // Both other spellings of the same file stay acceptable. The gate matches a
+  // testDir-relative path against a web-root-relative expectation, so it must
+  // not thereby stop accepting the web-root-relative spelling it was written
+  // for -- a future reporter change, or another tool feeding it a report, can
+  // legitimately produce either.
+  it.each([
+    ['the web-root-relative spelling', 'e2e/webgl.spec.ts'],
+    ['a Windows path with backslashes', 'e2e\\webgl.spec.ts'],
+    ['the testDir-relative spelling Playwright actually writes', REPORTED_WEBGL],
+  ] as const)('accepts %s', (_label, file) => {
     const report = passingReport()
-    report.suites![0]!.suites![0]!.specs![0]!.file = 'e2e\\webgl.spec.ts'
+    report.suites![0]!.suites![0]!.specs![0]!.file = file
     expect(auditVisualRun(report, [WEBGL_SPEC])).toEqual([])
+  })
+
+  // ...and strictness is not lost in the process: stripping the testDir segment
+  // must not degrade into matching on basename, or a spec of the same name from
+  // any other directory would satisfy an expectation it has nothing to do with.
+  it('does not accept a same-named spec from some other directory', () => {
+    const report = passingReport()
+    report.suites![0]!.suites![0]!.specs![0]!.file = 'other/webgl.spec.ts'
+    const problems = auditVisualRun(report, [WEBGL_SPEC])
+    expect(problems).toEqual([expect.stringContaining(WEBGL_SPEC) as unknown as string])
+    expect(problems[0]).toContain('not run')
   })
 })
 
