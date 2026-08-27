@@ -49,7 +49,7 @@
 - **`web/coverage-scope.json` 两处条目**：`coverageGated` 与 `pragmaScanned` 各加一行，按字典序。这道人工复核闩是刻意的；`web/src/guards.test.ts` 会直接给出应有清单与现有清单的 diff；
 - **一个 import 它的 spec**：覆盖率按文件评估（语句/函数/行 90%、分支 85%），而 `all: true` 会把没有任何 spec 引用的模块记成 0%，于是门槛失败；
 - **零 skip**：`assert-no-skips.mjs` 核对 vitest 自己的结果文件，`guards.test.ts` 另扫源码；
-- 如果这个 representation 要有截图基线，还要付 `web/e2e/` 那一层：固定的 payload fixture（`scripts/write_visual_fixtures.py` 写、`tests/test_visual_fixtures.py` 逐字节比对，这样一次像素 diff 只能是关于渲染的）、一条 spec，以及**第一次 CI 运行必然失败**、由人逐张看过渲染结果后才提交基线的流程（见[质量门禁](../reference/quality-gates.md)）。
+- 如果这个 representation 要有截图基线，还要付 `web/e2e/` 那一层：固定的 payload fixture（`scripts/write_visual_fixtures.py` 写、`tests/test_visual_fixtures.py` 重建并比对——catalog 逐字节，切片按结构比对、浮点允许 1e-12 相对偏差以容纳跨平台 libm 的末位舍入——这样一次像素 diff 只能是关于渲染的）、一条 spec，以及**第一次 CI 运行必然失败**、由人逐张看过渲染结果后才提交基线的流程（见[质量门禁](../reference/quality-gates.md)）。
 
 ## 一个 representation 可以承载多个 observable
 
