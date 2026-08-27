@@ -68,4 +68,62 @@ Little-endian：
 - `finite_grid_mass_error_lower_bound` 是画面时刻的网格质量到物理允许区间 $[1-T,1]$ 的距离；`finite_grid_reporting_tolerance` 当前固定为 $2\times10^{-3}$，随 payload 明示，消费者无需猜 builder 常数；
 - `finite_grid_mass_status` 只在证据允许的范围内区分相位相关 alias、由对称性证明的 `time_invariant_quadrature_error`、只在当前时刻确认的 `quadrature_error_at_reported_time` 与 `no_error_above_tolerance_proven`。最后一种只表示现有**误差下界**没有证明误差超过阈值，不表示网格误差已被上界证明小于阈值；单网格结果也不会被宣称成已证明的边界通量。
 
+## 切片资产 `SlicePayload` / `SuperpositionSlicePayload`
+
+切片在过原点的一张主平面上报告**一个**标量场：`probability_density`（`bohr^-3`）、`wavefunction_real` / `wavefunction_imag`（`bohr^-3/2`）或 `phase`（`radian`）。`value_unit` 由 `slice_observable` 唯一决定，写错即被 payload 自己的校验拒绝。
+
+### 采样布局
+
+`layout` 恒为 `row_major_v_rows_u_columns`，它是逐字写进 payload 的字面量，而不是留给读者猜的约定：
+
+- 第 $k$ 个样本满足 `k = row * resolution + col`；**`row` 索引 $v$（慢轴），`col` 索引 $u$（快轴）**；
+- 该样本的位置是 $P(\texttt{row},\texttt{col})=\texttt{origin}+\texttt{axis}[\texttt{col}]\,\hat u+\texttt{axis}[\texttt{row}]\,\hat v$，其中 `origin_bohr` 恒为 $(0,0,0)$；
+- 采样轴不是 `np.linspace(-extent, extent, resolution)`。`linspace` 以 `start + step*i` 生成再修补端点，在一般 extent 下**两半在最低位上并不逐位互为相反数**，于是切片的对称性断言与节点位置会由舍入决定。轴的定义是 $\texttt{axis}=\texttt{spacing}\times(\texttt{arange}(R)-\texttt{half})$，其中 $\texttt{half}=(R-1)//2$、$\texttt{spacing}=2\,\texttt{extent}/(R-1)$；IEEE 取负是精确的，小整数 `arange` 也是精确的，因此该轴在任意 extent 下逐位反对称，且 $\texttt{axis}[\texttt{half}]$ 精确为 `0.0`。这也是 `resolution` 必须为奇数的原因：偶数轴根本不采样原点，而这里每一条对称性、节点与遮罩陈述都是关于**过原点的平面**说的；
+- `extent_bohr` 是从状态**导出并报告**的（本征态用径向质量分位，叠加态用最宽 term），不是调用方参数。否则同一状态的两张切片可以对"状态到哪里为止"各执一词，masked fraction 与对称性陈述就都变成关于调用方裁剪框的陈述。
+
+### 平面标架
+
+三张主平面各有冻结的右手 $(u,v,n)$ 标架，满足 $\hat u\times\hat v=\hat n$：
+
+| `plane` | 标架 |
+|---|---|
+| `xy` | $(u=x,\ v=y,\ n=+\hat z)$ |
+| `xz` | $(u=x,\ v=z,\ n=-\hat y)$ |
+| `yz` | $(u=y,\ v=z,\ n=+\hat x)$ |
+
+`xz` 的法向是 **$-\hat y$** 而不是 $+\hat y$，因为 $\hat x\times\hat z=-\hat y$；写成 $+\hat y$ 会让这张平面的标架变成左手系，从而把每一条与手性有关的结论（概率流的环绕方向、相位缠绕的符号）整体镜像。`u_axis` / `v_axis` / `normal` 随 payload 一并给出，客户端不必知道服务端用的是哪套约定。
+
+### 相位遮罩与它的六个数
+
+波函数的相位在振幅消失处没有定义，而在一张恰好具有节面对称性的平面上，计算出的振幅不是零而是数值残渣：实基 $2p_z$ 在 `xy` 平面上的 $\max\lvert\psi\rvert$ 实测为 $4.4874712\times10^{-18}$，不是 `0`。因此阈值参照的是**状态自身**的振幅尺度 $L_{\mathrm{ref}}^{-3/2}$，而不是这张切片自己的最大值——后者会把阈值重新标定到那点残渣上，然后交回一整面毫无意义的相位。$L_{\mathrm{ref}}$ 对本征态是 $n^2a_\mu/Z$，对叠加态是 $\max_k n_k^2a_\mu/Z$。
+
+规则本身：
+
+$$
+\texttt{amplitude\_scale}=L_{\mathrm{ref}}^{-3/2},\quad
+\texttt{threshold}=\texttt{relative}\times\texttt{amplitude\_scale},\quad
+\texttt{floor}=64\,\varepsilon\max_{\text{plane}}\lvert\psi\rvert,
+$$
+
+$\texttt{relative}=10^{-6}$，$\texttt{effective}=\max(\texttt{threshold},\texttt{floor})$，`valid_mask` 为 $\lvert\psi\rvert>\texttt{effective}$（**严格**大于）。floor 只在评估自身的抵消残渣超过状态参照阈值时才接管。被遮罩的样本携带有限的哨兵值 `masked_value_sentinel = 0.0`，因此忽略遮罩的客户端画出的是一个确定的占位值而不是残渣，payload 也能通过严格 JSON 解析器。
+
+payload 报告下面六个数，读者据此可以看出是哪一项在起作用：
+
+| 字段 | 含义 |
+|---|---|
+| `phase_mask_relative_amplitude` | `relative`，当前为 $10^{-6}$ |
+| `phase_mask_amplitude_scale` | $L_{\mathrm{ref}}^{-3/2}$ |
+| `phase_mask_amplitude_threshold` | `relative` 乘上振幅尺度 |
+| `phase_mask_numeric_floor` | $64\varepsilon$ 乘上本平面的最大模 |
+| `max_amplitude_on_plane` | 本平面的 $\max\lvert\psi\rvert$ |
+| `phase_masked_fraction` | 被遮罩样本占 $R^2$ 的比例 |
+
+四个 `phase_mask_*` 字段与 `valid_mask` 只在 `slice_observable = phase` 时非空；其余三个标量场不带遮罩。`effective` 不单列，因为它就是前两者取大，读者可以自己算，而两个分项才说明是谁在决定边界。
+
+### 这个遮罩不宣称什么
+
+**被遮罩的样本只表示：在这张平面上 $\lvert\psi\rvert\leq$ threshold。这个集合既包含节面，也包含指数尾部；它标记的是一个低振幅 / 相位未定义区域，而不是节点证书——没有任何东西证明一个被遮罩的点是节点，也没有任何东西证明一个未被遮罩的点远离节点。**
+
+实测的例子正好说明这句话的两半：实基 $2p_z$ 的 `xy` 相位切片 `phase_masked_fraction = 1.0`，整张平面被遮罩（threshold $1.25\times10^{-7}$，floor $6.3770801\times10^{-32}$，$\max\lvert\psi\rvert=4.4874712\times10^{-18}$，故由 threshold 决定），并附带明确 warning：这张平面确实是 $2p_z$ 的节面，但**遮罩本身**不是那个结论的证据，同一个 `1.0` 也可以由一张完全落在指数尾部的切片产生。
+
 `SuperpositionMetadata` 必须同时携带 `z`、`a_mu` 与 `reduced_mass_ratio=1/a_mu`。空间长度用 $a_\mu/Z$，相位能量用 $-(Z^2/a_\mu)/(2n^2)$；两者来自同一个质量输入。

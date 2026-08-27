@@ -16,6 +16,7 @@ from quviz.conventions import (
     BasisKind,
     ObservableKind,
     RepresentationKind,
+    SliceObservable,
 )
 from quviz.physics.continuity import (
     continuity_audit_times,
@@ -47,6 +48,7 @@ from quviz.scene.models import (
     IsosurfacePayload,
     OrbitalMetadata,
     QuantumStateSpec,
+    SliceDetail,
     SuperpositionCurrentPayload,
     SuperpositionIsosurfacePayload,
     SuperpositionMetadata,
@@ -63,21 +65,83 @@ _CONTINUITY_PROBE_COUNT = 8
 _REALITY_RELATION_TOLERANCE = 64.0 * np.finfo(np.float64).eps
 
 
+_SLICE_FIELD_WORDS: dict[SliceObservable, str] = {
+    SliceObservable.PROBABILITY_DENSITY: "probability density |psi|^2",
+    SliceObservable.WAVEFUNCTION_REAL: "the real part of psi",
+    SliceObservable.WAVEFUNCTION_IMAG: "the imaginary part of psi",
+    SliceObservable.PHASE: "the principal phase of psi",
+}
+
+_SLICE_COLOR_WORDS: dict[SliceObservable, str] = {
+    SliceObservable.PROBABILITY_DENSITY: (
+        "probability density in bohr^-3; the density is unsigned, so no sign is encoded"
+    ),
+    SliceObservable.WAVEFUNCTION_REAL: (
+        "signed real part of psi in bohr^-3/2; the sign is the wavefunction's, not a density's"
+    ),
+    SliceObservable.WAVEFUNCTION_IMAG: (
+        "signed imaginary part of psi in bohr^-3/2; the sign is the wavefunction's, not a density's"
+    ),
+    SliceObservable.PHASE: (
+        "principal phase of psi in [-pi, pi]; masked samples mark a low-amplitude, "
+        "phase-undefined region and are not a certificate of a node"
+    ),
+}
+
+
+def _validate_slice_detail(
+    representation: RepresentationKind, slice_detail: SliceDetail | None
+) -> None:
+    """Fail closed in both directions on the slice representation.
+
+    A slice with no plane would leave the metadata unable to name the picture it
+    describes; a plane on any other representation would name a plane the asset
+    does not have.
+    """
+
+    if representation is RepresentationKind.SLICE:
+        if slice_detail is None:
+            raise ValueError("the slice representation requires slice_detail (plane and field)")
+    elif slice_detail is not None:
+        raise ValueError(
+            f"slice_detail requires the slice representation, got {representation.value}"
+        )
+
+
+def _slice_semantics(slice_detail: SliceDetail) -> tuple[str, str]:
+    """Return the geometry and color wording for one slice asset."""
+
+    field = _SLICE_FIELD_WORDS[slice_detail.slice_observable]
+    geometry = (
+        f"plane section of {field} on the {slice_detail.plane.value} plane through the origin, "
+        "sampled row-major with v along rows and u along columns"
+    )
+    return geometry, _SLICE_COLOR_WORDS[slice_detail.slice_observable]
+
+
 def orbital_metadata(
     n: int,
     l: int,
     m: int,
     *,
     z: float,
+    a_mu: float = 1.0,
     basis: BasisKind | str,
     observable: ObservableKind,
     representation: RepresentationKind,
+    slice_detail: SliceDetail | None = None,
     warnings: list[str] | None = None,
 ) -> OrbitalMetadata:
-    """Create metadata from the same inputs used by the numerical calculation."""
+    """Create metadata from the same inputs used by the numerical calculation.
+
+    ``a_mu`` is the reduced-mass Bohr length in ordinary Bohr radii. It enters
+    the energy as the mass ratio ``mu/m_e = 1/a_mu``, so a muonic length reports
+    a muonic energy rather than the infinite-nuclear-mass number.
+    """
 
     basis_kind = BasisKind(basis)
     validate_quantum_numbers(n, l, m)
+    _validate_slice_detail(representation, slice_detail)
     # One branch per representation. A default that silently reuses another
     # asset's wording makes the Scene Contract describe a picture that is not
     # on screen, which is worse than having no description at all.
@@ -90,19 +154,26 @@ def orbital_metadata(
             "streamlines of probability flow v = j / rho, sampled at equal arc length; "
             "these are flow lines, not electron trajectories"
         ),
+        # Reached only if the slice guard above is ever loosened: a slice with a
+        # SliceDetail names its plane and field instead of this generic wording.
         RepresentationKind.SLICE: "plane section of the scalar field",
     }
-    geometry_semantics = geometry_by_representation[representation]
-    if representation is RepresentationKind.STREAMLINES:
-        color_semantics = "flow speed |j|/rho normalized to the reported maximum"
-    elif basis_kind is BasisKind.REAL:
-        color_semantics = "wavefunction sign encoded as phase 0 or pi"
+    if slice_detail is not None:
+        # Guaranteed by _validate_slice_detail to be exactly the slice case, so
+        # the generic wording below never overwrites a named plane.
+        geometry_semantics, color_semantics = _slice_semantics(slice_detail)
     else:
-        color_semantics = "principal wavefunction phase in [-pi, pi]"
+        geometry_semantics = geometry_by_representation[representation]
+        if representation is RepresentationKind.STREAMLINES:
+            color_semantics = "flow speed |j|/rho normalized to the reported maximum"
+        elif basis_kind is BasisKind.REAL:
+            color_semantics = "wavefunction sign encoded as phase 0 or pi"
+        else:
+            color_semantics = "principal wavefunction phase in [-pi, pi]"
     return OrbitalMetadata(
-        state=QuantumStateSpec(n=n, l=l, m=m, z=z, basis=basis_kind),
+        state=QuantumStateSpec(n=n, l=l, m=m, z=z, a_mu=a_mu, basis=basis_kind),
         label=orbital_label(n, l, m, basis=basis_kind),
-        energy_hartree=hydrogenic_energy_hartree(n, z=z),
+        energy_hartree=hydrogenic_energy_hartree(n, z=z, reduced_mass_ratio=1.0 / a_mu),
         observable=observable,
         representation=representation,
         coordinate_convention=ANGLE_CONVENTION,
@@ -119,7 +190,7 @@ def orbital_metadata(
     )
 
 
-def _radial_extent_for_mass(
+def radial_extent_for_mass(
     n: int,
     l: int,
     z: float,
@@ -284,7 +355,7 @@ def build_isosurface(
         raise ValueError("probability_mass must be between 0.50 and 0.99")
     basis_kind = BasisKind(basis)
 
-    extent = _radial_extent_for_mass(n, l, z)
+    extent = radial_extent_for_mass(n, l, z)
     mesh = _build_density_mesh(
         lambda r, th, ph: hydrogenic_wavefunction(n, l, m, r, th, ph, z=z, basis=basis_kind),
         extent=extent,
@@ -444,7 +515,7 @@ def build_current_field(
     resolved_arc_step = _resolve_arc_step(arc_step, support_length)
     basis_kind = BasisKind(basis)
 
-    extent = _radial_extent_for_mass(n, l, z)
+    extent = radial_extent_for_mass(n, l, z)
     warnings: list[str] = []
     if basis_kind is BasisKind.REAL:
         warnings.append(
@@ -539,27 +610,30 @@ def superposition_metadata(
     time: float,
     observable: ObservableKind,
     representation: RepresentationKind,
+    slice_detail: SliceDetail | None = None,
     warnings: list[str] | None = None,
 ) -> SuperpositionMetadata:
     """Metadata for a superposition asset, including the instant it depicts."""
 
+    _validate_slice_detail(representation, slice_detail)
     notes = list(warnings or [])
     if state.is_stationary and len(state.terms) > 1:
         notes.append(
             "all terms share one energy, so this superposition is stationary: "
             "the density does not evolve and any apparent motion is an artefact"
         )
-    geometry = (
-        "streamlines of probability flow v = j / rho, sampled at equal arc length; "
-        "these are flow lines, not electron trajectories"
-        if representation is RepresentationKind.STREAMLINES
-        else "level set of probability density |Psi|^2 at the stated time"
-    )
-    color = (
-        "flow speed |j|/rho normalized to the reported maximum"
-        if representation is RepresentationKind.STREAMLINES
-        else "principal wavefunction phase in [-pi, pi]"
-    )
+    if slice_detail is not None:
+        geometry, color = _slice_semantics(slice_detail)
+        geometry = f"{geometry}, at the stated time"
+    elif representation is RepresentationKind.STREAMLINES:
+        geometry = (
+            "streamlines of probability flow v = j / rho, sampled at equal arc length; "
+            "these are flow lines, not electron trajectories"
+        )
+        color = "flow speed |j|/rho normalized to the reported maximum"
+    else:
+        geometry = "level set of probability density |Psi|^2 at the stated time"
+        color = "principal wavefunction phase in [-pi, pi]"
     return SuperpositionMetadata(
         terms=[
             SuperpositionTermSpec(
@@ -590,11 +664,11 @@ def superposition_metadata(
     )
 
 
-def _superposition_extent(state: SuperpositionState) -> float:
+def superposition_extent(state: SuperpositionState) -> float:
     """The widest term sets the cube: a smaller box would clip a real component."""
 
     return max(
-        _radial_extent_for_mass(term.n, term.l, state.z, a_mu=state.a_mu) for term in state.terms
+        radial_extent_for_mass(term.n, term.l, state.z, a_mu=state.a_mu) for term in state.terms
     )
 
 
@@ -653,7 +727,7 @@ def build_superposition_isosurface(
     if not 0.50 <= probability_mass <= 0.99:
         raise ValueError("probability_mass must be between 0.50 and 0.99")
 
-    extent = _superposition_extent(state)
+    extent = superposition_extent(state)
     mesh = _build_density_mesh(
         lambda r, th, ph: state.evaluate(r, th, ph, time=time),
         extent=extent,
@@ -749,7 +823,7 @@ def build_superposition_current_field(
     differential_length, compact_support, wide_support = state_support_lengths(state)
     resolved_arc_step = _resolve_arc_step(arc_step, compact_support)
 
-    extent = _superposition_extent(state)
+    extent = superposition_extent(state)
     axis = np.linspace(-extent, extent, lattice, dtype=np.float64)
     x, y, z_axis = np.meshgrid(axis, axis, axis, indexing="ij")
     candidates = np.column_stack((x.ravel(), y.ravel(), z_axis.ravel()))

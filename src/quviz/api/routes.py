@@ -7,7 +7,13 @@ from functools import lru_cache
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from quviz import __version__
-from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
+from quviz.conventions import (
+    BasisKind,
+    ObservableKind,
+    PrincipalPlane,
+    RepresentationKind,
+    SliceObservable,
+)
 from quviz.physics.hydrogenic import validate_quantum_numbers
 from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
 from quviz.sampling.point_cloud import sample_orbital_point_cloud
@@ -23,8 +29,17 @@ from quviz.scene.models import (
     CurrentFieldPayload,
     IsosurfacePayload,
     OrbitalMetadata,
+    SlicePayload,
     SuperpositionCurrentPayload,
     SuperpositionIsosurfacePayload,
+    SuperpositionSlicePayload,
+)
+from quviz.scene.slices import (
+    DEFAULT_SLICE_RESOLUTION,
+    MAXIMUM_SLICE_RESOLUTION,
+    MINIMUM_SLICE_RESOLUTION,
+    build_slice,
+    build_superposition_slice,
 )
 
 router = APIRouter(prefix="/api", tags=["QuViz"])
@@ -204,6 +219,66 @@ def current_field(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@lru_cache(maxsize=8)
+def _cached_slice(
+    n: int,
+    l: int,
+    m: int,
+    z: float,
+    a_mu: float,
+    basis: BasisKind,
+    plane: PrincipalPlane,
+    observable: SliceObservable,
+    resolution: int,
+) -> SlicePayload:
+    return build_slice(
+        n,
+        l,
+        m,
+        z=z,
+        a_mu=a_mu,
+        basis=basis,
+        plane=plane,
+        observable=observable,
+        resolution=resolution,
+    )
+
+
+@router.get("/orbitals/slice")
+def orbital_slice(
+    n: int = Query(2, ge=1, le=12),
+    l: int = Query(1, ge=0, le=11),
+    m: int = Query(0, ge=-11, le=11),
+    z: float = Query(1.0, gt=0.0, le=20.0),
+    a_mu: float = Query(1.0, gt=0.0, le=20.0),
+    basis: BasisKind = BasisKind.REAL,
+    plane: PrincipalPlane = PrincipalPlane.XZ,
+    observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY,
+    resolution: int = Query(
+        DEFAULT_SLICE_RESOLUTION,
+        ge=MINIMUM_SLICE_RESOLUTION,
+        le=MAXIMUM_SLICE_RESOLUTION,
+    ),
+) -> SlicePayload:
+    """One scalar field of an eigenstate on a principal plane through the origin.
+
+    The extent is derived from the state and reported; it is not a parameter.
+    ``resolution`` is bounded here only by the outermost limits both payloads
+    share -- the parity rule and the ``n``-dependent floor live in the builder,
+    which raises, and those refusals arrive as a 422 naming the reason.
+
+    This is the only eigenstate route that exposes ``a_mu``: a slice is where
+    the reduced-mass length is legible, because it rescales both the derived
+    extent and the amplitude scale the phase mask is referenced to.
+    """
+
+    _validate_or_422(n, l, m)
+    try:
+        return _cached_slice(n, l, m, z, a_mu, basis, plane, observable, resolution)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 # --- Time-dependent superpositions (M1) --------------------------------------
 
 _TERM_SPEC_HELP = (
@@ -360,6 +435,64 @@ def superposition_current_field(
             time,
             seed_count,
             arc_step,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@lru_cache(maxsize=8)
+def _cached_superposition_slice(
+    spec: str,
+    basis: BasisKind,
+    z: float,
+    a_mu: float,
+    time: float,
+    plane: PrincipalPlane,
+    observable: SliceObservable,
+    resolution: int,
+) -> SuperpositionSlicePayload:
+    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
+    return build_superposition_slice(
+        state,
+        time=time,
+        plane=plane,
+        observable=observable,
+        resolution=resolution,
+    )
+
+
+@router.get("/superposition/slice")
+def superposition_slice(
+    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
+    basis: BasisKind = BasisKind.COMPLEX,
+    z: float = Query(1.0, gt=0.0, le=20.0),
+    a_mu: float = Query(1.0, gt=0.0, le=20.0),
+    plane: PrincipalPlane = PrincipalPlane.XZ,
+    observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY,
+    resolution: int = Query(
+        DEFAULT_SLICE_RESOLUTION,
+        ge=MINIMUM_SLICE_RESOLUTION,
+        le=MAXIMUM_SLICE_RESOLUTION,
+    ),
+) -> SuperpositionSlicePayload:
+    """One scalar field of a superposition on a principal plane at one instant.
+
+    The largest term sets both the extent and the resolution floor, so a
+    resolution that is honest for a 1s slice can be refused here; the refusal
+    names the shell that demands more samples.
+    """
+
+    try:
+        return _cached_superposition_slice(
+            terms,
+            basis,
+            z,
+            a_mu,
+            time,
+            plane,
+            observable,
+            resolution,
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

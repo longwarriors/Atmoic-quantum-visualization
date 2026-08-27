@@ -1,12 +1,39 @@
-import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
+import { describe, expect, it, vi } from 'vitest'
 
+import { executeSceneRequest } from '../components/useSceneAsset'
 import {
   type Capability,
+  type SceneKind,
   type SceneRequestInputs,
   capabilityFor,
   planSceneRequest,
 } from './capability'
 import type { OrbitalParameters, RepresentationKind } from './types'
+
+/**
+ * The five fetchers `executeSceneRequest` dispatches to, stubbed.
+ *
+ * The subset guard below asks one question -- "does every representation the
+ * panel offers reach a fetcher?" -- and the honest way to ask it is to run the
+ * dispatcher, because its coverage lives in a `switch` over endpoint strings
+ * that nothing can enumerate from the outside. Stubbing the transport keeps
+ * that a question about the dispatch table and not about the network.
+ */
+vi.mock('./client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./client')>()
+  const stub = async (): Promise<never> => ({}) as never
+  return {
+    ...actual,
+    fetchPointCloud: stub,
+    fetchIsosurface: stub,
+    fetchCurrentField: stub,
+    fetchSuperpositionIsosurface: stub,
+    fetchSuperpositionCurrentField: stub,
+  }
+})
 
 const orbital = (patch: Partial<OrbitalParameters> = {}): OrbitalParameters => ({
   n: 2,
@@ -406,5 +433,411 @@ describe('planSceneRequest: every value it sends is inside the declared bound', 
     )
     if (plan.status !== 'available') throw new Error('unreachable')
     expect(plan.params.resolution).toBe(49)
+  })
+})
+
+describe('capabilityFor: eigenstate x slice', () => {
+  it('names the slice route, not the row that happened to be last', () => {
+    // The matrix used to end each mode's dispatch with a bare `return
+    // <streamlines>` fallback, so a representation nobody had written a row
+    // for was handed the current-field capability -- endpoint, bounds and all.
+    // This orbital is deliberately one the streamline row ACCEPTS (complex,
+    // m != 0, inside n <= 6), so the fallback would answer `available` with
+    // /api/orbitals/current-field and no test asserting merely "available"
+    // would notice.
+    const capability = available(
+      capabilityFor({
+        mode: 'eigenstate',
+        orbital: orbital({ n: 3, l: 2, m: 1, basis: 'complex' }),
+        representation: 'slice',
+      }),
+    )
+    expect(capability.endpoint).toBe('/api/orbitals/slice')
+  })
+
+  it('transcribes the slice resolution window with the floor n forces', () => {
+    // slices.py: ge=65, le=513, and `slice_resolution_floor` is max(65, 16n+17)
+    // -- the same 16n + 17 the isosurface row uses, over a different floor.
+    const low = available(
+      capabilityFor({
+        mode: 'eigenstate',
+        orbital: orbital({ n: 2, l: 1, m: 0 }),
+        representation: 'slice',
+      }),
+    )
+    expect(low.parameters.resolution).toEqual({ min: 65, max: 513, step: 2 })
+
+    const high = available(
+      capabilityFor({
+        mode: 'eigenstate',
+        orbital: orbital({ n: 8, l: 7, m: 0 }),
+        representation: 'slice',
+      }),
+    )
+    // 16 * 8 + 17 = 145, well above the shared floor of 65.
+    expect(high.parameters.resolution).toEqual({ min: 145, max: 513, step: 2 })
+  })
+
+  it('declares a_mu, the one eigenstate route that reads it', () => {
+    const capability = available(
+      capabilityFor({ mode: 'eigenstate', orbital: orbital(), representation: 'slice' }),
+    )
+    expect(capability.parameters.aMu).toEqual({ min: 0.005, max: 20, step: 0.005 })
+  })
+
+  it('is available for every state the panel can reach, as the point cloud is', () => {
+    // /api/orbitals/slice and /api/orbitals/point-cloud carry identical state
+    // ceilings (n le=12, l le=11, |m| le=11), both above the panel's own n <= 8
+    // clamp, so neither row refuses on the state.
+    for (const state of [
+      orbital({ n: 1, l: 0, m: 0 }),
+      orbital({ n: 8, l: 7, m: -7, basis: 'complex' }),
+    ]) {
+      const capability = capabilityFor({
+        mode: 'eigenstate',
+        orbital: state,
+        representation: 'slice',
+      })
+      expect(capability.status, JSON.stringify(state)).toBe('available')
+    }
+  })
+
+  it('carries the planes and observables the slice routes accept', () => {
+    const capability = available(
+      capabilityFor({ mode: 'eigenstate', orbital: orbital(), representation: 'slice' }),
+    )
+    expect(capability.planes).toEqual(['xy', 'xz', 'yz'])
+    expect(capability.observables).toEqual([
+      'probability_density',
+      'wavefunction_real',
+      'wavefunction_imag',
+      'phase',
+    ])
+  })
+})
+
+describe('capabilityFor: superposition x slice', () => {
+  it('names the superposition slice endpoint and declares time and a_mu', () => {
+    const capability = available(
+      capabilityFor({ mode: 'superposition', orbital: orbital(), representation: 'slice' }),
+    )
+    expect(capability.endpoint).toBe('/api/superposition/slice')
+    expect(capability.parameters.timeAu).toEqual({ min: -1000, max: 1000, step: 0.6 })
+    expect(capability.parameters.aMu).toEqual({ min: 0.005, max: 20, step: 0.005 })
+    expect(capability.planes).toEqual(['xy', 'xz', 'yz'])
+    expect(capability.observables).toEqual([
+      'probability_density',
+      'wavefunction_real',
+      'wavefunction_imag',
+      'phase',
+    ])
+  })
+
+  it('allows the whole 65..513 range, because the floor is a per-state rule', () => {
+    // The builder's floor is max(65, 16n + 17) of the LARGEST term, and this
+    // module does not parse `terms`. Declaring the eigenstate floor of the
+    // panel's n here would refuse grids the route accepts; the builder's own
+    // refusal arrives as a 422 that names the shell demanding more samples.
+    for (const n of [1, 4, 8]) {
+      const capability = available(
+        capabilityFor({
+          mode: 'superposition',
+          orbital: orbital({ n, l: 0, m: 0 }),
+          representation: 'slice',
+        }),
+      )
+      expect(capability.parameters.resolution).toEqual({ min: 65, max: 513, step: 2 })
+    }
+  })
+})
+
+describe('capabilityFor: a_mu is declared only where the route reads it', () => {
+  // routes.py reads `a_mu` on four routes: both superposition scene routes and
+  // both slice routes. Declaring it anywhere else would send a query parameter
+  // the route ignores; declaring it nowhere is what let it be spelled into the
+  // superposition params by hand, outside the bound the matrix states.
+  it.each([
+    ['eigenstate', 'slice', true],
+    ['superposition', 'slice', true],
+    ['superposition', 'isosurface', true],
+    ['superposition', 'streamlines', true],
+    ['eigenstate', 'point_cloud', false],
+    ['eigenstate', 'isosurface', false],
+    ['eigenstate', 'streamlines', false],
+  ] as const)('%s x %s declares a_mu: %s', (mode, representation, declared) => {
+    const capability = available(
+      capabilityFor({
+        mode,
+        orbital: orbital({ n: 3, l: 2, m: 1, basis: 'complex' }),
+        representation,
+      }),
+    )
+    expect(capability.parameters.aMu !== undefined).toBe(declared)
+  })
+
+  it('is inside its bound in every plan that sends it, and absent from the rest', () => {
+    const clamped = planSceneRequest(
+      inputs({ mode: 'superposition', representation: 'isosurface', aMu: 0 }),
+    )
+    if (clamped.status !== 'available') throw new Error('unreachable')
+    // The route's lower bound is OPEN (gt=0.0), so 0 is not a value it accepts.
+    expect(clamped.params.a_mu).toBe(0.005)
+
+    const eigenstate = planSceneRequest(inputs({ representation: 'isosurface', aMu: 3 }))
+    if (eigenstate.status !== 'available') throw new Error('unreachable')
+    expect('a_mu' in eigenstate.params).toBe(false)
+  })
+})
+
+describe('planSceneRequest: slice', () => {
+  it('sends the state, the grid, a_mu, the plane and the observable', () => {
+    const plan = planSceneRequest(
+      inputs({
+        representation: 'slice',
+        orbital: orbital({ n: 3, l: 1, m: -1, z: 2, basis: 'complex' }),
+        resolution: 129,
+        aMu: 0.5,
+        plane: 'yz',
+        sliceObservable: 'phase',
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.endpoint).toBe('/api/orbitals/slice')
+    expect(plan.params).toEqual({
+      n: 3,
+      l: 1,
+      m: -1,
+      z: 2,
+      basis: 'complex',
+      resolution: 129,
+      a_mu: 0.5,
+      plane: 'yz',
+      observable: 'phase',
+    })
+  })
+
+  it('sends the superposition slice its terms, clock and plane', () => {
+    const plan = planSceneRequest(
+      inputs({
+        mode: 'superposition',
+        representation: 'slice',
+        superpositionBasis: 'complex',
+        timeAu: 1.2,
+        plane: 'xy',
+        sliceObservable: 'wavefunction_real',
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.endpoint).toBe('/api/superposition/slice')
+    expect(plan.params.terms).toBe('1,0,0,0.7071067811865476;2,1,0,0.7071067811865476')
+    expect(plan.params.time).toBe(1.2)
+    expect(plan.params.plane).toBe('xy')
+    expect(plan.params.observable).toBe('wavefunction_real')
+    expect(plan.params.a_mu).toBe(1)
+  })
+
+  it("falls back to the routes' own defaults when the caller states neither", () => {
+    // routes.py: `plane: PrincipalPlane = PrincipalPlane.XZ`,
+    // `observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY`.
+    const plan = planSceneRequest(inputs({ representation: 'slice' }))
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.plane).toBe('xz')
+    expect(plan.params.observable).toBe('probability_density')
+  })
+
+  it('refuses a plane or observable the row does not declare', () => {
+    // Same discipline as clampParameter: a value outside what the capability
+    // states never leaves, so the request cannot become a 422 the matrix
+    // promised it would not.
+    const plan = planSceneRequest(
+      inputs({
+        representation: 'slice',
+        plane: 'zz' as never,
+        sliceObservable: 'current_density' as never,
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.plane).toBe('xz')
+    expect(plan.params.observable).toBe('probability_density')
+  })
+
+  it('clamps the slice grid up to the floor n forces', () => {
+    const plan = planSceneRequest(
+      inputs({ representation: 'slice', orbital: orbital({ n: 8, l: 7, m: 0 }), resolution: 65 }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.resolution).toBe(145)
+  })
+
+  it('never spells a plane onto a row that declares none', () => {
+    for (const representation of ['point_cloud', 'isosurface'] as const) {
+      const plan = planSceneRequest(inputs({ representation }))
+      if (plan.status !== 'available') throw new Error('unreachable')
+      expect('plane' in plan.params, representation).toBe(false)
+      expect('observable' in plan.params, representation).toBe(false)
+    }
+  })
+})
+
+/**
+ * Every member of RepresentationKind, as a value the compiler checks.
+ *
+ * A fifth member added to the union without a row in the matrix makes THIS
+ * OBJECT LITERAL fail to compile ("property is missing"), and `tsc -p
+ * tsconfig.test.json --noEmit` runs before vitest in the `test` chain, so the
+ * failure lands before a single test executes. That is the point: the runtime
+ * loops below can only iterate members somebody remembered to list, so the
+ * list itself has to be the compiler's problem.
+ */
+const ALL_REPRESENTATIONS: Record<RepresentationKind, true> = {
+  point_cloud: true,
+  isosurface: true,
+  slice: true,
+  streamlines: true,
+}
+
+const EVERY_REPRESENTATION = Object.keys(ALL_REPRESENTATIONS) as RepresentationKind[]
+const EVERY_MODE: SceneKind[] = ['eigenstate', 'superposition']
+
+const CONTROL_PANEL = fileURLToPath(new URL('../components/ControlPanel.tsx', import.meta.url))
+
+/**
+ * The `id` of each entry in ControlPanel.tsx's REPRESENTATIONS list.
+ *
+ * Read from the source rather than imported, because that array is
+ * module-private and this file must not be the reason it becomes part of the
+ * component's API. Parsed rather than grepped, so a reformatting cannot make
+ * the guard quietly find nothing: a missing array literal throws here instead
+ * of yielding an empty list that every assertion below would pass against.
+ */
+function controlPanelRepresentationIds(): string[] {
+  const parsed = ts.createSourceFile(
+    CONTROL_PANEL,
+    readFileSync(CONTROL_PANEL, 'utf-8'),
+    ts.ScriptTarget.ES2022,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  )
+  const ids: string[] = []
+  let found = false
+  for (const statement of parsed.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'REPRESENTATIONS') {
+        continue
+      }
+      const initializer = declaration.initializer
+      if (initializer === undefined || !ts.isArrayLiteralExpression(initializer)) continue
+      found = true
+      for (const element of initializer.elements) {
+        if (!ts.isObjectLiteralExpression(element)) continue
+        for (const property of element.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            ts.isIdentifier(property.name) &&
+            property.name.text === 'id' &&
+            ts.isStringLiteralLike(property.initializer)
+          ) {
+            ids.push(property.initializer.text)
+          }
+        }
+      }
+    }
+  }
+  if (!found) {
+    throw new Error(
+      `${CONTROL_PANEL}: no \`const REPRESENTATIONS = [ ... ]\` array literal found. ` +
+        'This guard reads that list from the source; re-point it rather than deleting it.',
+    )
+  }
+  return ids
+}
+
+describe('the matrix answers for every representation there is', () => {
+  it.each(
+    EVERY_MODE.flatMap((mode) =>
+      EVERY_REPRESENTATION.map((representation) => [mode, representation] as const),
+    ),
+  )('%s x %s is a discriminated answer, not a throw', (mode, representation) => {
+    const capability = capabilityFor({
+      mode,
+      orbital: orbital({ n: 3, l: 2, m: 1, basis: 'complex' }),
+      representation,
+    })
+    expect(['available', 'unsupported', 'not_implemented']).toContain(capability.status)
+    if (capability.status === 'available') {
+      // The available branch carries a request; the refusals carry a sentence.
+      expect(capability.endpoint).toMatch(/^\/api\//)
+      expect('reason' in capability).toBe(false)
+    } else {
+      expect(capability.reason.length).toBeGreaterThan(0)
+      expect('endpoint' in capability).toBe(false)
+    }
+  })
+
+  it('throws on a representation it has no row for, instead of serving the last one', () => {
+    // The exhaustive `switch`'s `default` arm. Reachable only from a caller
+    // that has left the union behind, which is exactly when the old bare
+    // fallback silently answered with the streamline row.
+    for (const mode of EVERY_MODE) {
+      expect(() =>
+        capabilityFor({
+          mode,
+          orbital: orbital(),
+          representation: 'hologram' as RepresentationKind,
+        }),
+      ).toThrow(/hologram/)
+    }
+  })
+})
+
+describe('the panel offers no representation the dispatcher cannot fetch', () => {
+  const panelIds = controlPanelRepresentationIds()
+
+  it('offers exactly the three representations that have a renderer today', () => {
+    // The slice row exists in the matrix before the slice has a renderer, and
+    // a button for it would offer the user a scene nothing can draw. This
+    // assertion is what keeps that gap deliberate: adding the button is a
+    // change to this list, made in the PR that lands the renderer.
+    expect(panelIds).toEqual(['point_cloud', 'isosurface', 'streamlines'])
+    expect(panelIds).not.toContain('slice')
+  })
+
+  it.each(panelIds.flatMap((id) => EVERY_MODE.map((mode) => [mode, id] as const)))(
+    'reaches a fetcher for %s x %s',
+    async (mode, id) => {
+      const representation = id as RepresentationKind
+      expect(EVERY_REPRESENTATION, id).toContain(representation)
+      const plan = planSceneRequest(
+        inputs({
+          mode,
+          representation,
+          orbital: orbital({ n: 3, l: 2, m: 1, basis: 'complex' }),
+        }),
+      )
+      if (plan.status !== 'available') {
+        // A refused cell is the panel's disabled button with a stated reason,
+        // not a hole in the dispatch table. Asserted rather than returned
+        // silently, so this case still measures something.
+        expect(plan.reason.length, `${mode} x ${id}`).toBeGreaterThan(0)
+        return
+      }
+      const asset = await executeSceneRequest(
+        plan,
+        inputs({ mode, representation }),
+        new AbortController().signal,
+      )
+      expect(asset.kind.length, `${mode} x ${id}`).toBeGreaterThan(0)
+    },
+  )
+
+  it('would notice a missing fetcher (positive control)', async () => {
+    await expect(
+      executeSceneRequest(
+        { status: 'available', endpoint: '/api/orbitals/hologram', params: {}, latency: 'fast' },
+        inputs(),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('No client fetcher serves /api/orbitals/hologram.')
   })
 })

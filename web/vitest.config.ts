@@ -96,6 +96,15 @@ export default defineConfig({
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',
         'src/api/types.ts',
+        // Generated from tests/fixtures/openapi.json by `npm run codegen`, and
+        // type-only for the same reason src/api/types.ts is: openapi-typescript
+        // emits interfaces and type aliases, so the compiler emits nothing at
+        // all for this module (verified: `export {}` and the banner comment).
+        // Excluded from the per-file THRESHOLDS only -- it stays in
+        // coverage-scope.json's pragmaScanned, so src/guards.test.ts parses it
+        // and fails the moment it stops being type-only, and
+        // src/api/schema.gen.test.ts regenerates it and fails on any drift.
+        'src/api/schema.gen.ts',
       ],
       thresholds: { perFile: true, statements: 90, branches: 85, functions: 90, lines: 90 },
     },

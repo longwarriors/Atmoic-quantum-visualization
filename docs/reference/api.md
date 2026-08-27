@@ -39,6 +39,39 @@ FastAPI 自动生成 OpenAPI 文档 [@fastapi]。
 
 当前等值面 API 保守限制为 $n\le4$，但这不表示已经穷举验证该范围的全部轨道。返回 typed OpenAPI schema，包括 indexed mesh、法向、逐顶点相位、阈值、superlevel-set 质量、有限网格 $\int\rho dV$、网格间距和 Scene metadata。当前使用 JSON，生产规模可升级为 GLB 或自定义 mesh binary。
 
+## `GET /api/orbitals/slice`
+
+参数：
+
+- `n`：1–12，默认 2；`l`：0–11，默认 1；`m`：−11–11，默认 0；
+- `z`：$0<z\le20$，默认 1.0；**`a_mu`：$0<a_\mu\le20$，默认 1.0**；
+- `basis`：默认 `real`；
+- `plane`：`xy` / `xz` / `yz`，默认 `xz`；
+- `observable`：`probability_density`（默认）/ `wavefunction_real` / `wavefunction_imag` / `phase`；
+- `resolution`：65–513，默认 **129**，必须为奇数；最低值随 $n$ 增长为 $\max(65,16n+17)$。
+
+`extent_bohr` 由状态导出并随 payload 报告，**不是参数**。
+
+这是**唯一暴露 `a_mu` 的本征态路由**——其余 `/api/orbitals/*` 只接受 `z`。这是刻意的不对称而不是遗漏：切片是约化质量长度唯一直接可读的地方，$a_\mu$ 同时改变导出的 extent 与相位遮罩所参照的振幅尺度 $L_{\mathrm{ref}}^{-3/2}$，两者都逐字出现在 payload 里。
+
+422 条件分两层，报错文本能区分是哪一层：
+
+- **签名层**（FastAPI 的 `Query` 边界）：`resolution` $<65$ 或 $>513$、`n`/`l`/`m`/`z`/`a_mu` 越界、`plane` 或 `observable` 不是枚举成员，返回 FastAPI 的结构化 `detail` 列表；
+- **builder 层**（`quviz.scene.slices` 抛 `ValueError`，路由转成 422 并原样带上原因）：`resolution` 为偶数（`resolution must be odd so the origin lies on the grid`——偶数轴不采样原点，而每条对称性/遮罩陈述都是关于过原点的平面说的）；`resolution` 低于该 $n$ 的下限（$n=6$ 传 65 得到 `resolution must be at least 113 for n=6`）；以及量子数本身非法。
+
+下限 $\max(65,16n+17)$ 随 $n$ **线性**增长，因为一个 $n$ 态有 $n-\ell$ 个径向腹点、而 extent 本身按 $n^2$ 增长。注意它与等值面的 $n\le4$ 上限不是同一回事：等值面的限制是关于 marching cubes 的（网格抽取、绕向修正与质量核算只在那几层壳上验证过），而切片不抽取任何网格，只在 $R^2$ 个点上求值并报告数字，所以高 $n$ 在这里花的是采样数，不是有效性——路由因此把 $n$ 开到 12。
+
+payload 体积是这条路由唯一的实际约束，实测（`n=2, l=1, m=0`，`xz`）：`resolution=129` 时 `probability_density` 响应 364,210 B（约 356 KB），`resolution=513` 时 5,736,707 B（约 **5.5 MB**；`phase` 因遮罩后大量重复值为 4,209,037 B）。513 是硬上限，129 之所以是默认值，是因为它够画一张清楚的图、又比上限便宜 16 倍。
+
+## `GET /api/superposition/slice`
+
+参数：
+
+- `terms`、`time`、`basis`（默认 `complex`）、`z`、`a_mu`：与 `/api/superposition/isosurface` 相同；
+- `plane`、`observable`、`resolution`：与 `/api/orbitals/slice` 相同（默认同为 `xz`、`probability_density`、129）。
+
+**最大的 term 同时决定 extent、`resolution` 下限与遮罩的参照长度 $L_{\mathrm{ref}}=\max_k n_k^2a_\mu/Z$**：一个对 1s 切片诚实的 resolution 在这里可能被拒，而报错会点名是哪一层壳要求更多采样。返回 `SuperpositionSlicePayload`：几何、布局与遮罩字段与单态切片完全一致，metadata 换成 `SuperpositionMetadata`。
+
 ## `GET /api/orbitals/current-field`
 
 参数：

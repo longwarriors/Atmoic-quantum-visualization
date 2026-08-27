@@ -23,6 +23,33 @@ class ObservableKind(StrEnum):
     PROBABILITY_CURRENT = "probability_current"
 
 
+class PrincipalPlane(StrEnum):
+    """Cartesian plane through the origin on which a slice is sampled.
+
+    Each member names its in-plane axes in ``(u, v)`` order; the frames
+    themselves, including the right-handed ``xz`` normal ``-y``, live in
+    :mod:`quviz.physics.planes`.
+    """
+
+    XY = "xy"
+    XZ = "xz"
+    YZ = "yz"
+
+
+class SliceObservable(StrEnum):
+    """Scalar field a slice reports on its plane.
+
+    This is deliberately narrower than :class:`ObservableKind`: a slice carries
+    real and imaginary wavefunction components as separate fields, and it has no
+    slice representation of a vector-valued probability current.
+    """
+
+    PROBABILITY_DENSITY = "probability_density"
+    WAVEFUNCTION_REAL = "wavefunction_real"
+    WAVEFUNCTION_IMAG = "wavefunction_imag"
+    PHASE = "phase"
+
+
 class RepresentationKind(StrEnum):
     """Rendering representation, deliberately separate from the observable."""
 
