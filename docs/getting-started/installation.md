@@ -4,7 +4,7 @@
 
 - Python 3.12 或 3.13；
 - `uv`；
-- Node.js 20+ 与 npm；
+- Node.js `^22.13.0 || >=24.0.0` 与 npm——即 22.13.0 起的 22.x 或 24.0.0 及以上；Node 20 与 21 会被 `web/package.json` 的 `engines` 拒绝；
 - 支持 WebGL 2 的现代浏览器。
 
 `uv` 会根据 `pyproject.toml` 创建项目内 `.venv`。首次联网执行 `uv sync` 会生成 `uv.lock`；应将该锁文件提交到版本库，使后续安装可复现 [@uv-docs]。

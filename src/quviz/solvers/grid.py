@@ -1,4 +1,8 @@
-"""Grid contracts that keep coordinates, spacing, quadrature and BCs aligned."""
+"""Grid contracts that keep coordinates, spacing and boundary conditions aligned.
+
+Quadrature weights and an inner product are not provided yet; the full
+numerical contract arrives with the M2 solvers.
+"""
 
 from __future__ import annotations
 
