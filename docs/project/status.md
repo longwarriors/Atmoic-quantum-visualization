@@ -2,7 +2,7 @@
 
 !!! success "Phase 0 可演示基线"
 
-    截至 2026-08-27，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+    截至 2026-08-27，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
@@ -14,6 +14,7 @@
 | 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像与轴上遮罩测试通过；弧长、播种 cutoff、连续性探针和差分步长均按 $n/Z/a_\mu$ 尺度化；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 定态播种仍利用方位对称性；叠加态按三维网格密度排序；scene 连续性审计最多接收 8 个 active terms，并采用每个不同能隙四相位采样而非完整 Fourier 分解 |
 | 解析含时叠加态（M1） | 单态退化一致性、范数/$\langle H\rangle$ 守恒、1s–2p 偶极闭式、简并 negative control、转折点非空洞连续性审计与有限盒/网格 alias 分离测试通过；`/api/superposition/*` 与前端时间轴 | 叠加态点云采样属 M5；等值面仍限 $n\le4$ |
 | 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性、按面计数的绕向一致率和法向朝外测试通过 | API 保守限制为 $n\le4$；拓扑回归覆盖 1s、2p、3p 与复 2p，并未穷举全部轨道 |
+| $\psi$/相位平面切片 representation | 逐位反对称采样轴（换回 `np.linspace` 即变红）、右手 $(u,v,n)$ 标架含 `xz` 的 $-\hat y$、行主序布局、导出并报告的 extent、参照 $L_{\mathrm{ref}}^{-3/2}$ 的相位遮罩六项报告、逐字节黄金 payload 与 OpenAPI→TS 生成链测试通过；`/api/orbitals/slice`、`/api/superposition/slice` | 相位遮罩是低振幅 / 相位未定义区域，**不是节点证书**；没有节面几何；`resolution` 上限 513，路由 $n\le12$ |
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
@@ -117,7 +118,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 1. 前端已有可进 CI 的 parser 与色轮单测，但交互与截图回归仍只依赖人工浏览器 QA（PR-8）；
 2. 拆分 Three.js/后处理 bundle，并测量帧时、显存与大资产传输；
 3. 将等值面验证扩展到更高 $n$ 前，先设计随节点数增长的收敛策略；
-4. 原计划在进入解析含时叠加前先实现切片和节点面 representation，实际顺序没有遵守：概率流已交付，M1 叠加态先于切片完成，$\psi$/相位 SLICE 与相位节点遮罩推迟到 M1 之后（PR-8）；
+4. 原计划在进入解析含时叠加前先实现切片和节点面 representation，实际顺序没有遵守：概率流先交付，M1 叠加态先于切片完成，$\psi$/相位切片与相位遮罩到 PR-8B 才落地；真正的**节面 representation**（节点几何本身）仍未实现——切片报告的是低振幅 / 相位未定义遮罩，不是节面；
 5. 清理 FastAPI/TestClient 与 scikit-image 上游弃用警告。
 
 ### PR-7 科学正确性：八项 P1 已实现
@@ -200,10 +201,46 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 两点需如实说明：其一，**重复同一条 query 会命中服务端缓存**，同样的请求第二次分别是 15.7 ms 与 6.5 ms，所以“3 ms / 20 ms”这类数字只描述缓存命中，不是这两条路由的计算成本——上表刻意用互异的 $t$ 测量。其二，默认态在 $t=0$ 处概率流是**解析零流**，`current-field` 返回 0 条流线（`density_rate_scale = 0`，`continuity_scale_kind = transition_coherence`），因此 $t=0$ 不能用来代表这条路由的耗时。`capability.ts` 里 `latency: 'slow'` 的标注与这两个数量级一致，但它是**成本分级**，不是实测预算。
 
+### PR-8B 切片科学资产与 API 契约：2026-08-27
+
+本轮交付 $\psi$/相位平面切片这一 representation，并把 Python 与 TypeScript 之间的 API 描述从"两份手写副本"改成"一条端到端生成并双端受检的链"。每一项同样按"先写出会变红的测试、再实现"推进。
+
+- **平面标架是冻结契约，不是实现细节**（`src/quviz/physics/planes.py`）：三张主平面各有右手 $(u,v,n)$ 标架且 $\hat u\times\hat v=\hat n$，因此 `xz` 的法向必须是 $-\hat y$。写成 $+\hat y$ 会让标架变成左手系，从而把这张平面上每一条与手性有关的结论（概率流环绕方向、相位缠绕符号）整体镜像，而 payload 仍然会声称一切正常。
+- **采样轴不用 `np.linspace`**：`linspace(-E, E, R)` 以 `start + step*i` 生成再修补端点，在一般 extent 下两半**并非逐位互为相反数**，切片的对称性断言与节点位置于是由舍入决定。轴改为 $\texttt{spacing}\times(\texttt{arange}(R)-\texttt{half})$（$\texttt{half}=(R-1)//2$，$\texttt{spacing}=2E/(R-1)$），IEEE 取负精确、小整数 `arange` 精确，故在任意 extent 下逐位反对称；`tests/test_planes.py` 留了一条把公式换回 `linspace` 就变红的负控制。`resolution` 必须为奇数同出一源：偶数轴不采样原点，而每条对称性/节点/遮罩陈述都是关于**过原点的平面**说的。
+- **相位遮罩参照状态，不参照平面**：一张恰好具有节面对称性的平面上，算出来的振幅不是零而是数值残渣——实基 $2p_z$ 在 `xy` 平面上的 $\max\lvert\psi\rvert$ 实测为 $4.4874712\times10^{-18}$。若以切片自身最大值定阈值，阈值会重新标定到这点残渣上，交回一整面毫无意义的相位。阈值因此是 $\texttt{relative}\times L_{\mathrm{ref}}^{-3/2}$（$L_{\mathrm{ref}}=n^2a_\mu/Z$，叠加态取 $\max_k$），$\texttt{relative}=10^{-6}$，另设数值地板 $64\varepsilon\max_{\text{plane}}\lvert\psi\rvert$，二者取大后**严格**大于才算有效。六个分项（relative、amplitude scale、threshold、numeric floor、平面最大模、masked fraction）全部随 payload 报告，读者能看出是哪一项在决定边界。同一张 $2p_z$ 的 `xy` 相位切片实测 threshold $1.25\times10^{-7}$、floor $6.3770801\times10^{-32}$、`phase_masked_fraction = 1.0`（由 threshold 决定）。
+- **遮罩的措辞是契约的一部分**：被遮罩的样本只表示该平面上 $\lvert\psi\rvert\leq$ threshold，这个集合既包含节面也包含指数尾部，它标记的是低振幅 / 相位未定义区域，**不是节点证书**。上面那个 `1.0` 恰好确实落在 $2p_z$ 的节面上，但同一个 `1.0` 也可以由一张完全落在指数尾部的切片产生，所以遮罩本身不是那个结论的证据；这句话同时写进 `scene-contract.md`、payload docstring 与 metadata warning。
+- **extent 是导出并报告的，不是参数**；masked 样本携带有限哨兵 `0.0`，因此忽略遮罩的客户端画出确定占位值，payload 也能通过严格 JSON 解析器——这与既有的 NaN 门禁同源：app 服务的是 Starlette 默认 JSON 编码器，它会照写 `NaN` / `Infinity` 这两个裸 token。
+- **resolution 下限与等值面的 $n\le4$ 上限不是同一回事**：等值面的限制是关于 marching cubes 的，切片不抽取任何网格，只在 $R^2$ 个点上求值并报告数字，所以高 $n$ 花的是采样数而不是有效性。下限 $\max(65,16n+17)$ 随 $n$ 线性增长（$n-\ell$ 个径向腹点、extent 按 $n^2$ 增长），路由把 $n$ 开到 12。实测：$n=6$ 传 `resolution=65` 返回 422 且报错点名 `resolution must be at least 113 for n=6`，传 113 返回 200；传偶数 66 返回 422 `resolution must be odd so the origin lies on the grid`；64 与 515 则由签名层的 `Query` 边界拒绝。
+- **`a_mu` 的不对称是刻意的**：`/api/orbitals/slice` 是唯一暴露 `a_mu` 的本征态路由，因为切片是约化质量长度唯一直接可读的地方——它同时改变导出的 extent 与遮罩参照的振幅尺度，两者都逐字出现在 payload 里。
+- **黄金 fixture**：`tests/fixtures/slice_golden.json`（81,998 B）是 1s 在 `xy` 平面、`observable=phase`、`resolution=65` 的整份序列化 `SlicePayload`，由 `scripts/write_slice_golden.py` 以 canonical dump（`sort_keys=True`、`indent=2`、`allow_nan=False`）写出、`tests/test_slice_contract.py` 重建后逐字节比对，因此客户端收到的数字一旦变化就必须以一份有人读的 diff 出现，而不是整套测试跟着重新推导、于是一致同意。
+- **类型代码生成**：`routes -> tests/fixtures/openapi.json -> web/src/api/schema.gen.ts` 是一条端到端生成、两端都受检的链——`scripts/write_openapi.py` 从活的 app 写出 fixture（63,053 B），`tests/test_openapi_contract.py` 比对它与今天服务的 schema；`web/scripts/generate-api-types.mjs`（`npm run codegen`）以该 fixture 而非某台运行中的服务器为输入生成类型，`web/src/api/schema.gen.test.ts` 比对生成结果与提交进树的文件，链上没有无人看管的一环。`schema.gen.ts` 与 `types.ts` 一样是覆盖率门禁的"仅含类型"排除项（`pragmaScanned` 27 = `coverageGated` 25 + 这两个），新增的 `src/api/sliceContract.ts` 则进入门禁模块。
+
+定向实测（2026-08-27，Windows 11、CPython 3.12.10，同一工作树；`uv run pytest <file> -q --no-cov`）：
+
+| 定向套件 | 结果 |
+|---|---|
+| `tests/test_planes.py` | 19 passed |
+| `tests/test_slice_builders.py` | 16 passed |
+| `tests/test_slice_science.py` | 35 passed |
+| `tests/test_slice_contract.py` | 4 passed |
+| `tests/test_slice_api.py` | 25 passed |
+| `tests/test_openapi_contract.py` | 3 passed |
+| 六者合并一次运行 | 102 passed，0 skipped，1.69 s |
+| `npx vitest run src/api/sliceContract.test.ts` | 47 passed |
+| `npx vitest run src/api/schema.gen.test.ts` | 4 passed |
+
+payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节数）：
+
+| `resolution` | `probability_density` | `phase` |
+|---|---|---|
+| 129（默认） | 364,210 B | 266,892 B |
+| 513（上限） | 5,736,707 B | 4,209,037 B |
+
+513 是硬上限，默认取 129 的理由就写在这张表里：它够画一张清楚的图，又比上限便宜 16 倍。
+
 ### PR-8 待办
 
-- $\psi$/相位 SLICE representation；
-- 相位节点遮罩；
+- 相位节点遮罩之外的节面 representation（当前只有低振幅遮罩，没有节面几何）；
 - 前端视觉回归（截图）进入 CI。
 
 后续科学能力顺序见[开发路线图](roadmap.md)。

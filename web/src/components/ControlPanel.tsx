@@ -217,6 +217,10 @@ export function ControlPanel() {
     probabilityMass: store.probabilityMass,
     seedCount: store.seedCount,
     timeAu: store.timeAu,
+    // Not in PARAMETER_ROWS on purpose: a_mu has no slider (changing it makes
+    // the state not-hydrogen while every label still says hydrogenic); the map
+    // stays total so a request can still carry the store's value.
+    aMu: store.superpositionAMu,
   }
   const parameterSetter: Record<ParameterId, (value: number) => void> = {
     samples: store.setSamples,
@@ -225,6 +229,7 @@ export function ControlPanel() {
     probabilityMass: store.setProbabilityMass,
     seedCount: store.setSeedCount,
     timeAu: store.setTimeAu,
+    aMu: store.setSuperpositionAMu,
   }
 
   /**

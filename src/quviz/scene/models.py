@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from math import isfinite
+from types import MappingProxyType
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from quviz.conventions import LENGTH_UNIT, BasisKind, ObservableKind, RepresentationKind
+from quviz.conventions import (
+    LENGTH_UNIT,
+    BasisKind,
+    ObservableKind,
+    PrincipalPlane,
+    RepresentationKind,
+    SliceObservable,
+)
+
+#: The unit a slice value carries, fixed by the scalar field it reports. Phase
+#: is an angle, an amplitude component is ``bohr^-3/2``, and a density is its
+#: square. A payload that claimed another unit would misstate its own numbers.
+SLICE_VALUE_UNITS: Final[Mapping[SliceObservable, str]] = MappingProxyType(
+    {
+        SliceObservable.PROBABILITY_DENSITY: "bohr^-3",
+        SliceObservable.WAVEFUNCTION_REAL: "bohr^-3/2",
+        SliceObservable.WAVEFUNCTION_IMAG: "bohr^-3/2",
+        SliceObservable.PHASE: "radian",
+    }
+)
+
+#: Row-major sampling order of every slice: ``k = row * resolution + col``, with
+#: ``row`` indexing ``v`` and ``col`` indexing ``u``.
+SliceLayout = Literal["row_major_v_rows_u_columns"]
 
 
 class QuantumStateSpec(BaseModel):
@@ -18,6 +44,7 @@ class QuantumStateSpec(BaseModel):
     l: int = Field(ge=0, le=11)
     m: int = Field(ge=-11, le=11)
     z: float = Field(default=1.0, gt=0.0, le=20.0)
+    a_mu: float = Field(default=1.0, gt=0.0, le=20.0)
     basis: BasisKind = BasisKind.REAL
 
     @model_validator(mode="after")
@@ -27,6 +54,20 @@ class QuantumStateSpec(BaseModel):
         if abs(self.m) > self.l:
             raise ValueError("m must satisfy |m| <= l")
         return self
+
+
+class SliceDetail(BaseModel):
+    """The plane and the scalar field that identify a slice asset.
+
+    One object rather than two arguments, so a metadata builder can never be
+    handed half of a slice identity: a plane with no field, or a field with no
+    plane.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    plane: PrincipalPlane
+    slice_observable: SliceObservable
 
 
 class OrbitalMetadata(BaseModel):
@@ -196,3 +237,137 @@ class SuperpositionCurrentPayload(BaseModel):
     continuity_phase_count: int = Field(ge=0)
     density_rate_scale: float = Field(ge=0.0)
     integration_rule: str = "rk4_arc_length"
+
+
+class _SlicePayloadBase(BaseModel):
+    """Fields and cross-field rules shared by both slice payloads.
+
+    The sample grid is stated, not implied: ``origin_bohr`` with the
+    ``(u, v, n)`` frame and ``spacing_bohr`` let a client reconstruct the
+    position of sample ``k = row * resolution + col`` without knowing which
+    plane convention the server used.
+
+    ``valid_mask`` marks samples whose amplitude is too small for the phase to
+    be resolved. It is a low-amplitude, phase-undefined region and never a node
+    certificate: a masked sample is not proof of a node, and an unmasked one is
+    not proof that there is none. Masked entries carry the finite
+    ``masked_value_sentinel`` so that a client which ignores the mask renders a
+    definite placeholder rather than cancellation residue, and so that the
+    payload survives a strict JSON parser.
+    """
+
+    plane: PrincipalPlane
+    slice_observable: SliceObservable
+    origin_bohr: list[float]
+    u_axis: list[float]
+    v_axis: list[float]
+    normal: list[float]
+    extent_bohr: float = Field(gt=0.0)
+    spacing_bohr: float = Field(gt=0.0)
+    resolution: int = Field(ge=65, le=513)
+    layout: SliceLayout = "row_major_v_rows_u_columns"
+    length_unit: str = LENGTH_UNIT
+    value_unit: str
+    values: list[float]
+    valid_mask: list[bool] | None = None
+    masked_value_sentinel: float = 0.0
+    phase_mask_relative_amplitude: float | None = None
+    phase_mask_amplitude_scale: float | None = None
+    phase_mask_amplitude_threshold: float | None = None
+    phase_mask_numeric_floor: float | None = None
+    max_amplitude_on_plane: float = Field(ge=0.0)
+    phase_masked_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_slice_consistency(self) -> Self:
+        expected = self.resolution * self.resolution
+        if len(self.values) != expected:
+            raise ValueError(
+                f"values must hold resolution**2 = {expected} samples, got {len(self.values)}"
+            )
+        for name, vector in (
+            ("origin_bohr", self.origin_bohr),
+            ("u_axis", self.u_axis),
+            ("v_axis", self.v_axis),
+            ("normal", self.normal),
+        ):
+            if len(vector) != 3:
+                raise ValueError(f"{name} must have three components, got {len(vector)}")
+
+        unit = SLICE_VALUE_UNITS[self.slice_observable]
+        if self.value_unit != unit:
+            raise ValueError(
+                f"value_unit must be {unit!r} for {self.slice_observable.value}, "
+                f"got {self.value_unit!r}"
+            )
+
+        # Starlette's default JSON encoder writes bare NaN and Infinity tokens,
+        # which no strict JSON parser accepts. A non-finite sample must fail
+        # here, where it is still attributable, not in the browser.
+        if not all(isfinite(value) for value in self.values):
+            raise ValueError("values must all be finite: JSON has no NaN or Infinity")
+        if not isfinite(self.masked_value_sentinel):
+            raise ValueError("masked_value_sentinel must be finite")
+        if not isfinite(self.max_amplitude_on_plane):
+            raise ValueError("max_amplitude_on_plane must be finite")
+
+        mask_report = {
+            "phase_mask_relative_amplitude": self.phase_mask_relative_amplitude,
+            "phase_mask_amplitude_scale": self.phase_mask_amplitude_scale,
+            "phase_mask_amplitude_threshold": self.phase_mask_amplitude_threshold,
+            "phase_mask_numeric_floor": self.phase_mask_numeric_floor,
+            "phase_masked_fraction": self.phase_masked_fraction,
+        }
+        if self.slice_observable is SliceObservable.PHASE:
+            if self.valid_mask is None:
+                raise ValueError(
+                    "a phase slice requires valid_mask: the phase is undefined wherever the "
+                    "amplitude is not resolved"
+                )
+            missing = sorted(name for name, value in mask_report.items() if value is None)
+            if missing:
+                raise ValueError(
+                    f"a phase slice must report its mask thresholds; missing {missing}"
+                )
+        else:
+            if self.valid_mask is not None:
+                raise ValueError("valid_mask is defined only for the phase observable")
+            reported = sorted(name for name, value in mask_report.items() if value is not None)
+            if reported:
+                raise ValueError(
+                    f"phase mask fields are defined only for the phase observable; got {reported}"
+                )
+        for name, value in mask_report.items():
+            if value is not None and not isfinite(value):
+                raise ValueError(f"{name} must be finite")
+
+        if self.valid_mask is not None:
+            if len(self.valid_mask) != expected:
+                raise ValueError(
+                    f"valid_mask must hold resolution**2 = {expected} entries, "
+                    f"got {len(self.valid_mask)}"
+                )
+            for index, (valid, value) in enumerate(zip(self.valid_mask, self.values, strict=True)):
+                if not valid and value != self.masked_value_sentinel:
+                    raise ValueError(
+                        "masked values must equal masked_value_sentinel exactly; "
+                        f"index {index} holds {value!r}"
+                    )
+        return self
+
+
+class SlicePayload(_SlicePayloadBase):
+    """A plane section of one eigenstate's scalar field."""
+
+    metadata: OrbitalMetadata
+
+
+class SuperpositionSlicePayload(_SlicePayloadBase):
+    """A plane section of a superposition's scalar field at one instant.
+
+    Separate from :class:`SlicePayload` for the same reason the isosurface pair
+    is separate: a superposition has no single ``(n, l, m)``, so its metadata is
+    a different type, and only the metadata differs.
+    """
+
+    metadata: SuperpositionMetadata

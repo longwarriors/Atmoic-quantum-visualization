@@ -22,7 +22,7 @@ from quviz.physics.observables import (
     superposition_current,
 )
 from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
-from quviz.scene.builders import _superposition_extent
+from quviz.scene.builders import superposition_extent
 
 
 def _moving_state(*, a_mu: float = 1.0) -> SuperpositionState:
@@ -110,8 +110,8 @@ def test_superposition_scene_extent_uses_the_same_a_mu_length_scale() -> None:
     reference = _moving_state()
     contracted = _moving_state(a_mu=0.5)
 
-    assert _superposition_extent(contracted) == pytest.approx(
-        0.5 * _superposition_extent(reference), rel=2e-14
+    assert superposition_extent(contracted) == pytest.approx(
+        0.5 * superposition_extent(reference), rel=2e-14
     )
 
 

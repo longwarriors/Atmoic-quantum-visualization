@@ -1,5 +1,7 @@
+import type { components } from './schema.gen'
+
 export type BasisKind = 'real' | 'complex'
-export type RepresentationKind = 'point_cloud' | 'isosurface' | 'streamlines'
+export type RepresentationKind = 'point_cloud' | 'isosurface' | 'slice' | 'streamlines'
 export type ContinuityScaleKind =
   | 'transition_coherence'
   | 'stationary_current'
@@ -230,3 +232,28 @@ export interface SceneStatus {
   metadata?: OrbitalMetadata
   warnings?: string[]
 }
+
+/**
+ * The slice contract, RE-EXPORTED from the generated schema -- never
+ * transcribed.
+ *
+ * Every other type in this file is hand-written, which is a standing hazard:
+ * a hand-written mirror of a server model drifts, and the drift is silent
+ * because `tsc` happily certifies the front-end against the mirror. The slice
+ * payloads are new enough to have a generated source of truth
+ * (`src/api/schema.gen.ts`, regenerated from `tests/fixtures/openapi.json` and
+ * checked for drift by `src/api/schema.gen.test.ts`), so they take it: an
+ * alias to `components['schemas'][...]` cannot say something the API does not.
+ * A field added, removed or retyped on the Python side lands here the moment
+ * the fixture is regenerated, and `src/api/sliceContract.ts` -- which reads
+ * these types -- stops compiling instead of quietly reading a field that is
+ * no longer sent.
+ *
+ * The aliases exist at all so that consumers import a slice type from the same
+ * module every other scene type comes from, rather than reaching into a
+ * generated file's index signature at each call site.
+ */
+export type SlicePayload = components['schemas']['SlicePayload']
+export type SuperpositionSlicePayload = components['schemas']['SuperpositionSlicePayload']
+export type PrincipalPlane = components['schemas']['PrincipalPlane']
+export type SliceObservable = components['schemas']['SliceObservable']

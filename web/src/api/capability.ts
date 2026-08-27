@@ -1,4 +1,16 @@
-import type { BasisKind, OrbitalParameters, RepresentationKind } from './types'
+import {
+  MAXIMUM_SLICE_RESOLUTION,
+  MINIMUM_SLICE_RESOLUTION,
+  PRINCIPAL_PLANES,
+  SLICE_OBSERVABLES,
+} from './sliceContract'
+import type {
+  BasisKind,
+  OrbitalParameters,
+  PrincipalPlane,
+  RepresentationKind,
+  SliceObservable,
+} from './types'
 
 /**
  * What this application can actually draw, cell by cell.
@@ -35,6 +47,7 @@ export type ParameterId =
   | 'probabilityMass'
   | 'seedCount'
   | 'timeAu'
+  | 'aMu'
 
 /**
  * How long a request for this cell takes, as a cost class rather than a
@@ -56,6 +69,16 @@ export interface AvailableCapability {
   endpoint: string
   parameters: Partial<Record<ParameterId, ParameterBound>>
   latency: Latency
+  /**
+   * The principal planes this cell can be cut on, present only on the rows
+   * whose route reads a `plane`. A row that declares none sends none: the
+   * enumerated choices are part of what the cell can do, exactly as the
+   * numeric bounds are, and a caller cannot spell a plane onto a request that
+   * has no plane to speak of.
+   */
+  planes?: readonly PrincipalPlane[]
+  /** The scalar fields this cell can return, on the same terms as `planes`. */
+  observables?: readonly SliceObservable[]
 }
 
 /** The physics or the server forbids this cell, and the reason says which. */
@@ -95,6 +118,16 @@ export interface SceneRequestInputs extends CapabilityInputs {
   /** Reduced-mass ratio a_mu. Shipped explicitly so the server cannot default it. */
   aMu: number
   timeAu: number
+  /**
+   * The plane a slice is cut on, and the field it carries.
+   *
+   * Optional because only the two slice rows read them, and every other
+   * consumer of this type builds its inputs without them. `planSceneRequest`
+   * falls back to the routes' own defaults, and refuses any value the chosen
+   * row does not declare.
+   */
+  plane?: PrincipalPlane
+  sliceObservable?: SliceObservable
 }
 
 /**
@@ -121,6 +154,8 @@ const ISOSURFACE_ENDPOINT = '/api/orbitals/isosurface'
 const CURRENT_FIELD_ENDPOINT = '/api/orbitals/current-field'
 const SUPERPOSITION_ISOSURFACE_ENDPOINT = '/api/superposition/isosurface'
 const SUPERPOSITION_CURRENT_FIELD_ENDPOINT = '/api/superposition/current-field'
+const SLICE_ENDPOINT = '/api/orbitals/slice'
+const SUPERPOSITION_SLICE_ENDPOINT = '/api/superposition/slice'
 
 /** routes.py: `probability_mass: float = Query(0.90, ge=0.50, le=0.99)`, both routes. */
 const PROBABILITY_MASS_BOUND: ParameterBound = { min: 0.5, max: 0.99, step: 0.01 }
@@ -131,6 +166,22 @@ const RESOLUTION_MAX = 81
 const RESOLUTION_MIN = 49
 
 /**
+ * routes.py: `a_mu: float = Query(1.0, gt=0.0, le=20.0)` on all four routes
+ * that read it.
+ *
+ * `min` is the one number here the server does not state, and it is a UI
+ * choice rather than a transcription: the route's lower bound is OPEN (`gt`),
+ * and an open bound is not a slider minimum -- zero is the one value in
+ * `[0, 20]` the route refuses, and a_mu = 0 is a nucleus of infinite mass
+ * expressed as a zero-length Bohr radius, which is not a state to render. 0.005
+ * is the smallest step this bound admits and sits just below the muonic
+ * hydrogen ratio (m_e/mu ~= 0.0054), so the physically interesting light-lepton
+ * end of the range stays reachable. `max` and the openness at zero are the
+ * route's; the floor is ours, and it never widens what the route accepts.
+ */
+const A_MU_BOUND: ParameterBound = { min: 0.005, max: 20, step: 0.005 }
+
+/**
  * The finest grid an eigenstate of this n needs before its outer lobes stop
  * being cut by the sampling. A UI-side floor on top of the route's ge=49, and
  * an EIGENSTATE rule only: a superposition has no single n, so carrying it
@@ -139,6 +190,33 @@ const RESOLUTION_MIN = 49
 function minimumSurfaceResolution(n: number): number {
   return Math.max(RESOLUTION_MIN, 16 * n + 17)
 }
+
+/**
+ * The same 16n + 17 rule over the slice's own floor.
+ *
+ * `quviz.scene.slices.slice_resolution_floor` is `max(65, 16 * n + 17)`, and
+ * unlike the isosurface's floor this one is the SERVER's: `build_slice` raises
+ * below it and the refusal arrives as a 422. Expressed here the way the
+ * isosurface row expresses its floor, over MINIMUM_SLICE_RESOLUTION instead of
+ * RESOLUTION_MIN, because the two grids are different objects: a slice samples
+ * `resolution**2` points and reports them, so samples are all it has to buy.
+ */
+function minimumSliceResolution(n: number): number {
+  return Math.max(MINIMUM_SLICE_RESOLUTION, 16 * n + 17)
+}
+
+/**
+ * The grid bound a slice row declares, given its floor.
+ *
+ * `step: 2` keeps a slider on the odd lattice the builder requires (the origin
+ * has to be a sample), which every floor here starts on: 65 is odd and so is
+ * 16n + 17.
+ */
+const sliceResolutionBound = (min: number): ParameterBound => ({
+  min,
+  max: MAXIMUM_SLICE_RESOLUTION,
+  step: 2,
+})
 
 function eigenstateIsosurface(orbital: OrbitalParameters): Capability {
   // routes.py `isosurface`: n le=4, l le=3, m ge=-3 le=3.
@@ -227,62 +305,141 @@ function eigenstateStreamlines(orbital: OrbitalParameters): Capability {
   }
 }
 
+/**
+ * An eigenstate cut on a principal plane.
+ *
+ * Unconditional on the state, and that is a transcription rather than an
+ * oversight: `/api/orbitals/slice` carries the same ceilings as
+ * `/api/orbitals/point-cloud` (n le=12, l le=11, |m| le=11), both far above
+ * anything the panel can ask for, so -- exactly like the point-cloud row --
+ * there is no state in reach for this row to refuse. The narrower rows above
+ * exist because the isosurface and current-field routes stop at n <= 4 and
+ * n <= 6; this one does not.
+ *
+ * It is also the only eigenstate row that declares `aMu`: the slice is where
+ * the reduced-mass length is legible, because it rescales both the derived
+ * extent and the amplitude scale the phase mask is referenced to, and it is
+ * the only eigenstate route that reads the parameter at all.
+ */
+function eigenstateSlice(orbital: OrbitalParameters): Capability {
+  return {
+    status: 'available',
+    endpoint: SLICE_ENDPOINT,
+    parameters: {
+      resolution: sliceResolutionBound(minimumSliceResolution(orbital.n)),
+      aMu: A_MU_BOUND,
+    },
+    planes: PRINCIPAL_PLANES,
+    observables: SLICE_OBSERVABLES,
+    // At the declared ceiling a slice evaluates 513^2 = 263_169 points, the
+    // same order as the 65^3 isosurface grid, and the cost class is a property
+    // of the cell rather than of the value the slider happens to hold.
+    latency: 'slow',
+  }
+}
+
 function eigenstateCapability(
   orbital: OrbitalParameters,
   representation: RepresentationKind,
 ): Capability {
-  if (representation === 'point_cloud') {
-    return {
-      status: 'available',
-      endpoint: POINT_CLOUD_ENDPOINT,
-      // routes.py: `samples` ge=1_000 le=120_000, `seed` ge=0 le=2_147_483_647.
-      parameters: {
-        samples: { min: 1000, max: 120000, step: 1000 },
-        seed: { min: 0, max: 2147483647, step: 1 },
-      },
-      latency: 'fast',
+  // Exhaustive by construction. This dispatch used to end in a bare
+  // `return eigenstateStreamlines(orbital)`, which is not a default: it is the
+  // streamline row answering for every representation nobody had written a row
+  // for. A slice request came back `available` at
+  // /api/orbitals/current-field -- right shape, wrong physics, wrong route --
+  // and only a test asserting the endpoint could have seen it. The `never`
+  // binding below turns that class of mistake into a compile error.
+  switch (representation) {
+    case 'point_cloud':
+      return {
+        status: 'available',
+        endpoint: POINT_CLOUD_ENDPOINT,
+        // routes.py: `samples` ge=1_000 le=120_000, `seed` ge=0 le=2_147_483_647.
+        parameters: {
+          samples: { min: 1000, max: 120000, step: 1000 },
+          seed: { min: 0, max: 2147483647, step: 1 },
+        },
+        latency: 'fast',
+      }
+    case 'isosurface':
+      return eigenstateIsosurface(orbital)
+    case 'slice':
+      return eigenstateSlice(orbital)
+    case 'streamlines':
+      return eigenstateStreamlines(orbital)
+    default: {
+      const _never: never = representation
+      throw new Error(
+        `No eigenstate row for representation ${JSON.stringify(_never)}. The matrix fails ` +
+          'closed rather than answering with whichever row happens to be last.',
+      )
     }
   }
-  if (representation === 'isosurface') {
-    return eigenstateIsosurface(orbital)
-  }
-  return eigenstateStreamlines(orbital)
 }
 
 function superpositionCapability(representation: RepresentationKind): Capability {
-  if (representation === 'point_cloud') {
-    return {
-      status: 'not_implemented',
-      reason:
-        `No route samples a time-dependent state as a point cloud: ${POINT_CLOUD_ENDPOINT} ` +
-        'takes one stationary (n, l, m) and cannot express |Psi(t)|^2. Nothing about the ' +
-        'physics forbids it -- it has not been built.',
+  switch (representation) {
+    case 'point_cloud':
+      return {
+        status: 'not_implemented',
+        reason:
+          `No route samples a time-dependent state as a point cloud: ${POINT_CLOUD_ENDPOINT} ` +
+          'takes one stationary (n, l, m) and cannot express |Psi(t)|^2. Nothing about the ' +
+          'physics forbids it -- it has not been built.',
+      }
+    case 'isosurface':
+      return {
+        status: 'available',
+        endpoint: SUPERPOSITION_ISOSURFACE_ENDPOINT,
+        parameters: {
+          // The route's own range, unconditional: no single n, so no 16n + 17.
+          resolution: { min: RESOLUTION_MIN, max: RESOLUTION_MAX, step: 2 },
+          probabilityMass: PROBABILITY_MASS_BOUND,
+          timeAu: TIME_BOUND,
+          aMu: A_MU_BOUND,
+        },
+        latency: 'slow',
+      }
+    case 'slice':
+      return {
+        status: 'available',
+        endpoint: SUPERPOSITION_SLICE_ENDPOINT,
+        parameters: {
+          // The route's own outer range. The builder's floor is 16n + 17 of the
+          // LARGEST term, and this module does not parse `terms`, so applying
+          // the panel's own n here would refuse grids the route accepts --
+          // the same reason the superposition isosurface row carries no floor.
+          // A grid too coarse for the highest shell comes back as a 422 that
+          // names it.
+          resolution: sliceResolutionBound(MINIMUM_SLICE_RESOLUTION),
+          timeAu: TIME_BOUND,
+          aMu: A_MU_BOUND,
+        },
+        planes: PRINCIPAL_PLANES,
+        observables: SLICE_OBSERVABLES,
+        latency: 'slow',
+      }
+    case 'streamlines':
+      return {
+        status: 'available',
+        endpoint: SUPERPOSITION_CURRENT_FIELD_ENDPOINT,
+        // routes.py: `seed_count: int = Query(24, ge=1, le=128)` -- half the
+        // eigenstate route's ceiling, because every seed is re-integrated at
+        // every instant of the clock.
+        parameters: {
+          seedCount: { min: 1, max: 128, step: 1 },
+          timeAu: TIME_BOUND,
+          aMu: A_MU_BOUND,
+        },
+        latency: 'slow',
+      }
+    default: {
+      const _never: never = representation
+      throw new Error(
+        `No superposition row for representation ${JSON.stringify(_never)}. The matrix fails ` +
+          'closed rather than answering with whichever row happens to be last.',
+      )
     }
-  }
-  if (representation === 'isosurface') {
-    return {
-      status: 'available',
-      endpoint: SUPERPOSITION_ISOSURFACE_ENDPOINT,
-      parameters: {
-        // The route's own range, unconditional: no single n, so no 16n + 17.
-        resolution: { min: RESOLUTION_MIN, max: RESOLUTION_MAX, step: 2 },
-        probabilityMass: PROBABILITY_MASS_BOUND,
-        timeAu: TIME_BOUND,
-      },
-      latency: 'slow',
-    }
-  }
-  return {
-    status: 'available',
-    endpoint: SUPERPOSITION_CURRENT_FIELD_ENDPOINT,
-    // routes.py: `seed_count: int = Query(24, ge=1, le=128)` -- half the
-    // eigenstate route's ceiling, because every seed is re-integrated at every
-    // instant of the clock.
-    parameters: {
-      seedCount: { min: 1, max: 128, step: 1 },
-      timeAu: TIME_BOUND,
-    },
-    latency: 'slow',
   }
 }
 
@@ -301,6 +458,28 @@ const WIRE_NAME: Record<ParameterId, string> = {
   probabilityMass: 'probability_mass',
   seedCount: 'seed_count',
   timeAu: 'time',
+  aMu: 'a_mu',
+}
+
+/** Query-parameter names for the enumerated choices the slice routes read. */
+const PLANE_PARAM = 'plane'
+const OBSERVABLE_PARAM = 'observable'
+
+/** routes.py: `plane: PrincipalPlane = PrincipalPlane.XZ` on both slice routes. */
+const DEFAULT_PLANE: PrincipalPlane = 'xz'
+/** routes.py: `observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY`. */
+const DEFAULT_SLICE_OBSERVABLE: SliceObservable = 'probability_density'
+
+/**
+ * The requested choice if the row declares it, and the route's own default
+ * otherwise.
+ *
+ * The enumerated counterpart of `clampParameter`: a value the capability does
+ * not offer never leaves, so an out-of-range choice becomes the honest default
+ * rather than a 422 the matrix promised could not happen.
+ */
+function declaredChoice<T>(declared: readonly T[], requested: T | undefined, fallback: T): T {
+  return requested !== undefined && declared.includes(requested) ? requested : fallback
 }
 
 function parameterValue(inputs: SceneRequestInputs, id: ParameterId): number {
@@ -311,6 +490,7 @@ function parameterValue(inputs: SceneRequestInputs, id: ParameterId): number {
     probabilityMass: inputs.probabilityMass,
     seedCount: inputs.seedCount,
     timeAu: inputs.timeAu,
+    aMu: inputs.aMu,
   }[id]
 }
 
@@ -335,9 +515,14 @@ function clampParameter(bound: ParameterBound, value: number): number {
  * no second list here that could drift from the matrix -- and every one of them
  * is clamped into its declared bound before it leaves.
  *
- * Superposition requests spell out `basis`, `z` and `a_mu` even when they equal
- * the route's defaults. Omitting them is what let the server quietly render a
+ * Superposition requests spell out `basis` and `z` even when they equal the
+ * route's defaults. Omitting them is what let the server quietly render a
  * different state from the one the panel was describing.
+ *
+ * `a_mu` used to be spelled into that same block by hand, which put it outside
+ * the one mechanism that keeps a sent value inside a declared bound, and sent
+ * it to two routes at a time when four read it. It is a declared parameter
+ * now, on those four rows and nowhere else.
  */
 export function planSceneRequest(inputs: SceneRequestInputs): ScenePlanResult {
   const capability = capabilityFor(inputs)
@@ -351,7 +536,6 @@ export function planSceneRequest(inputs: SceneRequestInputs): ScenePlanResult {
           terms: inputs.superpositionTerms,
           basis: inputs.superpositionBasis,
           z: orbital.z,
-          a_mu: inputs.aMu,
         }
       : {
           n: orbital.n,
@@ -365,6 +549,16 @@ export function planSceneRequest(inputs: SceneRequestInputs): ScenePlanResult {
     ParameterBound,
   ][]) {
     params[WIRE_NAME[id]] = clampParameter(bound, parameterValue(inputs, id))
+  }
+  if (capability.planes !== undefined) {
+    params[PLANE_PARAM] = declaredChoice(capability.planes, inputs.plane, DEFAULT_PLANE)
+  }
+  if (capability.observables !== undefined) {
+    params[OBSERVABLE_PARAM] = declaredChoice(
+      capability.observables,
+      inputs.sliceObservable,
+      DEFAULT_SLICE_OBSERVABLE,
+    )
   }
   return {
     status: 'available',

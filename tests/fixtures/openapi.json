@@ -1,0 +1,2252 @@
+{
+  "components": {
+    "schemas": {
+      "BasisKind": {
+        "description": "Angular basis used to represent hydrogenic states.",
+        "enum": [
+          "complex",
+          "real"
+        ],
+        "title": "BasisKind",
+        "type": "string"
+      },
+      "CurrentFieldPayload": {
+        "description": "Probability-flow streamlines with the numbers needed to judge them.\n\nGeometry and magnitude stay separate: vertices are evenly spaced in arc\nlength, and ``speed`` carries |j|/rho per vertex. Rendering must not encode\nspeed as spacing, or the picture would show the same quantity twice.",
+        "properties": {
+          "arc_step_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Arc Step Bohr",
+            "type": "number"
+          },
+          "continuity_absolute_residual": {
+            "minimum": 0.0,
+            "title": "Continuity Absolute Residual",
+            "type": "number"
+          },
+          "continuity_probe_count": {
+            "minimum": 0.0,
+            "title": "Continuity Probe Count",
+            "type": "integer"
+          },
+          "continuity_residual": {
+            "minimum": 0.0,
+            "title": "Continuity Residual",
+            "type": "number"
+          },
+          "continuity_scale": {
+            "minimum": 0.0,
+            "title": "Continuity Scale",
+            "type": "number"
+          },
+          "continuity_scale_kind": {
+            "enum": [
+              "stationary_current",
+              "analytic_zero_current"
+            ],
+            "title": "Continuity Scale Kind",
+            "type": "string"
+          },
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "integration_rule": {
+            "default": "rk4_arc_length",
+            "title": "Integration Rule",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "max_speed": {
+            "minimum": 0.0,
+            "title": "Max Speed",
+            "type": "number"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/OrbitalMetadata"
+          },
+          "seed_count": {
+            "minimum": 0.0,
+            "title": "Seed Count",
+            "type": "integer"
+          },
+          "seed_density_floor": {
+            "minimum": 0.0,
+            "title": "Seed Density Floor",
+            "type": "number"
+          },
+          "speed": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Speed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "metadata",
+          "lines",
+          "speed",
+          "seed_count",
+          "max_speed",
+          "arc_step_bohr",
+          "seed_density_floor",
+          "extent_bohr",
+          "continuity_residual",
+          "continuity_absolute_residual",
+          "continuity_scale",
+          "continuity_scale_kind",
+          "continuity_probe_count"
+        ],
+        "title": "CurrentFieldPayload",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IsosurfacePayload": {
+        "description": "Indexed mesh with per-vertex phase for GPU coloring.",
+        "properties": {
+          "captured_probability_mass": {
+            "minimum": 0.0,
+            "title": "Captured Probability Mass",
+            "type": "number"
+          },
+          "density_level": {
+            "exclusiveMinimum": 0.0,
+            "title": "Density Level",
+            "type": "number"
+          },
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "faces": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Faces",
+            "type": "array"
+          },
+          "finite_grid_density_integral": {
+            "exclusiveMinimum": 0.0,
+            "title": "Finite Grid Density Integral",
+            "type": "number"
+          },
+          "grid_resolution": {
+            "minimum": 3.0,
+            "title": "Grid Resolution",
+            "type": "integer"
+          },
+          "grid_spacing_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Grid Spacing Bohr",
+            "type": "number"
+          },
+          "integration_rule": {
+            "default": "tensor_product_simpson",
+            "title": "Integration Rule",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/OrbitalMetadata"
+          },
+          "normals": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Normals",
+            "type": "array"
+          },
+          "phase": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Phase",
+            "type": "array"
+          },
+          "requested_probability_mass": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Requested Probability Mass",
+            "type": "number"
+          },
+          "vertices": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Vertices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "metadata",
+          "vertices",
+          "normals",
+          "faces",
+          "phase",
+          "density_level",
+          "requested_probability_mass",
+          "captured_probability_mass",
+          "finite_grid_density_integral",
+          "grid_resolution",
+          "grid_spacing_bohr",
+          "extent_bohr"
+        ],
+        "title": "IsosurfacePayload",
+        "type": "object"
+      },
+      "ObservableKind": {
+        "description": "Physical quantity represented by a scene asset.",
+        "enum": [
+          "wavefunction",
+          "probability_density",
+          "phase",
+          "probability_current"
+        ],
+        "title": "ObservableKind",
+        "type": "string"
+      },
+      "OrbitalMetadata": {
+        "additionalProperties": false,
+        "description": "Metadata that keeps physical semantics attached to rendered data.",
+        "properties": {
+          "color_semantics": {
+            "title": "Color Semantics",
+            "type": "string"
+          },
+          "coordinate_convention": {
+            "title": "Coordinate Convention",
+            "type": "string"
+          },
+          "energy_hartree": {
+            "title": "Energy Hartree",
+            "type": "number"
+          },
+          "geometry_semantics": {
+            "title": "Geometry Semantics",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "length_unit": {
+            "default": "bohr",
+            "title": "Length Unit",
+            "type": "string"
+          },
+          "normalization": {
+            "default": "integral(|psi|^2 dV)=1",
+            "title": "Normalization",
+            "type": "string"
+          },
+          "observable": {
+            "$ref": "#/components/schemas/ObservableKind"
+          },
+          "references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "representation": {
+            "$ref": "#/components/schemas/RepresentationKind"
+          },
+          "spherical_harmonic_convention": {
+            "title": "Spherical Harmonic Convention",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QuantumStateSpec"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "state",
+          "label",
+          "energy_hartree",
+          "observable",
+          "representation",
+          "coordinate_convention",
+          "spherical_harmonic_convention",
+          "geometry_semantics",
+          "color_semantics",
+          "references"
+        ],
+        "title": "OrbitalMetadata",
+        "type": "object"
+      },
+      "PrincipalPlane": {
+        "description": "Cartesian plane through the origin on which a slice is sampled.\n\nEach member names its in-plane axes in ``(u, v)`` order; the frames\nthemselves, including the right-handed ``xz`` normal ``-y``, live in\n:mod:`quviz.physics.planes`.",
+        "enum": [
+          "xy",
+          "xz",
+          "yz"
+        ],
+        "title": "PrincipalPlane",
+        "type": "string"
+      },
+      "QuantumStateSpec": {
+        "additionalProperties": false,
+        "description": "A reproducible hydrogenic state specification.",
+        "properties": {
+          "a_mu": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 20.0,
+            "title": "A Mu",
+            "type": "number"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/BasisKind",
+            "default": "real"
+          },
+          "l": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "L",
+            "type": "integer"
+          },
+          "m": {
+            "maximum": 11.0,
+            "minimum": -11.0,
+            "title": "M",
+            "type": "integer"
+          },
+          "n": {
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "z": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 20.0,
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "n",
+          "l",
+          "m"
+        ],
+        "title": "QuantumStateSpec",
+        "type": "object"
+      },
+      "RepresentationKind": {
+        "description": "Rendering representation, deliberately separate from the observable.",
+        "enum": [
+          "point_cloud",
+          "isosurface",
+          "slice",
+          "streamlines"
+        ],
+        "title": "RepresentationKind",
+        "type": "string"
+      },
+      "SliceObservable": {
+        "description": "Scalar field a slice reports on its plane.\n\nThis is deliberately narrower than :class:`ObservableKind`: a slice carries\nreal and imaginary wavefunction components as separate fields, and it has no\nslice representation of a vector-valued probability current.",
+        "enum": [
+          "probability_density",
+          "wavefunction_real",
+          "wavefunction_imag",
+          "phase"
+        ],
+        "title": "SliceObservable",
+        "type": "string"
+      },
+      "SlicePayload": {
+        "description": "A plane section of one eigenstate's scalar field.",
+        "properties": {
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "layout": {
+            "const": "row_major_v_rows_u_columns",
+            "default": "row_major_v_rows_u_columns",
+            "title": "Layout",
+            "type": "string"
+          },
+          "length_unit": {
+            "default": "bohr",
+            "title": "Length Unit",
+            "type": "string"
+          },
+          "masked_value_sentinel": {
+            "default": 0.0,
+            "title": "Masked Value Sentinel",
+            "type": "number"
+          },
+          "max_amplitude_on_plane": {
+            "minimum": 0.0,
+            "title": "Max Amplitude On Plane",
+            "type": "number"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/OrbitalMetadata"
+          },
+          "normal": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Normal",
+            "type": "array"
+          },
+          "origin_bohr": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Origin Bohr",
+            "type": "array"
+          },
+          "phase_mask_amplitude_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Amplitude Scale"
+          },
+          "phase_mask_amplitude_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Amplitude Threshold"
+          },
+          "phase_mask_numeric_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Numeric Floor"
+          },
+          "phase_mask_relative_amplitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Relative Amplitude"
+          },
+          "phase_masked_fraction": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Masked Fraction"
+          },
+          "plane": {
+            "$ref": "#/components/schemas/PrincipalPlane"
+          },
+          "resolution": {
+            "maximum": 513.0,
+            "minimum": 65.0,
+            "title": "Resolution",
+            "type": "integer"
+          },
+          "slice_observable": {
+            "$ref": "#/components/schemas/SliceObservable"
+          },
+          "spacing_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Spacing Bohr",
+            "type": "number"
+          },
+          "u_axis": {
+            "items": {
+              "type": "number"
+            },
+            "title": "U Axis",
+            "type": "array"
+          },
+          "v_axis": {
+            "items": {
+              "type": "number"
+            },
+            "title": "V Axis",
+            "type": "array"
+          },
+          "valid_mask": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "boolean"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Mask"
+          },
+          "value_unit": {
+            "title": "Value Unit",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plane",
+          "slice_observable",
+          "origin_bohr",
+          "u_axis",
+          "v_axis",
+          "normal",
+          "extent_bohr",
+          "spacing_bohr",
+          "resolution",
+          "value_unit",
+          "values",
+          "max_amplitude_on_plane",
+          "metadata"
+        ],
+        "title": "SlicePayload",
+        "type": "object"
+      },
+      "SuperpositionCurrentPayload": {
+        "description": "Probability-flow streamlines of a superposition at one instant.\n\nFor a non-stationary state, ``continuity_residual`` is the full statement\n``d(rho)/dt + div j = 0``, normalized by a time-independent root-sum-square\ntransition-coherence reference and audited at four phases of every\ndistinct energy gap. A stationary non-zero flow instead uses\n``max|j| / L_d``; a spatial\nstate proved real up to global phase reports analytic zero with no probes\nor phase samples. ``density_rate_scale`` remains the instantaneous value\nfor transparency, but is never the non-stationary denominator.",
+        "properties": {
+          "arc_step_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Arc Step Bohr",
+            "type": "number"
+          },
+          "continuity_absolute_residual": {
+            "minimum": 0.0,
+            "title": "Continuity Absolute Residual",
+            "type": "number"
+          },
+          "continuity_phase_count": {
+            "minimum": 0.0,
+            "title": "Continuity Phase Count",
+            "type": "integer"
+          },
+          "continuity_probe_count": {
+            "minimum": 0.0,
+            "title": "Continuity Probe Count",
+            "type": "integer"
+          },
+          "continuity_residual": {
+            "minimum": 0.0,
+            "title": "Continuity Residual",
+            "type": "number"
+          },
+          "continuity_scale": {
+            "minimum": 0.0,
+            "title": "Continuity Scale",
+            "type": "number"
+          },
+          "continuity_scale_kind": {
+            "enum": [
+              "transition_coherence",
+              "stationary_current",
+              "analytic_zero_current"
+            ],
+            "title": "Continuity Scale Kind",
+            "type": "string"
+          },
+          "density_rate_scale": {
+            "minimum": 0.0,
+            "title": "Density Rate Scale",
+            "type": "number"
+          },
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "integration_rule": {
+            "default": "rk4_arc_length",
+            "title": "Integration Rule",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "max_speed": {
+            "minimum": 0.0,
+            "title": "Max Speed",
+            "type": "number"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SuperpositionMetadata"
+          },
+          "seed_count": {
+            "minimum": 0.0,
+            "title": "Seed Count",
+            "type": "integer"
+          },
+          "seed_density_floor": {
+            "minimum": 0.0,
+            "title": "Seed Density Floor",
+            "type": "number"
+          },
+          "speed": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Speed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "metadata",
+          "lines",
+          "speed",
+          "seed_count",
+          "max_speed",
+          "arc_step_bohr",
+          "seed_density_floor",
+          "extent_bohr",
+          "continuity_residual",
+          "continuity_absolute_residual",
+          "continuity_scale",
+          "continuity_scale_kind",
+          "continuity_probe_count",
+          "continuity_phase_count",
+          "density_rate_scale"
+        ],
+        "title": "SuperpositionCurrentPayload",
+        "type": "object"
+      },
+      "SuperpositionIsosurfacePayload": {
+        "description": "A |Psi|^2 isosurface at one instant.",
+        "properties": {
+          "captured_probability_mass": {
+            "minimum": 0.0,
+            "title": "Captured Probability Mass",
+            "type": "number"
+          },
+          "density_level": {
+            "exclusiveMinimum": 0.0,
+            "title": "Density Level",
+            "type": "number"
+          },
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "faces": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Faces",
+            "type": "array"
+          },
+          "finite_box_mass_variation_upper_bound": {
+            "minimum": 0.0,
+            "title": "Finite Box Mass Variation Upper Bound",
+            "type": "number"
+          },
+          "finite_box_tail_mass_upper_bound": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Finite Box Tail Mass Upper Bound",
+            "type": "number"
+          },
+          "finite_grid_aliasing_variation_lower_bound": {
+            "minimum": 0.0,
+            "title": "Finite Grid Aliasing Variation Lower Bound",
+            "type": "number"
+          },
+          "finite_grid_density_integral": {
+            "exclusiveMinimum": 0.0,
+            "title": "Finite Grid Density Integral",
+            "type": "number"
+          },
+          "finite_grid_mass_error_lower_bound": {
+            "minimum": 0.0,
+            "title": "Finite Grid Mass Error Lower Bound",
+            "type": "number"
+          },
+          "finite_grid_mass_status": {
+            "enum": [
+              "no_error_above_tolerance_proven",
+              "phase_dependent_quadrature_error",
+              "time_invariant_quadrature_error",
+              "quadrature_error_at_reported_time"
+            ],
+            "title": "Finite Grid Mass Status",
+            "type": "string"
+          },
+          "finite_grid_phase_variation_bound": {
+            "minimum": 0.0,
+            "title": "Finite Grid Phase Variation Bound",
+            "type": "number"
+          },
+          "finite_grid_reporting_tolerance": {
+            "exclusiveMinimum": 0.0,
+            "title": "Finite Grid Reporting Tolerance",
+            "type": "number"
+          },
+          "grid_resolution": {
+            "minimum": 3.0,
+            "title": "Grid Resolution",
+            "type": "integer"
+          },
+          "grid_spacing_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Grid Spacing Bohr",
+            "type": "number"
+          },
+          "integration_rule": {
+            "default": "tensor_product_simpson",
+            "title": "Integration Rule",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SuperpositionMetadata"
+          },
+          "normals": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Normals",
+            "type": "array"
+          },
+          "phase": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Phase",
+            "type": "array"
+          },
+          "requested_probability_mass": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Requested Probability Mass",
+            "type": "number"
+          },
+          "vertices": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Vertices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "metadata",
+          "vertices",
+          "normals",
+          "faces",
+          "phase",
+          "density_level",
+          "requested_probability_mass",
+          "captured_probability_mass",
+          "finite_grid_density_integral",
+          "grid_resolution",
+          "grid_spacing_bohr",
+          "extent_bohr",
+          "finite_box_tail_mass_upper_bound",
+          "finite_box_mass_variation_upper_bound",
+          "finite_grid_phase_variation_bound",
+          "finite_grid_aliasing_variation_lower_bound",
+          "finite_grid_mass_error_lower_bound",
+          "finite_grid_reporting_tolerance",
+          "finite_grid_mass_status"
+        ],
+        "title": "SuperpositionIsosurfacePayload",
+        "type": "object"
+      },
+      "SuperpositionMetadata": {
+        "additionalProperties": false,
+        "description": "Metadata for a time-dependent superposition.\n\nDeliberately not an ``OrbitalMetadata``: a superposition has no single\n``(n, l, m)``, and forcing one would make the contract claim a state the\nasset is not showing. The coefficients and the time are part of the\nphysical identity here, so they are required fields.",
+        "properties": {
+          "a_mu": {
+            "exclusiveMinimum": 0.0,
+            "title": "A Mu",
+            "type": "number"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/BasisKind"
+          },
+          "color_semantics": {
+            "title": "Color Semantics",
+            "type": "string"
+          },
+          "coordinate_convention": {
+            "title": "Coordinate Convention",
+            "type": "string"
+          },
+          "energy_expectation_hartree": {
+            "title": "Energy Expectation Hartree",
+            "type": "number"
+          },
+          "geometry_semantics": {
+            "title": "Geometry Semantics",
+            "type": "string"
+          },
+          "is_stationary": {
+            "title": "Is Stationary",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "length_unit": {
+            "default": "bohr",
+            "title": "Length Unit",
+            "type": "string"
+          },
+          "normalization": {
+            "default": "sum |c_k|^2 = 1 with orthonormal psi_k",
+            "title": "Normalization",
+            "type": "string"
+          },
+          "observable": {
+            "$ref": "#/components/schemas/ObservableKind"
+          },
+          "reduced_mass_ratio": {
+            "exclusiveMinimum": 0.0,
+            "title": "Reduced Mass Ratio",
+            "type": "number"
+          },
+          "references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "representation": {
+            "$ref": "#/components/schemas/RepresentationKind"
+          },
+          "spherical_harmonic_convention": {
+            "title": "Spherical Harmonic Convention",
+            "type": "string"
+          },
+          "terms": {
+            "items": {
+              "$ref": "#/components/schemas/SuperpositionTermSpec"
+            },
+            "title": "Terms",
+            "type": "array"
+          },
+          "time_au": {
+            "title": "Time Au",
+            "type": "number"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "z": {
+            "exclusiveMinimum": 0.0,
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "terms",
+          "label",
+          "basis",
+          "z",
+          "a_mu",
+          "reduced_mass_ratio",
+          "time_au",
+          "energy_expectation_hartree",
+          "is_stationary",
+          "observable",
+          "representation",
+          "coordinate_convention",
+          "spherical_harmonic_convention",
+          "geometry_semantics",
+          "color_semantics",
+          "references"
+        ],
+        "title": "SuperpositionMetadata",
+        "type": "object"
+      },
+      "SuperpositionSlicePayload": {
+        "description": "A plane section of a superposition's scalar field at one instant.\n\nSeparate from :class:`SlicePayload` for the same reason the isosurface pair\nis separate: a superposition has no single ``(n, l, m)``, so its metadata is\na different type, and only the metadata differs.",
+        "properties": {
+          "extent_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Bohr",
+            "type": "number"
+          },
+          "layout": {
+            "const": "row_major_v_rows_u_columns",
+            "default": "row_major_v_rows_u_columns",
+            "title": "Layout",
+            "type": "string"
+          },
+          "length_unit": {
+            "default": "bohr",
+            "title": "Length Unit",
+            "type": "string"
+          },
+          "masked_value_sentinel": {
+            "default": 0.0,
+            "title": "Masked Value Sentinel",
+            "type": "number"
+          },
+          "max_amplitude_on_plane": {
+            "minimum": 0.0,
+            "title": "Max Amplitude On Plane",
+            "type": "number"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SuperpositionMetadata"
+          },
+          "normal": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Normal",
+            "type": "array"
+          },
+          "origin_bohr": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Origin Bohr",
+            "type": "array"
+          },
+          "phase_mask_amplitude_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Amplitude Scale"
+          },
+          "phase_mask_amplitude_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Amplitude Threshold"
+          },
+          "phase_mask_numeric_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Numeric Floor"
+          },
+          "phase_mask_relative_amplitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Mask Relative Amplitude"
+          },
+          "phase_masked_fraction": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Masked Fraction"
+          },
+          "plane": {
+            "$ref": "#/components/schemas/PrincipalPlane"
+          },
+          "resolution": {
+            "maximum": 513.0,
+            "minimum": 65.0,
+            "title": "Resolution",
+            "type": "integer"
+          },
+          "slice_observable": {
+            "$ref": "#/components/schemas/SliceObservable"
+          },
+          "spacing_bohr": {
+            "exclusiveMinimum": 0.0,
+            "title": "Spacing Bohr",
+            "type": "number"
+          },
+          "u_axis": {
+            "items": {
+              "type": "number"
+            },
+            "title": "U Axis",
+            "type": "array"
+          },
+          "v_axis": {
+            "items": {
+              "type": "number"
+            },
+            "title": "V Axis",
+            "type": "array"
+          },
+          "valid_mask": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "boolean"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Mask"
+          },
+          "value_unit": {
+            "title": "Value Unit",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plane",
+          "slice_observable",
+          "origin_bohr",
+          "u_axis",
+          "v_axis",
+          "normal",
+          "extent_bohr",
+          "spacing_bohr",
+          "resolution",
+          "value_unit",
+          "values",
+          "max_amplitude_on_plane",
+          "metadata"
+        ],
+        "title": "SuperpositionSlicePayload",
+        "type": "object"
+      },
+      "SuperpositionTermSpec": {
+        "additionalProperties": false,
+        "description": "One eigenstate and its complex amplitude, JSON-serialisable.",
+        "properties": {
+          "coefficient_imag": {
+            "default": 0.0,
+            "title": "Coefficient Imag",
+            "type": "number"
+          },
+          "coefficient_real": {
+            "title": "Coefficient Real",
+            "type": "number"
+          },
+          "l": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "L",
+            "type": "integer"
+          },
+          "m": {
+            "maximum": 11.0,
+            "minimum": -11.0,
+            "title": "M",
+            "type": "integer"
+          },
+          "n": {
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "n",
+          "l",
+          "m",
+          "coefficient_real"
+        ],
+        "title": "SuperpositionTermSpec",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Physically explicit scene assets for browser-native quantum visualization.",
+    "title": "QuViz API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Root  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Root"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Api Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/catalog": {
+      "get": {
+        "description": "Curated presets that have immediately recognizable geometry.",
+        "operationId": "orbital_catalog_api_orbitals_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Orbital Catalog Api Orbitals Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Orbital Catalog",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/current-field": {
+      "get": {
+        "description": "Probability-flow streamlines.\n\nReal stationary orbitals have zero current; the payload is then empty and\ncarries a warning rather than an error, because \"no flow\" is the physically\ncorrect answer rather than a failure.",
+        "operationId": "current_field_api_orbitals_current_field_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 6,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "l",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "L",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "m",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 5,
+              "minimum": -5,
+              "title": "M",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "complex"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed_count",
+            "required": false,
+            "schema": {
+              "default": 48,
+              "maximum": 256,
+              "minimum": 1,
+              "title": "Seed Count",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "arc_step",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arc Step"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentFieldPayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Current Field",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/isosurface": {
+      "get": {
+        "operationId": "isosurface_api_orbitals_isosurface_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 4,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "l",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 0,
+              "title": "L",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "m",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 3,
+              "minimum": -3,
+              "title": "M",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "real"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": 65,
+              "maximum": 81,
+              "minimum": 49,
+              "title": "Resolution",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "probability_mass",
+            "required": false,
+            "schema": {
+              "default": 0.9,
+              "maximum": 0.99,
+              "minimum": 0.5,
+              "title": "Probability Mass",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IsosurfacePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Isosurface",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/metadata": {
+      "get": {
+        "operationId": "metadata_api_orbitals_metadata_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "l",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 11,
+              "minimum": 0,
+              "title": "L",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "m",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 11,
+              "minimum": -11,
+              "title": "M",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "real"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrbitalMetadata"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Metadata",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/point-cloud": {
+      "get": {
+        "operationId": "point_cloud_api_orbitals_point_cloud_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "l",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 11,
+              "minimum": 0,
+              "title": "L",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "m",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 11,
+              "minimum": -11,
+              "title": "M",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "real"
+            }
+          },
+          {
+            "in": "query",
+            "name": "samples",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "maximum": 120000,
+              "minimum": 1000,
+              "title": "Samples",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Seed",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Point Cloud",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/orbitals/slice": {
+      "get": {
+        "description": "One scalar field of an eigenstate on a principal plane through the origin.\n\nThe extent is derived from the state and reported; it is not a parameter.\n``resolution`` is bounded here only by the outermost limits both payloads\nshare -- the parity rule and the ``n``-dependent floor live in the builder,\nwhich raises, and those refusals arrive as a 422 naming the reason.\n\nThis is the only eigenstate route that exposes ``a_mu``: a slice is where\nthe reduced-mass length is legible, because it rescales both the derived\nextent and the amplitude scale the phase mask is referenced to.",
+        "operationId": "orbital_slice_api_orbitals_slice_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "l",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 11,
+              "minimum": 0,
+              "title": "L",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "m",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 11,
+              "minimum": -11,
+              "title": "M",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "a_mu",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "A Mu",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "real"
+            }
+          },
+          {
+            "in": "query",
+            "name": "plane",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PrincipalPlane",
+              "default": "xz"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observable",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SliceObservable",
+              "default": "probability_density"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": 129,
+              "maximum": 513,
+              "minimum": 65,
+              "title": "Resolution",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlicePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Orbital Slice",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/superposition/catalog": {
+      "get": {
+        "description": "Presets chosen to make the physics legible, including a negative control.",
+        "operationId": "superposition_catalog_api_superposition_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Superposition Catalog Api Superposition Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Superposition Catalog",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/superposition/current-field": {
+      "get": {
+        "description": "Probability-flow streamlines of a superposition, with its continuity residual.",
+        "operationId": "superposition_current_field_api_superposition_current_field_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "terms",
+            "required": false,
+            "schema": {
+              "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "title": "Terms",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "time",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "title": "Time",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "complex"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "a_mu",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "A Mu",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed_count",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "maximum": 128,
+              "minimum": 1,
+              "title": "Seed Count",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "arc_step",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arc Step"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperpositionCurrentPayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Superposition Current Field",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/superposition/isosurface": {
+      "get": {
+        "description": "The :math:`|\\Psi(t)|^2` level set of a superposition at one instant.",
+        "operationId": "superposition_isosurface_api_superposition_isosurface_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "terms",
+            "required": false,
+            "schema": {
+              "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "title": "Terms",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "time",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "title": "Time",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "complex"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "a_mu",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "A Mu",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": 65,
+              "maximum": 81,
+              "minimum": 49,
+              "title": "Resolution",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "probability_mass",
+            "required": false,
+            "schema": {
+              "default": 0.9,
+              "maximum": 0.99,
+              "minimum": 0.5,
+              "title": "Probability Mass",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperpositionIsosurfacePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Superposition Isosurface",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    },
+    "/api/superposition/slice": {
+      "get": {
+        "description": "One scalar field of a superposition on a principal plane at one instant.\n\nThe largest term sets both the extent and the resolution floor, so a\nresolution that is honest for a 1s slice can be refused here; the refusal\nnames the shell that demands more samples.",
+        "operationId": "superposition_slice_api_superposition_slice_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "terms",
+            "required": false,
+            "schema": {
+              "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "title": "Terms",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "time",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "title": "Time",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BasisKind",
+              "default": "complex"
+            }
+          },
+          {
+            "in": "query",
+            "name": "z",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "Z",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "a_mu",
+            "required": false,
+            "schema": {
+              "default": 1.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 20.0,
+              "title": "A Mu",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "plane",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PrincipalPlane",
+              "default": "xz"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observable",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SliceObservable",
+              "default": "probability_density"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": 129,
+              "maximum": 513,
+              "minimum": 65,
+              "title": "Resolution",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperpositionSlicePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Superposition Slice",
+        "tags": [
+          "QuViz"
+        ]
+      }
+    }
+  }
+}

@@ -1358,6 +1358,17 @@ WEB_SCRIPTS = (
     "capture-resolved-coverage.d.mts",
     "capture-resolved-coverage.mjs",
     "clean-coverage.mjs",
+    # Not a gate: `npm run codegen` writes web/src/api/schema.gen.ts from
+    # tests/fixtures/openapi.json, and web/src/api/schema.gen.test.ts imports
+    # `generateApiTypes` from it (hence the declaration file beside it, as
+    # every other module here has one). It runs in no `npm test` stage --
+    # NPM_TEST_STAGES above is exact -- so it cannot rewrite a report the
+    # verifiers read. It is listed for the same reason everything else here
+    # is: this directory is a manifest, and a module arriving in it without a
+    # reviewed edit is the cheap first step of both attacks the list exists
+    # to price.
+    "generate-api-types.d.mts",
+    "generate-api-types.mjs",
 )
 
 
