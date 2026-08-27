@@ -1,32 +1,135 @@
 import { Bounds, OrbitControls, useBounds } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing'
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect } from 'react'
 import * as THREE from 'three'
 
-import {
-  fetchCurrentField,
-  fetchIsosurface,
-  fetchPointCloud,
-  fetchSuperpositionIsosurface,
-} from '../api/client'
 import type {
-  CurrentFieldPayload,
-  IsosurfacePayload,
-  PointCloudData,
+  BasisKind,
+  OrbitalParameters,
+  RepresentationKind,
   SceneStatus,
-  SuperpositionIsosurfacePayload,
 } from '../api/types'
 import { Atmosphere } from '../scene/Atmosphere'
+import { cameraDirectionFor, type CameraViewState } from '../scene/camera'
 import { CurrentStreamlines } from '../scene/CurrentStreamlines'
 import { ElectronCloud } from '../scene/ElectronCloud'
+import { fogRangeFor } from '../scene/fog'
 import { OrbitalSurface } from '../scene/OrbitalSurface'
-import { useSceneStore } from '../state/useSceneStore'
-import { createFetchCoordinator, sceneIdentityKey } from './sceneRequest'
-import { statusFromCurrentField, statusFromSuperpositionIsosurface } from './sceneStatus'
+import { useSceneStore, type SceneMode } from '../state/useSceneStore'
+import {
+  sceneExtentBohr,
+  useSceneAsset,
+  type SceneAsset,
+  type SceneAssetInputs,
+} from './useSceneAsset'
 
 interface OrbitalCanvasProps {
   onStatus: (status: SceneStatus) => void
+}
+
+/** The colour depth fades into: the page's own background, so fog reads as distance. */
+const FOG_COLOR = '#050a13'
+
+/**
+ * Closest the camera is ever placed to the nucleus when it is re-aimed.
+ *
+ * A camera sitting exactly at the origin has a zero-length position vector,
+ * and normalising that gives NaN -- which puts the camera nowhere and blanks
+ * the viewport.
+ */
+const MINIMUM_ORBIT_DISTANCE = 10
+
+/**
+ * Exactly the store fields a scene request reads, and nothing else.
+ *
+ * Spelled out rather than taken as the whole store type so that the list of
+ * things that can change what the server is asked is visible in one place. The
+ * store's own state satisfies it structurally, so `sceneAssetInputs` still
+ * stops compiling if the store renames or drops one of them.
+ */
+export interface SceneInputSource {
+  mode: SceneMode
+  orbital: OrbitalParameters
+  representation: RepresentationKind
+  samples: number
+  seed: number
+  resolution: number
+  probabilityMass: number
+  seedCount: number
+  superpositionTerms: string
+  superpositionBasis: BasisKind
+  superpositionZ: number
+  superpositionAMu: number
+  timeAu: number
+}
+
+/**
+ * The store, as the request layer wants it.
+ *
+ * One translation, in one place. The canvas used to read the store and then
+ * re-derive the request from `mode` and `representation` inline, with the
+ * superposition's basis, charge and reduced mass hard-coded to the server's
+ * defaults -- so the panel could describe one state while the server drew
+ * another.
+ */
+export function sceneAssetInputs(state: SceneInputSource): SceneAssetInputs {
+  return {
+    mode: state.mode,
+    // A plan carries ONE nuclear charge, and for a superposition request it is
+    // read from `orbital.z`. The store keeps the two charges apart on purpose
+    // (they describe different states), so the superposition's own charge is
+    // substituted here; without this it never reaches the wire and the
+    // time-dependent state is drawn at the eigenstate panel's charge.
+    orbital:
+      state.mode === 'superposition'
+        ? { ...state.orbital, z: state.superpositionZ }
+        : state.orbital,
+    representation: state.representation,
+    samples: state.samples,
+    seed: state.seed,
+    resolution: state.resolution,
+    probabilityMass: state.probabilityMass,
+    seedCount: state.seedCount,
+    superpositionTerms: state.superpositionTerms,
+    superpositionBasis: state.superpositionBasis,
+    aMu: state.superpositionAMu,
+    timeAu: state.timeAu,
+  }
+}
+
+/**
+ * The quantum state the camera should frame, or undefined when there isn't one.
+ *
+ * A superposition is a sum over states: it has no single (l, m) and therefore
+ * no lobe axis to face, so it gets the neutral three-quarter view rather than
+ * a viewpoint chosen from one arbitrary term.
+ */
+export function cameraViewOf(asset: SceneAsset | null): CameraViewState | undefined {
+  if (asset === null) return undefined
+  switch (asset.kind) {
+    case 'point_cloud':
+    case 'isosurface':
+    case 'streamlines':
+      return asset.data.metadata.state
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Put the camera on this state's canonical view direction, keeping the
+ * distance the user has zoomed to.
+ *
+ * The direction itself comes from `src/scene/camera.ts` -- shared with the
+ * tests that pin which orbitals deserve which viewpoint -- rather than from an
+ * inline copy of the same `if` chain that could drift from it.
+ */
+export function aimCamera(camera: THREE.Camera, view: CameraViewState | undefined): void {
+  const distance = Math.max(camera.position.length(), MINIMUM_ORBIT_DISTANCE)
+  const direction = new THREE.Vector3(...cameraDirectionFor(view))
+  camera.position.copy(direction.normalize().multiplyScalar(distance))
+  camera.lookAt(0, 0, 0)
 }
 
 /**
@@ -39,46 +142,34 @@ interface OrbitalCanvasProps {
  * teleported the camera back to the canonical direction and restarted an 0.8s
  * fit that the next frame interrupted.
  */
-function FitOnAssetChange({
-  asset,
+export function FitOnAssetChange({
+  view,
   fitKey,
   children,
 }: {
-  asset: object | null
+  view: CameraViewState | undefined
   fitKey: string | null
   children: ReactNode
 }) {
   const bounds = useBounds()
   const { camera } = useThree()
 
-  const state =
-    'metadata' in (asset ?? {}) && 'state' in (asset as { metadata: object }).metadata
-      ? (asset as PointCloudData | IsosurfacePayload | CurrentFieldPayload).metadata.state
-      : undefined
-
   useLayoutEffect(() => {
     // Null until the first asset of this scene has arrived: there is nothing to
     // frame before that.
     if (fitKey === null) return undefined
-    const distance = Math.max(camera.position.length(), 10)
-    let direction = new THREE.Vector3(1, 0.45, 1)
-    if (state?.basis === 'real' && state.l === 1) {
-      direction = state.m === 1 ? new THREE.Vector3(0, 0.35, 1) : new THREE.Vector3(1, 0.35, 0)
-    } else if (state?.basis === 'real' && state.l === 2) {
-      direction = [2, -2].includes(state.m)
-        ? new THREE.Vector3(0, 0.35, 1)
-        : new THREE.Vector3(1, 0.35, 0)
-    }
-    camera.position.copy(direction.normalize().multiplyScalar(distance))
-    camera.lookAt(0, 0, 0)
+    aimCamera(camera, view)
     const frame = window.requestAnimationFrame(() => bounds.refresh().clip().fit())
     return () => window.cancelAnimationFrame(frame)
-  }, [bounds, camera, fitKey, state?.basis, state?.l, state?.m])
+    // The view is compared field by field: it is a fresh object on every
+    // render, and depending on the object would re-fit on every frame.
+  }, [bounds, camera, fitKey, view?.basis, view?.l, view?.m])
 
   return children
 }
 
-function RendererSettings({
+/** Tone mapping and depth fog, both scaled to the scene actually on screen. */
+export function RendererSettings({
   exposure,
   fogStrength,
   extent,
@@ -94,14 +185,15 @@ function RendererSettings({
   }, [exposure, gl])
 
   useEffect(() => {
-    if (fogStrength <= 0) {
+    const range = fogRangeFor(extent, fogStrength)
+    if (range === null) {
+      // "No fog" and "fog you cannot reach" are different statements; the
+      // shared module says which this is, and this clears rather than pushing
+      // the distances to infinity.
       scene.fog = null
       return undefined
     }
-    const scale = Math.max(extent ?? 8, 4)
-    const near = scale * (3.0 - 1.5 * fogStrength)
-    const far = scale * (8.0 - 4.0 * fogStrength)
-    scene.fog = new THREE.Fog('#050a13', near, far)
+    scene.fog = new THREE.Fog(FOG_COLOR, range.near, range.far)
     return () => {
       scene.fog = null
     }
@@ -110,178 +202,83 @@ function RendererSettings({
   return null
 }
 
+/**
+ * The one thing on screen, drawn by whichever component draws that kind.
+ *
+ * A `switch` over the discriminated union rather than four independent
+ * nullable slots: the old canvas rendered every non-null slot, so a scene
+ * change that filled the new one before clearing the old drew two physically
+ * different objects at the same time.
+ */
+export function SceneContent({
+  asset,
+  opacity,
+  pointSize,
+}: {
+  asset: SceneAsset | null
+  opacity: number
+  pointSize: number
+}) {
+  if (asset === null) return null
+  switch (asset.kind) {
+    case 'point_cloud':
+      return <ElectronCloud data={asset.data} pointSize={pointSize} opacity={opacity} />
+    case 'isosurface':
+    case 'superposition_isosurface':
+      return <OrbitalSurface data={asset.data} opacity={opacity} />
+    default:
+      // Both current fields are the same observable with the same geometry, so
+      // they share one renderer rather than two that could drift apart.
+      return <CurrentStreamlines data={asset.data} opacity={opacity} />
+  }
+}
+
+/**
+ * Everything inside the canvas that does not need a GPU.
+ *
+ * Split out from `OrbitalCanvas` so the composition can be mounted under
+ * `@react-three/test-renderer` and asserted on: the store reaches the request
+ * layer here, the asset reaches the right component here, and the scene's own
+ * extent reaches the fog and the grid here.
+ */
+export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
+  const state = useSceneStore()
+  const { asset, fitKey } = useSceneAsset(sceneAssetInputs(state), onStatus)
+  const extent = sceneExtentBohr(asset)
+
+  return (
+    <>
+      <RendererSettings exposure={state.exposure} fogStrength={state.fogStrength} extent={extent} />
+      <Atmosphere showGrid={state.showGrid} extent={extent} />
+      <Bounds fit clip observe margin={1.35} maxDuration={0.8}>
+        <FitOnAssetChange view={cameraViewOf(asset)} fitKey={fitKey}>
+          <SceneContent asset={asset} opacity={state.opacity} pointSize={state.pointSize} />
+        </FitOnAssetChange>
+      </Bounds>
+      <OrbitControls
+        makeDefault
+        enableDamping
+        dampingFactor={0.07}
+        minDistance={2}
+        maxDistance={90}
+        autoRotate={state.autoRotate}
+        autoRotateSpeed={0.34}
+      />
+    </>
+  )
+}
+
+/**
+ * The WebGL surface, and nothing else.
+ *
+ * Every decision this component used to make -- what to fetch, what to keep on
+ * screen while the next frame loads, which component draws the answer, where
+ * to put the camera, how far the fog reaches -- now lives in a module that can
+ * be tested without a GPU. What is left here is the one part that genuinely
+ * needs one.
+ */
 export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
-  const {
-    mode,
-    superpositionTerms,
-    timeAu,
-    orbital,
-    representation,
-    samples,
-    seed,
-    resolution,
-    probabilityMass,
-    seedCount,
-    pointSize,
-    opacity,
-    bloom,
-    exposure,
-    fogStrength,
-    autoRotate,
-    showGrid,
-  } = useSceneStore()
-  const [pointData, setPointData] = useState<PointCloudData | null>(null)
-  const [surfaceData, setSurfaceData] = useState<IsosurfacePayload | null>(null)
-  const [currentData, setCurrentData] = useState<CurrentFieldPayload | null>(null)
-  const [superpositionData, setSuperpositionData] =
-    useState<SuperpositionIsosurfacePayload | null>(null)
-  const [renderedKey, setRenderedKey] = useState<string | null>(null)
-
-  // Which physical object is on screen, as one string. Everything the fetches
-  // below read is folded into it EXCEPT the time, which is why a time step can
-  // leave the last frame up while the next one loads.
-  const identityKey = sceneIdentityKey({
-    mode,
-    superpositionTerms,
-    orbital,
-    representation,
-    samples,
-    seed,
-    resolution,
-    probabilityMass,
-    seedCount,
-  })
-
-  const [coordinator] = useState(createFetchCoordinator)
-  const controllerRef = useRef<AbortController | null>(null)
-  const identityRef = useRef<string | null>(null)
-
-  // Unmount, and nothing else. The abort used to live in the fetch effect's
-  // cleanup, which re-runs on every tick: each time step cancelled the request
-  // the previous step had started, so a round trip slower than the clock
-  // rendered nothing at all. Identity changes still abort, explicitly, below.
-  useEffect(() => {
-    return () => {
-      controllerRef.current?.abort()
-      controllerRef.current = null
-      // StrictMode unmounts and remounts once in development; the remount has
-      // to treat the scene as new and fetch again.
-      coordinator.reset()
-    }
-  }, [coordinator])
-
-  // `identityKey` is a total function of every other fetch input, so it stands
-  // for all of them here -- and it compares by value, where `orbital` is a
-  // fresh object on every store write.
-  useEffect(() => {
-    identityRef.current = identityKey
-    const decision = coordinator.onInputsChanged({ identityKey, timeAu })
-
-    if (decision.abortPrevious) {
-      controllerRef.current?.abort()
-      controllerRef.current = null
-    }
-    if (decision.clearScene) {
-      // Only a different physical object clears the viewport. A later moment of
-      // the same one does not: the frame on screen stays true until its
-      // successor arrives.
-      onStatus({ loading: true })
-      setRenderedKey(null)
-      setPointData(null)
-      setSurfaceData(null)
-      setCurrentData(null)
-      setSuperpositionData(null)
-    }
-    if (!decision.startFetch) return
-
-    const requestKey = identityKey
-
-    const startFetch = (time: number): void => {
-      const controller = new AbortController()
-      controllerRef.current = controller
-
-      /** Accept a response only while it still describes the scene on screen. */
-      const accept = (apply: () => void): void => {
-        if (controller.signal.aborted || identityRef.current !== requestKey) return
-        apply()
-        setRenderedKey(requestKey)
-        const { refetchTime } = coordinator.onResponse(time)
-        if (refetchTime !== null) startFetch(refetchTime)
-      }
-      const fail = (error: unknown): void => {
-        if (controller.signal.aborted || identityRef.current !== requestKey) return
-        onStatus({ loading: false, error: error instanceof Error ? error.message : String(error) })
-        const { refetchTime } = coordinator.onError(time)
-        if (refetchTime !== null) startFetch(refetchTime)
-      }
-
-      if (mode === 'superposition') {
-        // A superposition is a different physical object, not a display option,
-        // so it is its own request rather than a re-render of the eigenstate.
-        fetchSuperpositionIsosurface(superpositionTerms, time, 65, controller.signal)
-          .then((data) =>
-            accept(() => {
-              setSuperpositionData(data)
-              onStatus(statusFromSuperpositionIsosurface(data))
-            }),
-          )
-          .catch(fail)
-      } else if (representation === 'point_cloud') {
-        fetchPointCloud(orbital, samples, seed, controller.signal)
-          .then((data) =>
-            accept(() => {
-              setPointData(data)
-              onStatus({
-                loading: false,
-                pointCount: data.count,
-                radialMass: data.radialMass,
-                extentBohr: data.extentBohr,
-                metadata: data.metadata,
-                warnings: data.metadata.warnings,
-              })
-            }),
-          )
-          .catch(fail)
-      } else if (representation === 'streamlines') {
-        fetchCurrentField(orbital, seedCount, controller.signal)
-          .then((data) =>
-            accept(() => {
-              setCurrentData(data)
-              onStatus(statusFromCurrentField(data))
-            }),
-          )
-          .catch(fail)
-      } else {
-        fetchIsosurface(orbital, resolution, probabilityMass, controller.signal)
-          .then((data) =>
-            accept(() => {
-              setSurfaceData(data)
-              onStatus({
-                loading: false,
-                triangleCount: data.faces.length,
-                extentBohr: data.extent_bohr,
-                densityLevel: data.density_level,
-                capturedProbabilityMass: data.captured_probability_mass,
-                finiteGridDensityIntegral: data.finite_grid_density_integral,
-                gridResolution: data.grid_resolution,
-                gridSpacingBohr: data.grid_spacing_bohr,
-                metadata: data.metadata,
-                warnings: data.metadata.warnings,
-              })
-            }),
-          )
-          .catch(fail)
-      }
-    }
-
-    startFetch(timeAu)
-  }, [coordinator, identityKey, onStatus, timeAu])
-
-  const extent =
-    pointData?.extentBohr ??
-    surfaceData?.extent_bohr ??
-    currentData?.extent_bohr ??
-    superpositionData?.extent_bohr
+  const bloom = useSceneStore((state) => state.bloom)
 
   return (
     <Canvas
@@ -300,28 +297,9 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
         gl.toneMappingExposure = 1.0
       }}
     >
-      <RendererSettings exposure={exposure} fogStrength={fogStrength} extent={extent} />
-      <Atmosphere showGrid={showGrid} extent={extent} />
-      <Bounds fit clip observe margin={1.35} maxDuration={0.8}>
-        <FitOnAssetChange
-          asset={pointData ?? surfaceData ?? currentData ?? superpositionData}
-          fitKey={renderedKey}
-        >
-          {pointData ? <ElectronCloud data={pointData} pointSize={pointSize} opacity={opacity} /> : null}
-          {surfaceData ? <OrbitalSurface data={surfaceData} opacity={opacity} /> : null}
-          {currentData ? <CurrentStreamlines data={currentData} opacity={opacity} /> : null}
-          {superpositionData ? <OrbitalSurface data={superpositionData} opacity={opacity} /> : null}
-        </FitOnAssetChange>
-      </Bounds>
-      <OrbitControls
-        makeDefault
-        enableDamping
-        dampingFactor={0.07}
-        minDistance={2}
-        maxDistance={90}
-        autoRotate={autoRotate}
-        autoRotateSpeed={0.34}
-      />
+      <SceneRoot onStatus={onStatus} />
+      {/* Bloom and vignette read the rendered buffers back, so unlike
+          everything above them they cannot exist without a real renderer. */}
       <EffectComposer multisampling={0}>
         <Bloom intensity={bloom} luminanceThreshold={0.56} luminanceSmoothing={0.46} mipmapBlur />
         <Vignette eskil={false} offset={0.18} darkness={0.76} />

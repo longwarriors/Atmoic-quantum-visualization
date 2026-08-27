@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // The default stays `node`. React/three specs opt into jsdom per file
+    // with a `/** @vitest-environment jsdom */` docblock on line 1, so the
+    // plain-TypeScript specs keep running without a DOM they do not use.
     environment: 'node',
     // Mirrored by tsconfig.test.json (include) and tsconfig.app.json (exclude)
     // so a spec/__tests__ file is type-checked with the tests and kept out of
@@ -31,11 +34,11 @@ export default defineConfig({
       provider: 'v8',
       // Coverage scope, stated exactly so the gate cannot quietly shrink:
       //
-      //   Covered:   every .ts module under src/api/ and src/scene/ at any
-      //              depth (`**`), including any file added later (a new
-      //              untested module fails the gate instead of being invisible
-      //              to it). A single-level glob (`src/api/*.ts`) would let a
-      //              nested `src/api/v2/x.ts` slip past unmeasured.
+      //   Covered:   EVERY .ts and .tsx module under src/, at any depth
+      //              (`**`), including any file added later (a new untested
+      //              module fails the gate instead of being invisible to it).
+      //              A single-level glob (`src/*.ts`) would let a nested
+      //              `src/api/v2/x.ts` slip past unmeasured.
       //              This includes src/api/client.ts, the HTTP layer: it is
       //              covered by src/api/client.test.ts with `fetch` stubbed
       //              (request path and query per call, signal and header
@@ -57,15 +60,22 @@ export default defineConfig({
       //              any other costs one import-and-assert spec per shader
       //              module (src/scene/shaders/orbitalPoints.test.ts) and
       //              leaves no exclusion to police.
+      //              The .tsx half -- the React/three layer under
+      //              src/components/, src/scene/ and src/state/ -- is new in
+      //              PR-8A. It was outside this gate while there was no DOM
+      //              harness, and that carve-out was a documented ESCAPE: a
+      //              gated module's body moved into src/state/ or
+      //              src/components/ with a one-line re-export left behind
+      //              reported 100% with the whole gate green (reproduced).
+      //              Specs opt into jsdom per file with a
+      //              `@vitest-environment jsdom` docblock and mount
+      //              three/react components through
+      //              @react-three/test-renderer, so the environment default
+      //              below stays `node` for the plain-TypeScript specs.
       //   Excluded:  test files themselves; src/api/types.ts (type-only, no
-      //              runtime statements).
-      //   Not covered on purpose: React/three components (src/**/*.tsx,
-      //              src/state/, src/components/) -- they need a WebGL/DOM
-      //              harness this suite does not provide. Those, together
-      //              with QVPC body validation (NaN / Inf / negative
-      //              intensity samples inside the payload, as opposed to the
-      //              header checks qvpc.ts already makes), are PR-8 items and
-      //              deliberately outside this gate until then.
+      //              runtime statements -- and that claim is enforced, see
+      //              src/guards.test.ts "keeps the modules coverage excludes
+      //              as type-only actually type-only").
       //
       // The rest of the contract is enforced in two places:
       //   - scripts/assert-no-skips.mjs, run by `npm test` after vitest over
@@ -81,7 +91,7 @@ export default defineConfig({
       //
       // Thresholds apply per file, so one well-covered module cannot mask a
       // neglected one behind an aggregate number.
-      include: ['src/api/**/*.ts', 'src/scene/**/*.ts'],
+      include: ['src/**/*.ts', 'src/**/*.tsx'],
       exclude: [
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',

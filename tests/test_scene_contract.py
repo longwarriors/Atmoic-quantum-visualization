@@ -8,7 +8,7 @@ import pytest
 from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
 from quviz.physics.hydrogenic import cartesian_to_spherical, hydrogenic_wavefunction
 from quviz.physics.observables import probability_density
-from quviz.sampling.point_cloud import OrbitalPointCloud
+from quviz.sampling.point_cloud import OrbitalPointCloud, sample_orbital_point_cloud
 from quviz.scene.binary import (
     POINT_CLOUD_MAGIC,
     POINT_CLOUD_STRIDE,
@@ -194,3 +194,43 @@ def test_encoder_reproduces_the_committed_qvpc_golden_bytes() -> None:
     assert spec["stride"] == POINT_CLOUD_STRIDE
     assert spec["version"] == POINT_CLOUD_VERSION
     assert spec["magic"].encode() == POINT_CLOUD_MAGIC
+
+
+def _decode_point_cloud_body(payload: bytes) -> np.ndarray:
+    """Read the interleaved records back out of an encoded payload."""
+
+    count, stride = struct.unpack("<II", payload[8:16])
+    return np.frombuffer(payload, dtype="<f4", offset=16).reshape(count, stride)
+
+
+def test_encoded_body_stays_inside_the_ranges_the_decoder_enforces() -> None:
+    # The producer half of the body contract that web/src/api/qvpc.ts enforces
+    # on the consumer side: it refuses any payload whose intensity leaves
+    # [0, 1] or whose phase leaves the float32 [-pi, pi] range. Asserting the
+    # same bounds over the bytes this encoder actually writes means a sampler
+    # change that broke either bound fails here, loudly, instead of surfacing
+    # as a browser-side decode error against a server that is "working".
+    cloud = sample_orbital_point_cloud(2, 1, 1, count=2000, seed=11, basis=BasisKind.COMPLEX)
+    values = _decode_point_cloud_body(encode_point_cloud(cloud))
+
+    assert values.dtype == np.dtype("<f4")
+    assert values.shape == (2000, POINT_CLOUD_STRIDE)
+    assert bool(np.all(np.isfinite(values)))
+
+    intensity = values[:, 3]
+    assert float(intensity.min()) >= 0.0
+    assert float(intensity.max()) <= 1.0
+
+    phase = values[:, 4]
+    # float32, not double: np.angle returns exactly pi for a negative real
+    # amplitude, and float32(pi) is greater than pi in double, so a
+    # double-precision bound would be violated by a value the encoder is
+    # entitled to write. The decoder uses Math.fround(Math.PI) for the same
+    # reason.
+    bound = np.float32(np.pi)
+    assert float(bound) > float(np.pi)
+    assert float(np.abs(phase).max()) <= float(bound)
+    # Guard against a vacuous assertion: an m=1 complex orbital has phase
+    # e^{i phi} with phi uniform, so the samples must actually reach the
+    # branch cut this bound is about.
+    assert float(np.ptp(phase)) > 6.0

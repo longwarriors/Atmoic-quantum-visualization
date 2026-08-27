@@ -70,6 +70,63 @@ export function readFiniteHeader(headers: Headers, name: string, range: HeaderRa
   return value
 }
 
+/**
+ * The inclusive phase bound, and the reason it is not `Math.PI`.
+ *
+ * The server writes `float32(np.angle(psi))`, and `np.angle` returns exactly
+ * `pi` for a negative real amplitude. Rounded to float32 that becomes
+ * 3.1415927410125732, which is *greater* than the double `Math.PI`
+ * (3.141592653589793). A bound of `Math.PI` would therefore reject payloads the
+ * encoder is entitled to produce, so the comparison happens in the precision
+ * the wire format actually uses.
+ */
+export const MAX_PHASE = Math.fround(Math.PI)
+
+function requireFinite(field: string, index: number, value: number): void {
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `QVPC payload is invalid: ${field} at sample ${index} is ${value}, not a finite number.`,
+    )
+  }
+}
+
+/**
+ * Validate one decoded record.
+ *
+ * The header can be flawless while the body carries NaN coordinates or a phase
+ * outside the branch cut: those reach the GPU as invisible points and as hues
+ * that no longer mean what the legend says they mean. Failing loudly here, with
+ * the field name and the sample index, keeps a broken response from being
+ * rendered as if it were physics.
+ */
+function validateSample(
+  index: number,
+  x: number,
+  y: number,
+  z: number,
+  intensity: number,
+  phase: number,
+): void {
+  requireFinite('x', index, x)
+  requireFinite('y', index, y)
+  requireFinite('z', index, z)
+  requireFinite('intensity', index, intensity)
+  requireFinite('phase', index, phase)
+  // `< 0` rather than `<= 0`: -0 is a legitimate zero intensity that float32
+  // round-trips, while -1e-7 is a real contract break.
+  if (intensity < 0 || intensity > 1) {
+    throw new Error(
+      `QVPC payload is invalid: intensity at sample ${index} is ${intensity}, outside [0, 1].`,
+    )
+  }
+  if (phase < -MAX_PHASE || phase > MAX_PHASE) {
+    throw new Error(
+      `QVPC payload is invalid: phase at sample ${index} is ${phase}, ` +
+        `outside [-${MAX_PHASE}, ${MAX_PHASE}], the float32 [-pi, pi] range.`,
+    )
+  }
+}
+
 export function parsePointCloud(
   buffer: ArrayBuffer,
   headers: Headers,
@@ -109,6 +166,14 @@ export function parsePointCloud(
   for (let index = 0; index < count; index += 1) {
     const source = index * stride
     const target = index * 3
+    validateSample(
+      index,
+      interleaved[source],
+      interleaved[source + 1],
+      interleaved[source + 2],
+      interleaved[source + 3],
+      interleaved[source + 4],
+    )
     positions[target] = interleaved[source]
     positions[target + 1] = interleaved[source + 1]
     positions[target + 2] = interleaved[source + 2]

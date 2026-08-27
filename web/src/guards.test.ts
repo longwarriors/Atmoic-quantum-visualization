@@ -123,7 +123,7 @@ const isTestFile = (path: string): boolean => TEST_FILE.test(path)
  * second piece of gating logic that could be narrowed independently of what
  * the deep-equal test binds to the declared config.
  */
-const EXPECTED_COVERAGE_INCLUDE = ['src/api/**/*.ts', 'src/scene/**/*.ts']
+const EXPECTED_COVERAGE_INCLUDE = ['src/**/*.ts', 'src/**/*.tsx']
 const EXPECTED_COVERAGE_EXCLUDE = [
   'src/**/*.{test,spec}.{ts,tsx}',
   'src/**/__tests__/**',
@@ -212,16 +212,51 @@ const EXPECTED_GLOBAL_SETUP = ['./scripts/capture-resolved-coverage.mjs']
 const RUNTIME_EXTENSION = /\.(?:[mc]?[jt]sx?)$/
 
 /**
- * Per gated root, the runtime extensions a module there may carry. The rule
- * differs by root and the difference is deliberate: `src/scene/**` holds
- * React/three components that need a WebGL/DOM harness this suite does not
- * provide (they are PR-8, see vitest.config.ts), so `.tsx` there is expected;
- * `src/api/**` is plain TypeScript with no JSX, so anything but `.ts` is a
- * scope leak rather than a component.
+ * The root `gatedRootOf` returns for an include pattern whose directory
+ * segment is the globstar (`src/**...`): not a directory name, but "every
+ * directory under src/, and src/ itself".
+ *
+ * Spelled as a named constant because the difference between this value and a
+ * real directory name is the whole of the bug the two helpers below exist to
+ * prevent: as a bare string it looks like just another root, and `path
+ * .startsWith('**' + '/')` -- which is what the guard used to do -- is false
+ * for every path there is.
+ */
+const ALL_OF_SRC = '**'
+
+/**
+ * The directory a `coverage.include` pattern gates, as a `walk()`-relative
+ * root: the segment after `src/`. `src/api/**\/*.ts` gates `api`;
+ * `src/**\/*.ts` gates ALL_OF_SRC.
+ */
+const gatedRootOf = (pattern: string): string => pattern.split('/')[1] ?? ''
+
+/**
+ * Is this walked path (posix, relative to src/) inside the given gated root?
+ *
+ * ALL_OF_SRC is every path, including one with no directory component at all
+ * (`main.tsx`). A named root matches its own directory only, which is why the
+ * test is `root + '/'` rather than `root`: `apifoo/x.ts` is not in `api/`, and
+ * the directory entry `api` is not a file inside it.
+ */
+const isUnderGatedRoot = (root: string, path: string): boolean =>
+  root === ALL_OF_SRC || path.startsWith(`${root}/`)
+
+/**
+ * Per gated root, the runtime extensions a module there may carry.
+ *
+ * `coverage.include` matches `.ts` and `.tsx` anywhere under src/, so the one
+ * root there is to police is ALL_OF_SRC and those are the two extensions that
+ * belong in it. Everything else Vite will happily execute -- `.mts`, `.cts`,
+ * `.js`, `.mjs`, `.cjs`, `.jsx` -- is instrumented by nothing and held to no
+ * threshold, so it is a scope leak wherever it sits.
+ *
+ * Kept as a per-root map rather than one flat list because narrowing the
+ * include back to named directories must come with a per-directory policy
+ * again, and an unlisted root fails the lookup instead of going unchecked.
  */
 const ALLOWED_RUNTIME_EXTENSIONS = new Map<string, readonly string[]>([
-  ['api', ['.ts']],
-  ['scene', ['.ts', '.tsx']],
+  [ALL_OF_SRC, ['.ts', '.tsx']],
 ])
 
 /**
@@ -726,6 +761,70 @@ describe('guard patterns (positive controls)', () => {
   })
 })
 
+describe('gated root derivation (positive controls)', () => {
+  // `keeps every runtime module under a gated root inside the coverage
+  // include` below derives, from each coverage.include pattern, the directory
+  // whose files it has to police. That derivation used to be two inline
+  // expressions -- `pattern.split('/')[1]` and `path.startsWith(root + '/')`
+  // -- and it went VACUOUS the moment the include patterns stopped naming a
+  // directory: for `src/**/*.ts` the root is the literal string `**`, no
+  // walked path begins `**/`, the inner loop bodies never run, `leaked` stays
+  // empty and the whole guard passes while checking nothing. It would have
+  // reported green with `src/components/Inspector.mts` on disk.
+  //
+  // So the two steps are named functions with controls of their own. The
+  // controls are what make the guard non-vacuous: they assert the helpers say
+  // TRUE for paths the guard must look at, in the exact shape the include
+  // patterns take today.
+  it('derives the root each coverage.include pattern gates', () => {
+    expect(gatedRootOf('src/api/**/*.ts')).toBe('api')
+    expect(gatedRootOf('src/scene/**/*.ts')).toBe('scene')
+    expect(gatedRootOf('src/scene/shaders/**/*.ts')).toBe('scene')
+    // The shape the include takes today: the second segment IS the globstar.
+    expect(gatedRootOf('src/**/*.ts')).toBe(ALL_OF_SRC)
+    expect(gatedRootOf('src/**/*.tsx')).toBe(ALL_OF_SRC)
+  })
+
+  it('reads a globstar root as all of src, so no directory escapes the extension check', () => {
+    // Each of these is a path the naive `startsWith('**/')` filter skipped,
+    // and each is a place a `.mts` / `.cts` / `.js` module parks executable
+    // code that `coverage.include` (which matches `*.ts` / `*.tsx` only)
+    // never measures.
+    for (const path of [
+      'components/Inspector.mts',
+      'state/useSceneStore.cts',
+      'api/client.ts',
+      'scene/shaders/orbitalPoints.ts',
+      'main.tsx',
+      '.hidden.js',
+    ]) {
+      expect(isUnderGatedRoot(ALL_OF_SRC, path), path).toBe(true)
+      // ... and the naive filter this replaces said no to every one of them,
+      // which is why the guard could not have gone red on any of them.
+      expect(path.startsWith(`${ALL_OF_SRC}/`), `${path} (naive filter)`).toBe(false)
+    }
+  })
+
+  it('keeps a named root confined to its own directory', () => {
+    expect(isUnderGatedRoot('api', 'api/client.ts')).toBe(true)
+    expect(isUnderGatedRoot('api', 'api/nested/deep.mts')).toBe(true)
+    expect(isUnderGatedRoot('api', 'scene/color.ts')).toBe(false)
+    // A prefix is not a directory: `apifoo/` is a different root.
+    expect(isUnderGatedRoot('api', 'apifoo/x.ts')).toBe(false)
+    // The directory entry itself is not a file under it.
+    expect(isUnderGatedRoot('api', 'api')).toBe(false)
+  })
+
+  it('gives every root the canonical include gates an extension policy', () => {
+    // The lookup the guard makes. Stated here as well so that widening
+    // coverage.include to a root nobody wrote a policy for fails with this
+    // message rather than as a silently empty `leaked` list.
+    for (const pattern of EXPECTED_COVERAGE_INCLUDE) {
+      expect(ALLOWED_RUNTIME_EXTENSIONS.get(gatedRootOf(pattern)), pattern).toBeDefined()
+    }
+  })
+})
+
 describe('scan scope', () => {
   it('includes this guard file and every committed spec', () => {
     expect(testFiles).toContain('guards.test.ts')
@@ -755,7 +854,19 @@ describe('scan scope', () => {
     // gated like any other module and carries an import-and-assert spec.
     expect(coverageGatedSources).toContain('scene/shaders/orbitalPoints.ts')
     expect(coverageGatedSources).not.toContain('api/qvpc.test.ts')
-    expect(coverageGatedSources.some((path) => path.endsWith('.tsx'))).toBe(false)
+    // The React/three layer, gated from PR-8A on. This assertion is the
+    // INVERSE of the one it replaces (`.some(endsWith('.tsx'))` had to be
+    // false, because .tsx was outside the gate on the stated grounds that
+    // there was no DOM harness). That carve-out was a documented escape --
+    // move a gated module's body into src/components/ or src/state/, leave a
+    // one-line re-export, and the gated module reports 100% with every gate
+    // green (reproduced) -- so the fix was to gate the layer, not to guard
+    // the carve-out. A component named here explicitly so that narrowing the
+    // include back to `src/api/**` + `src/scene/**` fails on a name a reader
+    // recognises, not only on the manifest diff.
+    expect(coverageGatedSources).toContain('components/Inspector.tsx')
+    expect(coverageGatedSources).toContain('state/useSceneStore.ts')
+    expect(coverageGatedSources.filter((path) => path.endsWith('.tsx')).length).toBeGreaterThan(0)
   })
 
   it('pragma-scans the coverage-gated modules plus api/types.ts, and nothing else', () => {
@@ -850,25 +961,28 @@ describe('scan scope', () => {
   })
 
   it('keeps every runtime module under a gated root inside the coverage include', () => {
-    // `coverage.include` matches `*.ts` under api/ and scene/ and nothing
-    // else, so ANY other runtime-capable extension parks executable code
-    // outside every per-file threshold AND outside the pragma scan --
-    // measured for `.mts`, `.cts` and `.js`, each of which left `npm test`
-    // green with an uncovered exported function in it. This used to test one
-    // extension (`.tsx` under api/), which is the one leak the API layer
-    // would never actually use.
+    // `coverage.include` matches `*.ts` / `*.tsx` and nothing else, so ANY
+    // other runtime-capable extension parks executable code outside every
+    // per-file threshold AND outside the pragma scan -- measured for `.mts`,
+    // `.cts` and `.js`, each of which left `npm test` green with an uncovered
+    // exported function in it.
     //
     // The gated roots are derived from EXPECTED_COVERAGE_INCLUDE rather than
     // written out again, so a root added to the include patterns must be
-    // given an explicit policy here instead of silently going unchecked.
+    // given an explicit policy here instead of silently going unchecked. That
+    // derivation is `gatedRootOf` / `isUnderGatedRoot`, with controls of their
+    // own in "gated root derivation" above: as two inline expressions it went
+    // VACUOUS under a `src/**` include, because the derived root was the
+    // literal `**` and no path starts with `**/`.
     //
     // Spec files are skipped: they are excluded from coverage on purpose and
     // are not a way in, because vitest collects every one of them and
     // scripts/assert-no-skips.mjs fails a spec file that ran zero tests, so
     // runtime code cannot sit in one unexercised.
     const leaked: string[] = []
+    const inspected = new Set<string>()
     for (const pattern of EXPECTED_COVERAGE_INCLUDE) {
-      const root = pattern.split('/')[1]
+      const root = gatedRootOf(pattern)
       const allowed = ALLOWED_RUNTIME_EXTENSIONS.get(root)
       expect(
         allowed,
@@ -876,9 +990,10 @@ describe('scan scope', () => {
           'add one saying which runtime extensions belong there',
       ).toBeDefined()
       for (const path of allFiles) {
-        if (!path.startsWith(`${root}/`) || isTestFile(path) || !RUNTIME_EXTENSION.test(path)) {
+        if (!isUnderGatedRoot(root, path) || isTestFile(path) || !RUNTIME_EXTENSION.test(path)) {
           continue
         }
+        inspected.add(path)
         const extension = path.slice(path.lastIndexOf('.'))
         if (!allowed?.includes(extension)) {
           leaked.push(`${path} (${extension} is not gated under ${root}/, ${pattern} matches .ts)`)
@@ -891,6 +1006,16 @@ describe('scan scope', () => {
         'no per-file threshold and never scanned for coverage pragmas. Rename to .ts, or widen ' +
         'coverage.include and coverage-scope.json in the same reviewed commit',
     ).toEqual([])
+    // An empty `leaked` means "nothing leaked" only if the loop looked at
+    // something. When the root derivation went vacuous it did not, and this
+    // is the assertion that says so out loud: every production module under
+    // src/ is a runtime module under ALL_OF_SRC, so the count is the whole
+    // non-spec tree, not a handful of api/ and scene/ files.
+    expect(
+      inspected.size,
+      'the extension check inspected fewer files than the gated set itself -- the gated-root ' +
+        'derivation has gone vacuous and this guard is asserting nothing',
+    ).toBeGreaterThanOrEqual(coverageGatedSources.length)
   })
 
   it('binds the coverage-gated derivation to the real coverage.include / coverage.exclude in vitest.config.ts', () => {

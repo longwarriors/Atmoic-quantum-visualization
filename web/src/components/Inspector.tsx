@@ -6,10 +6,63 @@ interface InspectorProps {
   status: SceneStatus
 }
 
-function formatCoefficient(value: number): string {
-  if (value === 0) return '0.000'
-  const magnitude = Math.abs(value)
-  return magnitude < 0.001 || magnitude >= 1_000 ? value.toExponential(2) : value.toFixed(3)
+/** What a non-finite (or absent) number is displayed as. Never "NaN"/"Infinity". */
+const PLACEHOLDER = '—'
+
+type NumericStyle =
+  /** Fixed decimals, for numbers whose scale is known (energies, extents, times). */
+  | { kind: 'fixed'; digits: number }
+  /** Scientific notation, for residuals and bounds that span many decades. */
+  | { kind: 'exponential'; digits: number }
+  /**
+   * Fixed decimals near unity, scientific notation outside [1e-3, 1e3): the
+   * amplitude/coefficient style, so a retained tiny amplitude never reads as
+   * an exact zero.
+   */
+  | { kind: 'magnitude'; digits: number }
+  /** Whole counts, grouped for readability. */
+  | { kind: 'count' }
+
+/**
+ * The one numeric formatter this panel uses.
+ *
+ * Every numeric cell goes through it so a non-finite value cannot reach the
+ * screen as "NaN" or "Infinity" dressed up in units — a NaN energy rendered as
+ * "NaN Ha" reads like a measurement, and an "Infinity" bound reads like a
+ * proven one. Both are the absence of a number, and are shown as such. Routing
+ * every site here also means the guard exists in exactly one place: weaken it
+ * and every non-finite case in Inspector.test.tsx fails at once.
+ */
+function formatFinite(value: number | undefined, style: NumericStyle): string {
+  if (value === undefined || !Number.isFinite(value)) return PLACEHOLDER
+  switch (style.kind) {
+    case 'fixed':
+      return value.toFixed(style.digits)
+    case 'exponential':
+      return value.toExponential(style.digits)
+    case 'count':
+      return value.toLocaleString()
+    case 'magnitude': {
+      const magnitude = Math.abs(value)
+      return magnitude !== 0 && (magnitude < 0.001 || magnitude >= 1_000)
+        ? value.toExponential(style.digits - 1)
+        : value.toFixed(style.digits)
+    }
+  }
+}
+
+/**
+ * `formatFinite` plus a unit, dropped when there is no number: "— Ha" would
+ * still assert that a hartree value was measured.
+ */
+function formatFiniteUnit(
+  value: number | undefined,
+  style: NumericStyle,
+  unit: string,
+  separator = ' ',
+): string {
+  const text = formatFinite(value, style)
+  return text === PLACEHOLDER ? text : `${text}${separator}${unit}`
 }
 
 function formatSuperpositionTerms(terms: NonNullable<SceneStatus['superposition']>['terms']): string {
@@ -17,7 +70,7 @@ function formatSuperpositionTerms(terms: NonNullable<SceneStatus['superposition'
   for (const term of terms) {
     const ket = `|${term.n},${term.l},${term.m}⟩`
     if (term.coefficient_imag === 0) {
-      const body = `${formatCoefficient(Math.abs(term.coefficient_real))}${ket}`
+      const body = `${formatFinite(Math.abs(term.coefficient_real), { kind: 'magnitude', digits: 3 })}${ket}`
       if (!label) {
         label = term.coefficient_real < 0 ? `-${body}` : body
       } else {
@@ -26,10 +79,14 @@ function formatSuperpositionTerms(terms: NonNullable<SceneStatus['superposition'
       continue
     }
 
+    // -0 would print as "-0.000" and read as a signed amplitude; the imaginary
+    // part is non-zero here by construction, so it needs no such guard.
     const real = term.coefficient_real === 0 ? 0 : term.coefficient_real
-    const imag = term.coefficient_imag === 0 ? 0 : term.coefficient_imag
+    const imag = term.coefficient_imag
     const imagSign = imag >= 0 ? '+' : '-'
-    const body = `(${formatCoefficient(real)}${imagSign}${formatCoefficient(Math.abs(imag))}i)${ket}`
+    const realText = formatFinite(real, { kind: 'magnitude', digits: 3 })
+    const imagText = formatFinite(Math.abs(imag), { kind: 'magnitude', digits: 3 })
+    const body = `(${realText}${imagSign}${imagText}i)${ket}`
     label += label ? `  +  ${body}` : body
   }
   return label
@@ -71,7 +128,7 @@ export function Inspector({ status }: InspectorProps) {
           <p>{subtitle}</p>
         </div>
         <span className="energy-pill">
-          {energy !== undefined ? `${energy.toFixed(6)} Ha` : '—'}
+          {formatFiniteUnit(energy, { kind: 'fixed', digits: 6 }, 'Ha')}
         </span>
       </div>
 
@@ -90,9 +147,15 @@ export function Inspector({ status }: InspectorProps) {
           <Database size={15} />
           <span>Asset size</span>
           <strong>
-            {status.pointCount !== undefined ? `${status.pointCount.toLocaleString()} pts` : null}
-            {status.triangleCount !== undefined ? `${status.triangleCount.toLocaleString()} tris` : null}
-            {status.lineCount !== undefined ? `${status.lineCount.toLocaleString()} lines` : null}
+            {status.pointCount !== undefined
+              ? formatFiniteUnit(status.pointCount, { kind: 'count' }, 'pts')
+              : null}
+            {status.triangleCount !== undefined
+              ? formatFiniteUnit(status.triangleCount, { kind: 'count' }, 'tris')
+              : null}
+            {status.lineCount !== undefined
+              ? formatFiniteUnit(status.lineCount, { kind: 'count' }, 'lines')
+              : null}
             {status.pointCount === undefined &&
             status.triangleCount === undefined &&
             status.lineCount === undefined
@@ -103,7 +166,7 @@ export function Inspector({ status }: InspectorProps) {
         <div className="metric-card">
           <Gauge size={15} />
           <span>Extent</span>
-          <strong>{Number.isFinite(status.extentBohr) ? `${status.extentBohr?.toFixed(2)} bohr` : '—'}</strong>
+          <strong>{formatFiniteUnit(status.extentBohr, { kind: 'fixed', digits: 2 }, 'bohr')}</strong>
         </div>
       </div>
 
@@ -113,17 +176,52 @@ export function Inspector({ status }: InspectorProps) {
         <div><dt>Length unit</dt><dd>{metadata?.length_unit ?? mixture?.length_unit ?? '—'}</dd></div>
         <div><dt>Geometry</dt><dd>{metadata?.geometry_semantics ?? mixture?.geometry_semantics ?? '—'}</dd></div>
         <div><dt>Color</dt><dd>{metadata?.color_semantics ?? mixture?.color_semantics ?? '—'}</dd></div>
+        {/*
+          The scales the superposition was actually built with. a_mu = m_e/mu is
+          the dimensionless reduced-Bohr scale in ordinary bohr, and the reduced
+          mass ratio mu/m_e is its reciprocal: both are reported, read-only,
+          because they set the length and energy scales of everything above.
+        */}
+        {mixture ? (
+          <div><dt>Nuclear charge Z</dt><dd>{formatFinite(mixture.z, { kind: 'magnitude', digits: 3 })}</dd></div>
+        ) : null}
+        {mixture ? (
+          <div><dt>Reduced-Bohr scale a_μ</dt><dd>{formatFinite(mixture.a_mu, { kind: 'magnitude', digits: 3 })}</dd></div>
+        ) : null}
+        {mixture ? (
+          <div>
+            <dt>Reduced mass ratio</dt>
+            <dd>{formatFinite(mixture.reduced_mass_ratio, { kind: 'magnitude', digits: 3 })}</dd>
+          </div>
+        ) : null}
         {status.radialMass !== undefined ? (
-          <div><dt>Radial mass</dt><dd>{(status.radialMass * 100).toFixed(5)}%</dd></div>
+          <div>
+            <dt>Radial mass</dt>
+            <dd>{formatFiniteUnit(status.radialMass * 100, { kind: 'fixed', digits: 5 }, '%', '')}</dd>
+          </div>
         ) : null}
         {status.capturedProbabilityMass !== undefined ? (
-          <div><dt>Superlevel mass</dt><dd>{(status.capturedProbabilityMass * 100).toFixed(3)}%</dd></div>
+          <div>
+            <dt>Superlevel mass</dt>
+            <dd>
+              {formatFiniteUnit(status.capturedProbabilityMass * 100, { kind: 'fixed', digits: 3 }, '%', '')}
+            </dd>
+          </div>
         ) : null}
         {status.finiteGridDensityIntegral !== undefined ? (
-          <div><dt>Finite-grid ∫ρdV</dt><dd>{status.finiteGridDensityIntegral.toFixed(6)}</dd></div>
+          <div>
+            <dt>Finite-grid ∫ρdV</dt>
+            <dd>{formatFinite(status.finiteGridDensityIntegral, { kind: 'fixed', digits: 6 })}</dd>
+          </div>
         ) : null}
         {status.gridResolution !== undefined ? (
-          <div><dt>Grid</dt><dd>{status.gridResolution}³ · Δ={status.gridSpacingBohr?.toFixed(3)} bohr</dd></div>
+          <div>
+            <dt>Grid</dt>
+            <dd>
+              {formatFinite(status.gridResolution, { kind: 'count' })}³ · Δ=
+              {formatFiniteUnit(status.gridSpacingBohr, { kind: 'fixed', digits: 3 }, 'bohr')}
+            </dd>
+          </div>
         ) : null}
         {status.finiteGridMassStatus !== undefined ? (
           <div>
@@ -134,29 +232,53 @@ export function Inspector({ status }: InspectorProps) {
         {status.finiteGridReportingTolerance !== undefined ? (
           <div>
             <dt>Grid report threshold</dt>
-            <dd>{status.finiteGridReportingTolerance.toExponential(3)}</dd>
+            <dd>{formatFinite(status.finiteGridReportingTolerance, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteGridMassErrorLowerBound !== undefined ? (
           <div>
             <dt>Grid mass error ≥</dt>
-            <dd>{status.finiteGridMassErrorLowerBound.toExponential(3)}</dd>
+            <dd>{formatFinite(status.finiteGridMassErrorLowerBound, { kind: 'exponential', digits: 3 })}</dd>
+          </div>
+        ) : null}
+        {/*
+          Peak-to-peak upper envelope of the grid quadrature error over phase --
+          the "≤" companion of the aliasing lower bound below it.
+        */}
+        {status.finiteGridPhaseVariationBound !== undefined ? (
+          <div>
+            <dt>Grid phase variation ≤</dt>
+            <dd>{formatFinite(status.finiteGridPhaseVariationBound, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteGridAliasingVariationLowerBound !== undefined ? (
           <div>
             <dt>Grid alias variation ≥</dt>
-            <dd>{status.finiteGridAliasingVariationLowerBound.toExponential(3)}</dd>
+            <dd>
+              {formatFinite(status.finiteGridAliasingVariationLowerBound, { kind: 'exponential', digits: 3 })}
+            </dd>
+          </div>
+        ) : null}
+        {/* Probability outside the render box, bounded from the component tails. */}
+        {status.finiteBoxTailMassUpperBound !== undefined ? (
+          <div>
+            <dt>Finite-box tail mass ≤</dt>
+            <dd>{formatFinite(status.finiteBoxTailMassUpperBound, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteBoxMassVariationUpperBound !== undefined ? (
           <div>
             <dt>Finite-box variation ≤</dt>
-            <dd>{status.finiteBoxMassVariationUpperBound.toExponential(3)}</dd>
+            <dd>
+              {formatFinite(status.finiteBoxMassVariationUpperBound, { kind: 'exponential', digits: 3 })}
+            </dd>
           </div>
         ) : null}
         {status.timeAu !== undefined ? (
-          <div><dt>Time</dt><dd>{status.timeAu.toFixed(2)} a.u.</dd></div>
+          <div>
+            <dt>Time</dt>
+            <dd>{formatFiniteUnit(status.timeAu, { kind: 'fixed', digits: 2 }, 'a.u.')}</dd>
+          </div>
         ) : null}
         {status.superposition ? (
           <div>
@@ -170,28 +292,72 @@ export function Inspector({ status }: InspectorProps) {
           <div>
             <dt>⟨H⟩</dt>
             <dd>
-              {status.superposition.energy_expectation_hartree.toFixed(6)} Ha
+              {formatFiniteUnit(
+                status.superposition.energy_expectation_hartree,
+                { kind: 'fixed', digits: 6 },
+                'Ha',
+              )}
               {status.superposition.is_stationary ? ' · stationary density' : ''}
             </dd>
           </div>
         ) : null}
         {status.lineCount !== undefined ? (
-          <div><dt>Streamlines</dt><dd>{status.lineCount}</dd></div>
+          <div><dt>Streamlines</dt><dd>{formatFinite(status.lineCount, { kind: 'count' })}</dd></div>
         ) : null}
         {status.maxSpeed !== undefined ? (
-          <div><dt>Max |j|/ρ</dt><dd>{status.maxSpeed.toExponential(3)} a.u.</dd></div>
+          <div>
+            <dt>Max |j|/ρ</dt>
+            <dd>{formatFiniteUnit(status.maxSpeed, { kind: 'exponential', digits: 3 }, 'a.u.')}</dd>
+          </div>
         ) : null}
+        {/*
+          The residual is a ratio, so its numerator (the absolute residual of
+          ∂ρ/∂t + ∇·j), its denominator and the denominator's kind are shown
+          next to it: a dimensionless 1e-6 means nothing without the scale it
+          was divided by, and the probe/phase counts say how much of the domain
+          the audit actually sampled.
+        */}
         {status.continuityResidual !== undefined ? (
-          <div><dt>Continuity residual</dt><dd>{status.continuityResidual.toExponential(2)}</dd></div>
+          <div>
+            <dt>Continuity residual</dt>
+            <dd>{formatFinite(status.continuityResidual, { kind: 'exponential', digits: 2 })}</dd>
+          </div>
+        ) : null}
+        {status.continuityAbsoluteResidual !== undefined ? (
+          <div>
+            <dt>Continuity |residual|</dt>
+            <dd>{formatFinite(status.continuityAbsoluteResidual, { kind: 'exponential', digits: 3 })}</dd>
+          </div>
+        ) : null}
+        {status.continuityScale !== undefined ? (
+          <div>
+            <dt>Continuity scale</dt>
+            <dd>{formatFinite(status.continuityScale, { kind: 'exponential', digits: 3 })}</dd>
+          </div>
         ) : null}
         {status.continuityScaleKind !== undefined ? (
           <div>
-            <dt>Continuity scale</dt>
+            <dt>Continuity scale kind</dt>
             <dd>{status.continuityScaleKind.replaceAll('_', ' ')}</dd>
           </div>
         ) : null}
+        {status.continuityProbeCount !== undefined ? (
+          <div>
+            <dt>Continuity probes</dt>
+            <dd>{formatFinite(status.continuityProbeCount, { kind: 'count' })}</dd>
+          </div>
+        ) : null}
+        {status.continuityPhaseCount !== undefined ? (
+          <div>
+            <dt>Continuity phase samples</dt>
+            <dd>{formatFinite(status.continuityPhaseCount, { kind: 'count' })}</dd>
+          </div>
+        ) : null}
         {status.densityLevel !== undefined ? (
-          <div><dt>Density level</dt><dd>{status.densityLevel.toExponential(3)}</dd></div>
+          <div>
+            <dt>Density level</dt>
+            <dd>{formatFinite(status.densityLevel, { kind: 'exponential', digits: 3 })}</dd>
+          </div>
         ) : null}
       </dl>
 

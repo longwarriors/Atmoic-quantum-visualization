@@ -24,11 +24,20 @@ import {
   fetchMetadata,
   fetchPointCloud,
   fetchSuperpositionCatalog,
+  fetchSuperpositionCurrentField,
   fetchSuperpositionIsosurface,
   parsePointCloud,
 } from './client'
 import { parsePointCloud as parsePointCloudFromQvpc } from './qvpc'
-import type { OrbitalMetadata, OrbitalParameters } from './types'
+import type {
+  CurrentFieldPayload,
+  OrbitalMetadata,
+  OrbitalParameters,
+  SceneStatus,
+  StreamlineGeometry,
+  SuperpositionCurrentPayload,
+  SuperpositionMetadata,
+} from './types'
 
 const goldenUrl = new URL('../../../tests/fixtures/qvpc_golden.bin', import.meta.url)
 const goldenSpec = JSON.parse(
@@ -54,6 +63,28 @@ const metadata: OrbitalMetadata = {
   spherical_harmonic_convention: 'condon-shortley',
   geometry_semantics: 'samples',
   color_semantics: 'phase',
+  references: ['griffiths2018'],
+  warnings: [],
+}
+
+const superpositionMetadata: SuperpositionMetadata = {
+  terms: [{ n: 2, l: 0, m: 0, coefficient_real: 1, coefficient_imag: 0 }],
+  label: '2s',
+  basis: 'complex',
+  z: 1,
+  a_mu: 1,
+  reduced_mass_ratio: 1,
+  time_au: 0,
+  energy_expectation_hartree: -0.125,
+  is_stationary: true,
+  length_unit: 'bohr',
+  observable: 'probability_current',
+  representation: 'streamlines',
+  normalization: 'unit',
+  coordinate_convention: 'physics',
+  spherical_harmonic_convention: 'condon-shortley',
+  geometry_semantics: 'streamlines',
+  color_semantics: 'speed',
   references: ['griffiths2018'],
   warnings: [],
 }
@@ -401,21 +432,45 @@ describe('fetchSuperpositionCatalog', () => {
   })
 })
 
+/**
+ * The superposition terms string as it is spelled in a query: `+`, `;` and `:`
+ * survive the round trip, and a `+` decoded to a space is a *different*
+ * superposition, so the encoded form is pinned literally.
+ */
+const terms = '2,0,0:1+0j;2,1,0:0+1j'
+const encodedTerms = encodeURIComponent(terms).replace(/%20/g, '+')
+
 describe('fetchSuperpositionIsosurface', () => {
   const payload = { vertices: [], normals: [], faces: [], phase: [], density_level: 0.01 }
-  const terms = '2,0,0:1+0j;2,1,0:0+1j'
 
-  it('requests the superposition isosurface with the terms string URL-encoded', async () => {
+  /**
+   * Every knob `/superposition/isosurface` accepts must be on the wire.
+   * Omitting one does not fail: FastAPI substitutes its own default (basis
+   * complex, z 1, a_mu 1, probability_mass 0.90), so a UI control the client
+   * silently drops shows a picture of a *different* state with no error at
+   * all. The whole query string is asserted, not a subset, because a
+   * per-key check passes just as happily while a key is missing.
+   */
+  it('requests the superposition isosurface with every server-side knob', async () => {
     routeFetch({ '/api/superposition/isosurface': () => jsonResponse(payload) })
     const controller = new AbortController()
 
-    const result = await fetchSuperpositionIsosurface(terms, 1.25, 64, controller.signal)
+    const result = await fetchSuperpositionIsosurface(terms, 1.25, 64, 'real', 2, 1.5, 0.75, controller.signal)
 
     const { url, init } = requestTo('/api/superposition/isosurface')
-    // `+`, `;` and `:` must survive the round trip: a terms string that reaches
-    // the server with its `+` decoded to a space is a different superposition.
     expect(url.searchParams.get('terms')).toBe(terms)
-    expect(url.search).toBe(`?terms=${encodeURIComponent(terms).replace(/%20/g, '+')}&time=1.25&resolution=64`)
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      terms,
+      time: '1.25',
+      resolution: '64',
+      basis: 'real',
+      z: '2',
+      a_mu: '1.5',
+      probability_mass: '0.75',
+    })
+    expect(url.search).toBe(
+      `?terms=${encodedTerms}&time=1.25&resolution=64&basis=real&z=2&a_mu=1.5&probability_mass=0.75`,
+    )
     expect(init).toEqual({ signal: controller.signal })
     expect(result).toEqual(payload)
   })
@@ -424,14 +479,154 @@ describe('fetchSuperpositionIsosurface', () => {
     routeFetch({
       '/api/superposition/isosurface': () => errorResponse('terms: unparsable', 422),
     })
-    await expect(fetchSuperpositionIsosurface('nonsense', 0, 64)).rejects.toThrow(
-      serverError('terms: unparsable'),
-    )
+    await expect(
+      fetchSuperpositionIsosurface('nonsense', 0, 64, 'complex', 1, 1, 0.9),
+    ).rejects.toThrow(serverError('terms: unparsable'))
   })
 
   it('propagates a network failure unchanged', async () => {
     const failure = new TypeError('fetch failed')
     fetchMock.mockRejectedValue(failure)
-    await expect(fetchSuperpositionIsosurface(terms, 0, 64)).rejects.toBe(failure)
+    await expect(fetchSuperpositionIsosurface(terms, 0, 64, 'complex', 1, 1, 0.9)).rejects.toBe(
+      failure,
+    )
+  })
+})
+
+describe('fetchSuperpositionCurrentField', () => {
+  const payload = {
+    metadata: superpositionMetadata,
+    lines: [],
+    speed: [],
+    seed_count: 0,
+    max_speed: 0,
+  }
+
+  /**
+   * `/superposition/current-field` takes the same state knobs as the
+   * isosurface route plus `seed_count`; the same silent-default hazard
+   * applies, so the full query is pinned here too.
+   */
+  it('requests the superposition current field with every server-side knob', async () => {
+    routeFetch({ '/api/superposition/current-field': () => jsonResponse(payload) })
+    const controller = new AbortController()
+
+    const result = await fetchSuperpositionCurrentField(terms, 1.25, 48, 'real', 2, 1.5, controller.signal)
+
+    const { url, init } = requestTo('/api/superposition/current-field')
+    expect(url.searchParams.get('terms')).toBe(terms)
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      terms,
+      time: '1.25',
+      seed_count: '48',
+      basis: 'real',
+      z: '2',
+      a_mu: '1.5',
+    })
+    expect(url.search).toBe(
+      `?terms=${encodedTerms}&time=1.25&seed_count=48&basis=real&z=2&a_mu=1.5`,
+    )
+    expect(init).toEqual({ signal: controller.signal })
+    expect(result).toEqual(payload)
+  })
+
+  it('rejects with the server error body on an HTTP error', async () => {
+    routeFetch({
+      '/api/superposition/current-field': () => errorResponse('terms: unparsable', 422),
+    })
+    await expect(
+      fetchSuperpositionCurrentField('nonsense', 0, 24, 'complex', 1, 1),
+    ).rejects.toThrow(serverError('terms: unparsable'))
+  })
+
+  it('propagates a network failure unchanged', async () => {
+    const failure = new TypeError('fetch failed')
+    fetchMock.mockRejectedValue(failure)
+    await expect(fetchSuperpositionCurrentField(terms, 0, 24, 'complex', 1, 1)).rejects.toBe(
+      failure,
+    )
+  })
+})
+
+/**
+ * Both current-field payloads must satisfy the one `StreamlineGeometry`
+ * shape the renderer consumes, so a renderer written against it accepts the
+ * stationary and the time-dependent field alike. Structural assignability is
+ * a compile-time claim; it is spelled at run time as two values flowing
+ * through a function typed on the shared interface, which is what a
+ * `tsc`-less `vitest run` can still hold.
+ */
+describe('StreamlineGeometry', () => {
+  const readGeometry = (geometry: StreamlineGeometry): number => geometry.max_speed
+
+  it('is the shape shared by the stationary and the superposition current payloads', () => {
+    const stationary: CurrentFieldPayload = {
+      metadata,
+      lines: [[[0, 0, 0]]],
+      speed: [[0.5]],
+      seed_count: 1,
+      max_speed: 0.5,
+      arc_step_bohr: 0.1,
+      seed_density_floor: 0,
+      extent_bohr: 10,
+      continuity_residual: 0,
+      continuity_absolute_residual: 0,
+      continuity_scale: 1,
+      continuity_scale_kind: 'stationary_current',
+      continuity_probe_count: 4,
+      integration_rule: 'rk4_arc_length',
+    }
+    const superposed: SuperpositionCurrentPayload = {
+      ...stationary,
+      metadata: superpositionMetadata,
+      max_speed: 0.25,
+      continuity_scale_kind: 'transition_coherence',
+      continuity_phase_count: 4,
+      density_rate_scale: 2,
+    }
+
+    expect(readGeometry(stationary)).toBeCloseTo(0.5, 12)
+    expect(readGeometry(superposed)).toBeCloseTo(0.25, 12)
+    expect(superposed.lines).toEqual(stationary.lines)
+    expect(superposed.speed).toEqual(stationary.speed)
+  })
+})
+
+/**
+ * The three fields the status bar needs in order to stop lying while a
+ * refetch is in flight: whether the numbers on screen are being replaced
+ * (`refreshing`), which time the frame *actually* shows as opposed to the
+ * time the slider sits at (`renderedTimeAu`), and why a requested
+ * representation produced nothing (`unavailable`). All optional, so a status
+ * built without them stays valid.
+ */
+describe('SceneStatus truthfulness fields', () => {
+  it('carries refreshing, renderedTimeAu and a reasoned unavailability', () => {
+    const status: SceneStatus = {
+      loading: false,
+      refreshing: true,
+      timeAu: 3.5,
+      renderedTimeAu: 1.25,
+      unavailable: {
+        kind: 'point_cloud',
+        reason: 'superposition point clouds are not implemented',
+      },
+    }
+
+    expect(status.refreshing).toBe(true)
+    expect(status.renderedTimeAu).toBeCloseTo(1.25, 12)
+    expect(status.renderedTimeAu).not.toBe(status.timeAu)
+    expect(status.unavailable).toEqual({
+      kind: 'point_cloud',
+      reason: 'superposition point clouds are not implemented',
+    })
+  })
+
+  it('stays valid with none of them set', () => {
+    const status: SceneStatus = { loading: true }
+
+    expect(status.refreshing).toBeUndefined()
+    expect(status.renderedTimeAu).toBeUndefined()
+    expect(status.unavailable).toBeUndefined()
   })
 })

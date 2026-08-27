@@ -9,6 +9,22 @@ export function Legend({ status }: { status: SceneStatus }) {
   const basis = status.metadata?.state.basis ?? status.superposition?.basis
   const representation = status.metadata?.representation ?? status.superposition?.representation
 
+  if (status.unavailable !== undefined) {
+    // Nothing is drawn, so there is no colour to name. The legend says which
+    // representation was asked for and why it produced nothing -- a phase wheel
+    // here would describe a picture that does not exist, and "Waiting for asset
+    // metadata" would promise one that is not coming.
+    return (
+      <div className="legend">
+        <div className="legend-title">Nothing drawn</div>
+        <p>
+          <strong>{status.unavailable.kind}</strong> is not available for this state.{' '}
+          {status.unavailable.reason}
+        </p>
+      </div>
+    )
+  }
+
   if (representation === 'streamlines') {
     return (
       <div className="legend">

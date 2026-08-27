@@ -1,10 +1,14 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 
-import type { CurrentFieldPayload } from '../api/types'
+import type { StreamlineGeometry } from '../api/types'
 
 interface CurrentStreamlinesProps {
-  data: CurrentFieldPayload
+  /**
+   * Geometry only: the stationary and the time-dependent current fields carry
+   * these three arrays with identical shapes, so both render here.
+   */
+  data: StreamlineGeometry
   opacity: number
 }
 
@@ -16,6 +20,14 @@ interface CurrentStreamlinesProps {
  * doubly encoded as vertex spacing.
  *
  * These are flow lines of the probability current, not electron trajectories.
+ *
+ * The prop is `StreamlineGeometry` and not `CurrentFieldPayload` because a
+ * superposition's current field is the same picture of the same observable: it
+ * differs in the metadata and the continuity diagnostics, none of which this
+ * component reads. Typing it on the eigenstate payload would have forced a
+ * second, parallel streamline component for the time-dependent route -- two
+ * renderers of one observable, free to drift apart in colour scale or vertex
+ * layout while the Inspector claimed they were the same quantity.
  */
 export function CurrentStreamlines({ data, opacity }: CurrentStreamlinesProps) {
   const geometry = useMemo(() => {

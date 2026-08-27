@@ -1,11 +1,13 @@
 import { parsePointCloud } from './qvpc'
 import type {
+  BasisKind,
   CurrentFieldPayload,
   IsosurfacePayload,
   OrbitalMetadata,
   OrbitalParameters,
   OrbitalPreset,
   PointCloudData,
+  SuperpositionCurrentPayload,
   SuperpositionIsosurfacePayload,
   SuperpositionPreset,
 } from './types'
@@ -92,16 +94,65 @@ export async function fetchSuperpositionCatalog(
   return (await response.json()) as SuperpositionPreset[]
 }
 
+/**
+ * The `|Psi(t)|^2` level set of a superposition.
+ *
+ * Every parameter `/superposition/isosurface` accepts is sent explicitly.
+ * A parameter left off the query is not an error the caller sees: the server
+ * substitutes its own default (`basis=complex`, `z=1`, `a_mu=1`,
+ * `probability_mass=0.90`, routes.py:301-308) and returns a perfectly valid
+ * picture of a state nobody asked for.
+ */
 export async function fetchSuperpositionIsosurface(
   terms: string,
   time: number,
   resolution: number,
+  basis: BasisKind,
+  z: number,
+  aMu: number,
+  probabilityMass: number,
   signal?: AbortSignal,
 ): Promise<SuperpositionIsosurfacePayload> {
-  const query = queryString({ terms, time, resolution })
+  const query = queryString({
+    terms,
+    time,
+    resolution,
+    basis,
+    z,
+    a_mu: aMu,
+    probability_mass: probabilityMass,
+  })
   const response = await fetch(`/api/superposition/isosurface?${query}`, { signal })
   if (!response.ok) {
     throw new Error(await response.text())
   }
   return (await response.json()) as SuperpositionIsosurfacePayload
+}
+
+/**
+ * Probability-flow streamlines of a superposition at one instant, with the
+ * continuity residual that says how far the rendered flow is from satisfying
+ * `d(rho)/dt + div j = 0`.
+ *
+ * Same full-query rule as the isosurface route, over the parameter names
+ * `/superposition/current-field` declares (routes.py:342-350). `arc_step` is
+ * deliberately not sent: the server's `None` default lets it choose a step
+ * from the state's own extent, and a client-side number would override that
+ * with a worse one.
+ */
+export async function fetchSuperpositionCurrentField(
+  terms: string,
+  time: number,
+  seedCount: number,
+  basis: BasisKind,
+  z: number,
+  aMu: number,
+  signal?: AbortSignal,
+): Promise<SuperpositionCurrentPayload> {
+  const query = queryString({ terms, time, seed_count: seedCount, basis, z, a_mu: aMu })
+  const response = await fetch(`/api/superposition/current-field?${query}`, { signal })
+  if (!response.ok) {
+    throw new Error(await response.text())
+  }
+  return (await response.json()) as SuperpositionCurrentPayload
 }

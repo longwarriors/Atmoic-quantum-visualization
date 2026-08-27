@@ -323,6 +323,112 @@ describe('parsePointCloud rejects malformed payloads', () => {
   })
 })
 
+interface Sample {
+  position: [number, number, number]
+  intensity: number
+  phase: number
+}
+
+const VALID_SAMPLE: Sample = { position: [0, 0, 0], intensity: 1, phase: 0 }
+
+/** A complete QVPC/1 payload: the header helper above plus interleaved records. */
+function payloadBuffer(samples: Sample[]): ArrayBuffer {
+  const buffer = new ArrayBuffer(HEADER_BYTES + samples.length * EXPECTED_STRIDE * 4)
+  new Uint8Array(buffer).set(new Uint8Array(headerOnlyBuffer(samples.length)), 0)
+  const body = new Float32Array(buffer, HEADER_BYTES, samples.length * EXPECTED_STRIDE)
+  samples.forEach((sample, index) => {
+    const base = index * EXPECTED_STRIDE
+    body.set(sample.position, base)
+    body[base + 3] = sample.intensity
+    body[base + 4] = sample.phase
+  })
+  return buffer
+}
+
+/** Three valid samples with one field of one sample replaced. */
+function withBadSample(index: number, overrides: Partial<Sample>): ArrayBuffer {
+  const samples: Sample[] = [0, 1, 2].map(() => ({ ...VALID_SAMPLE }))
+  samples[index] = { ...VALID_SAMPLE, ...overrides }
+  return payloadBuffer(samples)
+}
+
+describe('parsePointCloud validates the body, not only the header', () => {
+  // A header can be perfectly well-formed while the payload carries NaN
+  // positions or an out-of-range phase; those reach the GPU as invisible or
+  // mis-coloured points, so the decoder has to refuse them here, naming both
+  // the field and which sample is at fault so the failure is diagnosable.
+  it.each<[string, number, Partial<Sample>]>([
+    ['x', 0, { position: [Number.NaN, 0, 0] }],
+    ['y', 1, { position: [0, Number.NaN, 0] }],
+    ['z', 2, { position: [0, 0, Number.POSITIVE_INFINITY] }],
+    ['x', 2, { position: [Number.NEGATIVE_INFINITY, 0, 0] }],
+    ['intensity', 1, { intensity: Number.NaN }],
+    ['phase', 2, { phase: Number.POSITIVE_INFINITY }],
+    ['phase', 0, { phase: Number.NEGATIVE_INFINITY }],
+  ])('rejects a non-finite %s at sample %i, naming the field and the index', (
+    field,
+    index,
+    overrides,
+  ) => {
+    expect(() => parsePointCloud(withBadSample(index, overrides), headers())).toThrow(
+      new RegExp(`${field}.*sample ${index}\\b.*finite`, 'i'),
+    )
+  })
+
+  it.each([-1e-7, -0.5, 1 + 1e-7, 1.5])(
+    'rejects intensity %j as outside [0, 1], naming the field and the index',
+    (value) => {
+      expect(() => parsePointCloud(withBadSample(1, { intensity: value }), headers())).toThrow(
+        /intensity.*sample 1\b.*outside \[0, 1\]/i,
+      )
+    },
+  )
+
+  // -0 is the boundary control for a bound written as `intensity <= 0`: it is
+  // a legitimate zero intensity that float32 round-trips, and the -1e-7 case
+  // above proves the check is not simply absent.
+  it.each<[string, number]>([
+    ['0', 0],
+    ['-0, which is a zero and not a bound violation', -0],
+    ['1', 1],
+    ['0.5', 0.5],
+  ])('accepts intensity %s', (_label, value) => {
+    const result = parsePointCloud(withBadSample(1, { intensity: value }), headers())
+    expect(result.intensity[1]).toBe(Math.fround(value))
+  })
+
+  it('accepts phase exactly at the float32 bound the server can actually emit', () => {
+    // The server writes float32(np.angle(psi)), and np.angle returns pi for a
+    // negative real amplitude. float32(pi) > pi in double, so a bound written
+    // as Math.PI would reject a payload the encoder is entitled to produce.
+    const bound = Math.fround(Math.PI)
+    expect(bound).toBeGreaterThan(Math.PI)
+    const result = parsePointCloud(
+      payloadBuffer([
+        { ...VALID_SAMPLE, phase: bound },
+        { ...VALID_SAMPLE, phase: -bound },
+      ]),
+      headers(),
+    )
+    expect(result.phase[0]).toBe(bound)
+    expect(result.phase[1]).toBe(-bound)
+  })
+
+  it.each([Math.PI + 1e-6, -(Math.PI + 1e-6), 4, -4])(
+    'rejects phase %j as outside the float32 [-pi, pi] range',
+    (value) => {
+      expect(() => parsePointCloud(withBadSample(2, { phase: value }), headers())).toThrow(
+        /phase.*sample 2\b.*outside/i,
+      )
+    },
+  )
+
+  it('accepts the golden vector, whose body is entirely in range', () => {
+    const result = parsePointCloud(goldenBuffer(), headers())
+    expect(Array.from(result.intensity)).toEqual(spec.intensity)
+  })
+})
+
 describe('parsePointCloud accepts an empty (count 0) payload on purpose', () => {
   // Decision, recorded here so it is not re-litigated: a header-only payload
   // with count 0 is a well-formed QVPC/1 stream -- encode_point_cloud in
