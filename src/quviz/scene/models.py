@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from quviz.conventions import LENGTH_UNIT, BasisKind, ObservableKind, RepresentationKind
@@ -82,6 +84,10 @@ class CurrentFieldPayload(BaseModel):
     seed_density_floor: float = Field(ge=0.0)
     extent_bohr: float = Field(gt=0.0)
     continuity_residual: float = Field(ge=0.0)
+    continuity_absolute_residual: float = Field(ge=0.0)
+    continuity_scale: float = Field(ge=0.0)
+    continuity_scale_kind: Literal["stationary_current", "analytic_zero_current"]
+    continuity_probe_count: int = Field(ge=0)
     integration_rule: str = "rk4_arc_length"
 
 
@@ -111,6 +117,9 @@ class SuperpositionMetadata(BaseModel):
     terms: list[SuperpositionTermSpec]
     label: str
     basis: BasisKind
+    z: float = Field(gt=0.0)
+    a_mu: float = Field(gt=0.0)
+    reduced_mass_ratio: float = Field(gt=0.0)
     time_au: float
     energy_expectation_hartree: float
     is_stationary: bool
@@ -142,15 +151,31 @@ class SuperpositionIsosurfacePayload(BaseModel):
     grid_spacing_bohr: float = Field(gt=0.0)
     integration_rule: str = "tensor_product_simpson"
     extent_bohr: float = Field(gt=0.0)
+    finite_box_tail_mass_upper_bound: float = Field(ge=0.0, le=1.0)
+    finite_box_mass_variation_upper_bound: float = Field(ge=0.0)
+    finite_grid_phase_variation_bound: float = Field(ge=0.0)
+    finite_grid_aliasing_variation_lower_bound: float = Field(ge=0.0)
+    finite_grid_mass_error_lower_bound: float = Field(ge=0.0)
+    finite_grid_reporting_tolerance: float = Field(gt=0.0)
+    finite_grid_mass_status: Literal[
+        "no_error_above_tolerance_proven",
+        "phase_dependent_quadrature_error",
+        "time_invariant_quadrature_error",
+        "quadrature_error_at_reported_time",
+    ]
 
 
 class SuperpositionCurrentPayload(BaseModel):
     """Probability-flow streamlines of a superposition at one instant.
 
-    ``continuity_residual`` is the full time-dependent statement
-    ``d(rho)/dt + div j = 0``, normalized by ``density_rate_scale``. Unlike the
-    stationary case, ``d(rho)/dt`` is generally non-zero, so a scale of zero
-    means the state is degenerate and the check is vacuous rather than passed.
+    For a non-stationary state, ``continuity_residual`` is the full statement
+    ``d(rho)/dt + div j = 0``, normalized by a time-independent root-sum-square
+    transition-coherence reference and audited at four phases of every
+    distinct energy gap. A stationary non-zero flow instead uses
+    ``max|j| / L_d``; a spatial
+    state proved real up to global phase reports analytic zero with no probes
+    or phase samples. ``density_rate_scale`` remains the instantaneous value
+    for transparency, but is never the non-stationary denominator.
     """
 
     metadata: SuperpositionMetadata
@@ -162,5 +187,12 @@ class SuperpositionCurrentPayload(BaseModel):
     seed_density_floor: float = Field(ge=0.0)
     extent_bohr: float = Field(gt=0.0)
     continuity_residual: float = Field(ge=0.0)
+    continuity_absolute_residual: float = Field(ge=0.0)
+    continuity_scale: float = Field(ge=0.0)
+    continuity_scale_kind: Literal[
+        "transition_coherence", "stationary_current", "analytic_zero_current"
+    ]
+    continuity_probe_count: int = Field(ge=0)
+    continuity_phase_count: int = Field(ge=0)
     density_rate_scale: float = Field(ge=0.0)
     integration_rule: str = "rk4_arc_length"

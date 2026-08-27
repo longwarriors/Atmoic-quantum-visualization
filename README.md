@@ -104,7 +104,8 @@ cd web && npm run build
 
 ## 关键科学约定
 
-- 长度默认使用约化玻尔半径单位；
+- 长度以普通 Bohr 半径 $a_0$ 报告；`SuperpositionState` 及其 scene/API 链路的
+  有限核质量契约由无量纲 `a_mu=m_e/mu` 同时缩放空间与能量；
 - `theta` 是极角/余纬，范围 `[0, π]`；
 - `phi` 是方位角，范围 `[0, 2π)`；
 - 复球谐遵循 SciPy `sph_harm_y` 与 Condon–Shortley 相位；

@@ -103,11 +103,83 @@ def test_openapi_describes_the_current_field_contract() -> None:
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
     assert "CurrentFieldPayload" in schemas
     properties = schemas["CurrentFieldPayload"]["properties"]
-    for field in ("lines", "speed", "continuity_residual", "arc_step_bohr", "seed_density_floor"):
+    for field in (
+        "lines",
+        "speed",
+        "continuity_residual",
+        "continuity_absolute_residual",
+        "continuity_scale",
+        "continuity_scale_kind",
+        "continuity_probe_count",
+        "arc_step_bohr",
+        "seed_density_floor",
+    ):
         assert field in properties
 
 
 BOHR_PAIR = "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"
+
+
+@pytest.mark.parametrize(
+    ("path", "params"),
+    [
+        (
+            "/api/orbitals/current-field",
+            {"n": 3, "l": 2, "m": 2, "basis": "complex", "seed_count": 1},
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": BOHR_PAIR, "time": 0.0, "seed_count": 1},
+        ),
+    ],
+)
+@pytest.mark.parametrize("arc_step", [5e-324, 1e308], ids=["subnormal", "too-large"])
+def test_current_field_routes_reject_arc_steps_outside_dimensionless_contract(
+    path: str,
+    params: dict[str, object],
+    arc_step: float,
+) -> None:
+    fail_safe_client = TestClient(create_app(mount_frontend=False), raise_server_exceptions=False)
+    response = fail_safe_client.get(path, params={**params, "arc_step": arc_step})
+
+    assert response.status_code == 422
+    assert "arc_step / support_length" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("path", "params", "arc_step"),
+    [
+        (
+            "/api/orbitals/current-field",
+            {"n": 3, "l": 2, "m": 2, "basis": "complex", "seed_count": 1},
+            0.27,
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": BOHR_PAIR, "time": 0.0, "seed_count": 1},
+            0.03,
+        ),
+        (
+            "/api/superposition/current-field",
+            {"terms": "1,0,0,1.0", "time": 0.0, "seed_count": 1, "a_mu": 0.01},
+            0.01 / 4_096.0,
+        ),
+        (
+            "/api/orbitals/current-field",
+            {"n": 6, "l": 0, "m": 0, "basis": "complex", "seed_count": 1},
+            36.0 / 8.0,
+        ),
+    ],
+)
+def test_current_field_routes_accept_explicit_dimensionless_arc_step(
+    path: str,
+    params: dict[str, object],
+    arc_step: float,
+) -> None:
+    response = client.get(path, params={**params, "arc_step": arc_step})
+
+    assert response.status_code == 200
+    assert response.json()["arc_step_bohr"] == pytest.approx(arc_step)
 
 
 def test_superposition_catalog_includes_a_degenerate_control() -> None:
@@ -118,14 +190,20 @@ def test_superposition_catalog_includes_a_degenerate_control() -> None:
     assert control["period_au"] == 0.0
 
 
-def test_superposition_isosurface_route_carries_time_and_coefficients() -> None:
-    response = client.get(f"/api/superposition/isosurface?terms={BOHR_PAIR}&time=3.5&resolution=49")
+def test_superposition_isosurface_route_carries_time_coefficients_and_mass_scale() -> None:
+    response = client.get(
+        f"/api/superposition/isosurface?terms={BOHR_PAIR}&time=3.5&resolution=49&a_mu=0.5"
+    )
     assert response.status_code == 200
     payload = response.json()
 
     assert payload["metadata"]["observable"] == "probability_density"
     assert payload["metadata"]["time_au"] == 3.5
     assert payload["metadata"]["is_stationary"] is False
+    assert payload["metadata"]["z"] == 1.0
+    assert payload["metadata"]["a_mu"] == 0.5
+    assert payload["metadata"]["reduced_mass_ratio"] == 2.0
+    assert payload["metadata"]["energy_expectation_hartree"] == pytest.approx(-0.625)
     assert len(payload["metadata"]["terms"]) == 2
     assert len(payload["vertices"]) == len(payload["phase"]) > 0
 
@@ -140,6 +218,8 @@ def test_superposition_current_route_reports_the_continuity_residual() -> None:
     assert payload["metadata"]["representation"] == "streamlines"
     assert payload["density_rate_scale"] > 0.0
     assert payload["continuity_residual"] < 1e-2
+    assert payload["continuity_scale_kind"] == "transition_coherence"
+    assert payload["continuity_phase_count"] >= 4
 
 
 def test_degenerate_superposition_route_warns_that_nothing_moves() -> None:
@@ -150,11 +230,46 @@ def test_degenerate_superposition_route_warns_that_nothing_moves() -> None:
     assert any("stationary" in w for w in payload["metadata"]["warnings"])
 
 
+def test_superposition_route_removes_zero_terms_before_state_level_checks() -> None:
+    terms = "1,0,0,1.0;1,0,0,0.0;2,1,0,-0.0,0.0"
+    response = client.get(
+        "/api/superposition/isosurface", params={"terms": terms, "resolution": 49}
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()["metadata"]
+    assert metadata["terms"] == [
+        {"n": 1, "l": 0, "m": 0, "coefficient_real": 1.0, "coefficient_imag": 0.0}
+    ]
+    assert metadata["is_stationary"] is True
+
+
+@pytest.mark.parametrize(
+    "terms",
+    [
+        "1,0,0,nan",
+        "1,0,0,inf",
+        "1,0,0,-inf",
+        "1,0,0,0,nan",
+        "1,0,0,0,inf",
+        "1,0,0,0,-inf",
+    ],
+)
+def test_superposition_route_rejects_non_finite_coefficients_as_422(terms: str) -> None:
+    response = client.get(
+        "/api/superposition/isosurface", params={"terms": terms, "resolution": 49}
+    )
+
+    assert response.status_code == 422
+    assert "coefficient must be finite" in response.json()["detail"]
+
+
 @pytest.mark.parametrize(
     "terms",
     [
         "1,0,0,0.5;2,1,0,0.5",  # not normalized
-        "1,0,0,1.0;1,0,0,0.0",  # duplicate quantum numbers
+        "1,0,0,0.7071067811865476;1,0,0,0.7071067811865476",  # duplicate non-zero
+        "1,0,0,1e308",  # finite, but squaring it must not escape as a 500
         "2,1,2,1.0",  # |m| > l
         "nonsense",  # unparsable
         "1,0,0",  # too few fields
@@ -171,5 +286,24 @@ def test_openapi_describes_the_superposition_contracts() -> None:
     assert "SuperpositionIsosurfacePayload" in schemas
     assert "SuperpositionCurrentPayload" in schemas
     metadata = schemas["SuperpositionMetadata"]["properties"]
-    for field in ("terms", "time_au", "energy_expectation_hartree", "is_stationary"):
+    for field in (
+        "terms",
+        "z",
+        "a_mu",
+        "reduced_mass_ratio",
+        "time_au",
+        "energy_expectation_hartree",
+        "is_stationary",
+    ):
         assert field in metadata
+    surface = schemas["SuperpositionIsosurfacePayload"]["properties"]
+    for field in (
+        "finite_box_tail_mass_upper_bound",
+        "finite_box_mass_variation_upper_bound",
+        "finite_grid_phase_variation_bound",
+        "finite_grid_aliasing_variation_lower_bound",
+        "finite_grid_mass_error_lower_bound",
+        "finite_grid_reporting_tolerance",
+        "finite_grid_mass_status",
+    ):
+        assert field in surface

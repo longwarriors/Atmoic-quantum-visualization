@@ -6,6 +6,46 @@ interface InspectorProps {
   status: SceneStatus
 }
 
+function formatCoefficient(value: number): string {
+  if (value === 0) return '0.000'
+  const magnitude = Math.abs(value)
+  return magnitude < 0.001 || magnitude >= 1_000 ? value.toExponential(2) : value.toFixed(3)
+}
+
+function formatSuperpositionTerms(terms: NonNullable<SceneStatus['superposition']>['terms']): string {
+  let label = ''
+  for (const term of terms) {
+    const ket = `|${term.n},${term.l},${term.m}⟩`
+    if (term.coefficient_imag === 0) {
+      const body = `${formatCoefficient(Math.abs(term.coefficient_real))}${ket}`
+      if (!label) {
+        label = term.coefficient_real < 0 ? `-${body}` : body
+      } else {
+        label += term.coefficient_real < 0 ? `  -  ${body}` : `  +  ${body}`
+      }
+      continue
+    }
+
+    const real = term.coefficient_real === 0 ? 0 : term.coefficient_real
+    const imag = term.coefficient_imag === 0 ? 0 : term.coefficient_imag
+    const imagSign = imag >= 0 ? '+' : '-'
+    const body = `(${formatCoefficient(real)}${imagSign}${formatCoefficient(Math.abs(imag))}i)${ket}`
+    label += label ? `  +  ${body}` : body
+  }
+  return label
+}
+
+function formatFiniteGridMassStatus(status: NonNullable<SceneStatus['finiteGridMassStatus']>): string {
+  const labels: Record<NonNullable<SceneStatus['finiteGridMassStatus']>, string> = {
+    phase_dependent_quadrature_error: 'phase-dependent quadrature error',
+    time_invariant_quadrature_error: 'time-invariant quadrature error',
+    quadrature_error_at_reported_time: 'quadrature error at reported time',
+    no_error_above_tolerance_proven:
+      'no above-threshold error demonstrated (accuracy not certified)',
+  }
+  return labels[status]
+}
+
 export function Inspector({ status }: InspectorProps) {
   const metadata = status.metadata
   const mixture = status.superposition
@@ -85,6 +125,36 @@ export function Inspector({ status }: InspectorProps) {
         {status.gridResolution !== undefined ? (
           <div><dt>Grid</dt><dd>{status.gridResolution}³ · Δ={status.gridSpacingBohr?.toFixed(3)} bohr</dd></div>
         ) : null}
+        {status.finiteGridMassStatus !== undefined ? (
+          <div>
+            <dt>Grid mass status</dt>
+            <dd>{formatFiniteGridMassStatus(status.finiteGridMassStatus)}</dd>
+          </div>
+        ) : null}
+        {status.finiteGridReportingTolerance !== undefined ? (
+          <div>
+            <dt>Grid report threshold</dt>
+            <dd>{status.finiteGridReportingTolerance.toExponential(3)}</dd>
+          </div>
+        ) : null}
+        {status.finiteGridMassErrorLowerBound !== undefined ? (
+          <div>
+            <dt>Grid mass error ≥</dt>
+            <dd>{status.finiteGridMassErrorLowerBound.toExponential(3)}</dd>
+          </div>
+        ) : null}
+        {status.finiteGridAliasingVariationLowerBound !== undefined ? (
+          <div>
+            <dt>Grid alias variation ≥</dt>
+            <dd>{status.finiteGridAliasingVariationLowerBound.toExponential(3)}</dd>
+          </div>
+        ) : null}
+        {status.finiteBoxMassVariationUpperBound !== undefined ? (
+          <div>
+            <dt>Finite-box variation ≤</dt>
+            <dd>{status.finiteBoxMassVariationUpperBound.toExponential(3)}</dd>
+          </div>
+        ) : null}
         {status.timeAu !== undefined ? (
           <div><dt>Time</dt><dd>{status.timeAu.toFixed(2)} a.u.</dd></div>
         ) : null}
@@ -92,12 +162,7 @@ export function Inspector({ status }: InspectorProps) {
           <div>
             <dt>Coefficients</dt>
             <dd>
-              {status.superposition.terms
-                .map((term) => {
-                  const magnitude = Math.hypot(term.coefficient_real, term.coefficient_imag)
-                  return `${magnitude.toFixed(3)}|${term.n},${term.l},${term.m}⟩`
-                })
-                .join('  +  ')}
+              {formatSuperpositionTerms(status.superposition.terms)}
             </dd>
           </div>
         ) : null}
@@ -106,7 +171,7 @@ export function Inspector({ status }: InspectorProps) {
             <dt>⟨H⟩</dt>
             <dd>
               {status.superposition.energy_expectation_hartree.toFixed(6)} Ha
-              {status.superposition.is_stationary ? ' · degenerate (static)' : ''}
+              {status.superposition.is_stationary ? ' · stationary density' : ''}
             </dd>
           </div>
         ) : null}
@@ -117,7 +182,13 @@ export function Inspector({ status }: InspectorProps) {
           <div><dt>Max |j|/ρ</dt><dd>{status.maxSpeed.toExponential(3)} a.u.</dd></div>
         ) : null}
         {status.continuityResidual !== undefined ? (
-          <div><dt>∇·j residual</dt><dd>{status.continuityResidual.toExponential(2)}</dd></div>
+          <div><dt>Continuity residual</dt><dd>{status.continuityResidual.toExponential(2)}</dd></div>
+        ) : null}
+        {status.continuityScaleKind !== undefined ? (
+          <div>
+            <dt>Continuity scale</dt>
+            <dd>{status.continuityScaleKind.replaceAll('_', ' ')}</dd>
+          </div>
         ) : null}
         {status.densityLevel !== undefined ? (
           <div><dt>Density level</dt><dd>{status.densityLevel.toExponential(3)}</dd></div>

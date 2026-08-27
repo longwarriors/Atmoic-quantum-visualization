@@ -22,11 +22,17 @@ $$
 
 解析氢样模块默认使用原子单位：
 
-- 长度：约化 Bohr 半径 $a_\mu$；
+- 长度：普通 Bohr 半径 $a_0$；
 - 能量：Hartree；
 - $\hbar=e=m_e=4\pi\epsilon_0=1$。
 
-`z` 表示核电荷数。若使用有限核质量，应显式改变 $a_\mu$ 和能量中的约化质量比，而不是悄悄把电子质量写死。
+`z` 表示核电荷数。`SuperpositionState` 以及 scene/API 的有限核质量契约只接受一个无量纲输入
+`a_mu=m_e/\mu`，它表示约化 Bohr 半径相对 $a_0$ 的倍率；该链路由此唯一
+推导 `reduced_mass_ratio=\mu/m_e=1/a_mu`。因此空间尺度是
+$a_\mu/Z$（数值上为 `a_mu/Z` 个 $a_0$），能量是
+$E_n=-Z^2/(2a_\mu n^2)$ Hartree。该链路不得把两者作为独立旋钮分别设置。
+低层 `hydrogenic_energy_hartree` 仍显式接收 `reduced_mass_ratio`，供解析门禁与独立调用；
+调用者若同时构造空间波函数，必须自行按 `1/a_mu` 传入，不能借此制造不一致状态。
 
 ## 复球谐与实球谐
 

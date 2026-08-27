@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import pi
+from typing import Literal
 
 import numpy as np
 from skimage.measure import marching_cubes
@@ -16,6 +17,13 @@ from quviz.conventions import (
     ObservableKind,
     RepresentationKind,
 )
+from quviz.physics.continuity import (
+    continuity_audit_times,
+    continuity_probe_candidates,
+    select_continuity_probes,
+    state_support_lengths,
+)
+from quviz.physics.finite_box import finite_grid_mass_diagnostic
 from quviz.physics.hydrogenic import (
     cartesian_to_spherical,
     hydrogenic_energy_hartree,
@@ -26,12 +34,13 @@ from quviz.physics.hydrogenic import (
 )
 from quviz.physics.observables import (
     continuity_residual,
+    density_time_derivative,
     phase,
     probability_current_hydrogenic,
     probability_density,
     superposition_current,
 )
-from quviz.physics.superposition import SuperpositionState
+from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
 from quviz.sampling.inverse_cdf import normalized_cdf
 from quviz.scene.models import (
     CurrentFieldPayload,
@@ -44,6 +53,14 @@ from quviz.scene.models import (
     SuperpositionTermSpec,
 )
 from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamlines
+
+_STREAMLINE_ARC_FRACTION = 0.03
+_STREAMLINE_MAX_POINTS = 4_096
+_STREAMLINE_MIN_ARC_FRACTION = 1.0 / _STREAMLINE_MAX_POINTS
+_STREAMLINE_MAX_ARC_FRACTION = 1.0 / 8.0
+_SEED_DENSITY_SCALED_FLOOR = 1e-4
+_CONTINUITY_PROBE_COUNT = 8
+_REALITY_RELATION_TOLERANCE = 64.0 * np.finfo(np.float64).eps
 
 
 def orbital_metadata(
@@ -107,22 +124,23 @@ def _radial_extent_for_mass(
     l: int,
     z: float,
     *,
+    a_mu: float = 1.0,
     target_mass: float = 0.9999,
     grid_size: int = 32_769,
 ) -> float:
     """Return a padded radial quantile for an efficient finite cube."""
 
-    r_max = max(8.0 * n * n / z, 12.0 / z)
+    r_max = max(8.0 * n * n * a_mu / z, 12.0 * a_mu / z)
     captured = 0.0
     for _ in range(8):
         radius = np.linspace(0.0, r_max, grid_size, dtype=np.float64)
-        radial = radial_wavefunction(n, l, radius, z=z)
+        radial = radial_wavefunction(n, l, radius, z=z, a_mu=a_mu)
         radial_density = radius * radius * radial * radial
         cdf, captured = normalized_cdf(radius, radial_density)
         if captured >= target_mass:
             absolute_cdf = cdf * captured
             quantile = float(np.interp(target_mass, absolute_cdf, radius))
-            return max(1.05 * quantile, 4.0 / z)
+            return max(1.05 * quantile, 4.0 * a_mu / z)
         r_max *= 1.7
     raise RuntimeError(
         f"radial extent search captured only {captured:.8f}; increase expansion budget"
@@ -312,27 +330,47 @@ def build_isosurface(
     )
 
 
-def _continuity_residual(velocity_state: tuple[int, int, int, float, BasisKind]) -> float:
-    r"""Return :math:`\max|\nabla\cdot\mathbf j| / \max|\mathbf j|` on a probe set.
-
-    A stationary state has :math:`\partial\rho/\partial t=0`, so continuity
-    demands a divergence-free current. The payload reports the measured value
-    instead of claiming the property.
-    """
+def _stationary_continuity_diagnostic(
+    velocity_state: tuple[int, int, int, float, BasisKind],
+) -> tuple[
+    float,
+    float,
+    float,
+    Literal["stationary_current", "analytic_zero_current"],
+    int,
+]:
+    r"""Audit :math:`\nabla\cdot\mathbf j=0` on scale-aware probes."""
 
     n, l, m, z, basis_kind = velocity_state
-    if basis_kind is BasisKind.REAL or m == 0:
-        return 0.0
+    state = SuperpositionState(
+        terms=(SuperpositionTerm(n, l, m, 1.0),),
+        z=z,
+        basis=basis_kind,
+    )
+    differential_length, _, _ = state_support_lengths(state)
+    candidates = continuity_probe_candidates(state)
 
-    probes = np.asarray([[1.7, 0.9, 2.2], [-2.4, 1.3, -0.8], [0.6, -3.1, 1.9], [2.8, 2.1, -1.2]])
-    step = 1e-4
+    if basis_kind is BasisKind.REAL or m == 0:
+        return 0.0, 0.0, 0.0, "analytic_zero_current", 0
 
     def current_at(points: np.ndarray) -> np.ndarray:
         radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
         return probability_current_hydrogenic(
-            n, l, m, radius, polar, azimuth, z=z, basis=basis_kind
+            n,
+            l,
+            m,
+            radius,
+            polar,
+            azimuth,
+            z=z,
+            basis=basis_kind,
+            density_floor=0.0,
         )
 
+    candidate_magnitude = np.linalg.norm(current_at(candidates), axis=1)
+    keep = np.argsort(candidate_magnitude)[::-1][:_CONTINUITY_PROBE_COUNT]
+    probes = np.asarray(candidates[keep], dtype=np.float64)
+    step = 1e-4 * differential_length
     divergence = np.zeros(probes.shape[0], dtype=np.float64)
     for axis in range(3):
         offset = np.zeros(3)
@@ -341,11 +379,33 @@ def _continuity_residual(velocity_state: tuple[int, int, int, float, BasisKind])
         backward = current_at(probes - offset)[:, axis]
         divergence += (forward - backward) / (2.0 * step)
 
-    magnitude = np.linalg.norm(current_at(probes), axis=1)
-    scale = float(np.max(magnitude))
+    absolute = float(np.max(np.abs(divergence)))
+    scale = float(np.max(np.linalg.norm(current_at(probes), axis=1)) / differential_length)
     if scale <= 0.0:
-        return 0.0
-    return float(np.max(np.abs(divergence)) / scale)
+        raise RuntimeError("non-zero stationary current had no resolvable diagnostic scale")
+    return absolute / scale, absolute, scale, "stationary_current", probes.shape[0]
+
+
+def _resolve_arc_step(arc_step: float | None, support_length: float) -> float:
+    """Resolve and validate the dimensionless streamline sampling contract."""
+
+    resolved = _STREAMLINE_ARC_FRACTION * support_length if arc_step is None else arc_step
+    minimum = _STREAMLINE_MIN_ARC_FRACTION * support_length
+    maximum = _STREAMLINE_MAX_ARC_FRACTION * support_length
+    if not np.isfinite(resolved) or not minimum <= resolved <= maximum:
+        raise ValueError("arc_step / support_length must be between 1/4096 and 1/8 inclusive")
+    return resolved
+
+
+def _streamline_point_budget(path_length: float, arc_step: float) -> int:
+    """Cap before division so extreme finite lengths cannot overflow."""
+
+    if path_length < 0.0 or not np.isfinite(path_length):
+        raise ValueError("streamline path length must be non-negative and finite")
+    uncapped_points = _STREAMLINE_MAX_POINTS - 8
+    if arc_step <= path_length / uncapped_points:
+        return _STREAMLINE_MAX_POINTS
+    return int(path_length / arc_step) + 8
 
 
 def build_current_field(
@@ -356,14 +416,17 @@ def build_current_field(
     z: float = 1.0,
     basis: BasisKind | str = BasisKind.COMPLEX,
     seed_count: int = 48,
-    arc_step: float = 0.12,
-    seed_density_fraction: float = 1e-3,
+    arc_step: float | None = None,
 ) -> CurrentFieldPayload:
     r"""Build probability-flow streamlines for one hydrogenic state.
 
     Seeds are placed on a deterministic lattice in the :math:`(s,z)` half-plane
-    at :math:`\phi=0`, keeping only points whose density exceeds
-    ``seed_density_fraction`` of the lattice maximum.
+    at :math:`\phi=0`.  The default arc step is ``0.03 n²/Z`` and the density
+    cutoff obeys ``rho_min (n²/Z)³ = 1e-4``; both are dimensionless contracts
+    rather than fixed ordinary-Bohr numbers. Explicit steps must satisfy
+    ``1/4096 <= arc_step / (n²/Z) <= 1/8``: the lower limit is tied to the
+    integration point budget and the upper limit retains about 50 samples on
+    a circular path whose radius is one characteristic support length.
 
     That seeding exploits the azimuthal symmetry of a *stationary* state, where
     every flow line is a circle of constant :math:`s` and :math:`z` and so one
@@ -377,8 +440,8 @@ def build_current_field(
         raise ValueError("z must be positive")
     if seed_count < 1:
         raise ValueError("seed_count must be positive")
-    if arc_step <= 0.0:
-        raise ValueError("arc_step must be positive")
+    support_length = n * n / z
+    resolved_arc_step = _resolve_arc_step(arc_step, support_length)
     basis_kind = BasisKind(basis)
 
     extent = _radial_extent_for_mass(n, l, z)
@@ -394,7 +457,7 @@ def build_current_field(
     lines: list[list[list[float]]] = []
     speeds: list[list[float]] = []
     max_speed = 0.0
-    density_floor = 0.0
+    density_floor = _SEED_DENSITY_SCALED_FLOOR / support_length**3
 
     if basis_kind is BasisKind.COMPLEX and m != 0:
         lattice = max(8, int(np.sqrt(seed_count * 4)))
@@ -408,30 +471,37 @@ def build_current_field(
         density = probability_density(
             hydrogenic_wavefunction(n, l, m, radius, polar, azimuth, z=z, basis=basis_kind)
         )
-        density_floor = float(np.max(density)) * seed_density_fraction
         keep = np.flatnonzero(density > density_floor)
         # Highest density first, so a small seed_count still shows the core flow.
         keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
         keep = keep[np.argsort(radius[keep])]
 
-        seeds = candidates[keep]
-        velocity = hydrogenic_flow_velocity(n, l, m, z=z, basis=basis_kind)
-        # One budget for the bundle: the widest orbit sets it, and closure
-        # retires the tighter ones early.
-        widest = float(np.max(np.hypot(seeds[:, 0], seeds[:, 1])))
-        budget = min(int(2.0 * pi * widest / arc_step) + 8, 4_096)
-        for line in integrate_streamlines(
-            velocity,
-            seeds,
-            arc_step=arc_step,
-            max_points=budget,
-            close_tolerance=0.5 * arc_step,
-        ):
-            if line.vertices.shape[0] < 4:
-                continue
-            lines.append(np.round(line.vertices, 6).tolist())
-            speeds.append(np.round(line.speed, 6).tolist())
-            max_speed = max(max_speed, float(np.max(line.speed)))
+        if keep.size:
+            seeds = candidates[keep]
+            velocity = hydrogenic_flow_velocity(
+                n,
+                l,
+                m,
+                z=z,
+                basis=basis_kind,
+                density_floor=density_floor,
+            )
+            # One budget for the bundle: the widest orbit sets it, and closure
+            # retires the tighter ones early.
+            widest = float(np.max(np.hypot(seeds[:, 0], seeds[:, 1])))
+            budget = _streamline_point_budget(2.0 * pi * widest, resolved_arc_step)
+            for line in integrate_streamlines(
+                velocity,
+                seeds,
+                arc_step=resolved_arc_step,
+                max_points=budget,
+                close_tolerance=0.5 * resolved_arc_step,
+            ):
+                if line.vertices.shape[0] < 4:
+                    continue
+                lines.append(np.round(line.vertices, 6).tolist())
+                speeds.append(np.round(line.speed, 6).tolist())
+                max_speed = max(max_speed, float(np.max(line.speed)))
 
     metadata = orbital_metadata(
         n,
@@ -443,16 +513,23 @@ def build_current_field(
         representation=RepresentationKind.STREAMLINES,
         warnings=warnings,
     )
+    normalized, absolute, scale, scale_kind, probe_count = _stationary_continuity_diagnostic(
+        (n, l, m, z, basis_kind)
+    )
     return CurrentFieldPayload(
         metadata=metadata,
         lines=lines,
         speed=speeds,
         seed_count=len(lines),
         max_speed=max_speed,
-        arc_step_bohr=arc_step,
+        arc_step_bohr=resolved_arc_step,
         seed_density_floor=density_floor,
         extent_bohr=extent,
-        continuity_residual=_continuity_residual((n, l, m, z, basis_kind)),
+        continuity_residual=normalized,
+        continuity_absolute_residual=absolute,
+        continuity_scale=scale,
+        continuity_scale_kind=scale_kind,
+        continuity_probe_count=probe_count,
     )
 
 
@@ -496,6 +573,9 @@ def superposition_metadata(
         ],
         label=state.label(),
         basis=state.basis,
+        z=state.z,
+        a_mu=state.a_mu,
+        reduced_mass_ratio=state.reduced_mass_ratio,
         time_au=time,
         energy_expectation_hartree=state.energy_expectation,
         is_stationary=state.is_stationary,
@@ -513,7 +593,44 @@ def superposition_metadata(
 def _superposition_extent(state: SuperpositionState) -> float:
     """The widest term sets the cube: a smaller box would clip a real component."""
 
-    return max(_radial_extent_for_mass(term.n, term.l, state.z) for term in state.terms)
+    return max(
+        _radial_extent_for_mass(term.n, term.l, state.z, a_mu=state.a_mu) for term in state.terms
+    )
+
+
+def _has_analytic_zero_stationary_current(state: SuperpositionState) -> bool:
+    """Return true for a stationary real spatial combination up to one phase."""
+
+    if not state.is_stationary:
+        return False
+
+    if state.basis is BasisKind.REAL:
+        reference = state.terms[0].coefficient
+        return all(
+            abs(float(np.imag(np.conj(reference) * term.coefficient)))
+            <= _REALITY_RELATION_TOLERANCE * abs(reference * term.coefficient)
+            for term in state.terms[1:]
+        )
+
+    # In the complex basis, Y_l^{-m}=(-1)^m conj(Y_l^m).  A stationary
+    # combination is a global phase times a real function exactly when one
+    # unit phase kappa satisfies c_m=kappa*(-1)^m*conj(c_-m) for every term.
+    # A missing partner is a real physical current, not an analytic zero.
+    coefficients = {term.quantum_numbers: term.coefficient for term in state.terms}
+    phase_ratio: complex | None = None
+    for term in state.terms:
+        partner = coefficients.get((term.n, term.l, -term.m))
+        if partner is None:
+            return False
+        parity = -1.0 if abs(term.m) % 2 else 1.0
+        candidate = term.coefficient / (parity * np.conj(partner))
+        if abs(abs(candidate) - 1.0) > _REALITY_RELATION_TOLERANCE:
+            return False
+        if phase_ratio is None:
+            phase_ratio = candidate
+        elif abs(candidate - phase_ratio) > _REALITY_RELATION_TOLERANCE:
+            return False
+    return True
 
 
 def build_superposition_isosurface(
@@ -544,26 +661,40 @@ def build_superposition_isosurface(
         probability_mass=probability_mass,
     )
 
+    mass_diagnostic = finite_grid_mass_diagnostic(
+        state,
+        extent=extent,
+        resolution=resolution,
+        integrated_mass=mesh.integrated_mass,
+    )
     warnings: list[str] = []
-    if abs(mesh.integrated_mass - 1.0) > 0.002:
-        shells = {term.n for term in state.terms}
-        if len(shells) > 1:
-            # Name the real cause. The cube is sized for the widest term, so a
-            # compact term sits on too few points. Measured for 1s + 2p the
-            # error is about six times a single-shell state's at the same
-            # resolution (0.979 vs 0.996 at 49); it does converge, just from
-            # much further away, so "increase resolution" alone would mislead.
-            warnings.append(
-                f"finite-grid density integral is {mesh.integrated_mass:.6f}: terms span "
-                f"n={sorted(shells)}, so the uniform cube sized for the widest term "
-                f"under-resolves the most compact one. The error is several times larger "
-                f"than for a single-shell state at the same resolution; treat the "
-                f"enclosed mass as approximate."
-            )
-        else:
-            warnings.append(
-                f"finite-grid density integral is {mesh.integrated_mass:.6f}; increase resolution"
-            )
+    shells = {term.n for term in state.terms}
+    if mass_diagnostic.status == "phase_dependent_quadrature_error":
+        warnings.append(
+            f"finite-grid density integral is {mesh.integrated_mass:.6f}: phase-dependent "
+            "quadrature aliasing has a conservatively bounded non-zero Fourier component beyond "
+            "the conservative finite-box variation bound; terms span "
+            f"n={sorted(shells)}, so the uniform cube under-resolves compact scales. "
+            "This is a render-grid artefact, not probability non-conservation."
+        )
+    elif mass_diagnostic.status == "time_invariant_quadrature_error":
+        detail = (
+            f"terms span n={sorted(shells)}, so the uniform cube under-resolves the compact scales"
+            if len(shells) > 1
+            else "the uniform cube is under-resolved"
+        )
+        warnings.append(
+            f"finite-grid density integral is {mesh.integrated_mass:.6f}: time-invariant "
+            "quadrature error exceeds the reporting tolerance even after accounting for the "
+            f"conservative finite-box tail bound; {detail}."
+        )
+    elif mass_diagnostic.status == "quadrature_error_at_reported_time":
+        warnings.append(
+            f"finite-grid density integral is {mesh.integrated_mass:.6f}: quadrature error "
+            "at the reported time exceeds the reporting tolerance even after accounting for "
+            "the conservative finite-box tail bound; its "
+            "time dependence has no above-threshold certified alias component."
+        )
     return SuperpositionIsosurfacePayload(
         metadata=superposition_metadata(
             state,
@@ -583,6 +714,13 @@ def build_superposition_isosurface(
         grid_resolution=resolution,
         grid_spacing_bohr=mesh.spacing,
         extent_bohr=extent,
+        finite_box_tail_mass_upper_bound=mass_diagnostic.tail_mass_upper_bound,
+        finite_box_mass_variation_upper_bound=(mass_diagnostic.box_mass_variation_upper_bound),
+        finite_grid_phase_variation_bound=mass_diagnostic.phase_variation_bound,
+        finite_grid_aliasing_variation_lower_bound=(mass_diagnostic.aliasing_variation_lower_bound),
+        finite_grid_mass_error_lower_bound=mass_diagnostic.mass_error_lower_bound,
+        finite_grid_reporting_tolerance=mass_diagnostic.reporting_tolerance,
+        finite_grid_mass_status=mass_diagnostic.status,
     )
 
 
@@ -591,8 +729,7 @@ def build_superposition_current_field(
     *,
     time: float = 0.0,
     seed_count: int = 48,
-    arc_step: float = 0.12,
-    seed_density_fraction: float = 1e-3,
+    arc_step: float | None = None,
     lattice: int = 21,
 ) -> SuperpositionCurrentPayload:
     r"""Build probability-flow streamlines of :math:`\Psi(t)`.
@@ -600,12 +737,17 @@ def build_superposition_current_field(
     Seeding is fully three-dimensional here, unlike the stationary single-state
     builder. A superposition has no azimuthal symmetry to exploit: its flow
     lines generally do not close, so one azimuth no longer enumerates them.
+    An explicit arc step is accepted only between ``1/4096`` and ``1/8`` of
+    the most compact active support length.
     """
 
     if seed_count < 1:
         raise ValueError("seed_count must be positive")
-    if arc_step <= 0.0:
-        raise ValueError("arc_step must be positive")
+    if len(state.terms) > 8:
+        raise ValueError("current-field diagnostics support at most 8 active terms")
+    analytic_zero_current = _has_analytic_zero_stationary_current(state)
+    differential_length, compact_support, wide_support = state_support_lengths(state)
+    resolved_arc_step = _resolve_arc_step(arc_step, compact_support)
 
     extent = _superposition_extent(state)
     axis = np.linspace(-extent, extent, lattice, dtype=np.float64)
@@ -615,30 +757,30 @@ def build_superposition_current_field(
         candidates[:, 0], candidates[:, 1], candidates[:, 2]
     )
     density = probability_density(state.evaluate(radius, polar, azimuth, time=time))
-    density_floor = float(np.max(density)) * seed_density_fraction
+    density_floor = _SEED_DENSITY_SCALED_FLOOR / wide_support**3
     keep = np.flatnonzero(density > density_floor)
     keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
 
     lines: list[list[list[float]]] = []
     speeds: list[list[float]] = []
     max_speed = 0.0
-    if keep.size:
+    if keep.size and not analytic_zero_current:
 
         def velocity(points: np.ndarray) -> np.ndarray:
             spherical = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
             rho = probability_density(state.evaluate(*spherical, time=time))
             current = superposition_current(state, points, time=time)
             result = np.zeros_like(current)
-            live = rho > 1e-14
+            live = rho > density_floor
             np.divide(current, rho[:, None], out=result, where=live[:, None])
             return result
 
         for line in integrate_streamlines(
             velocity,
             candidates[keep],
-            arc_step=arc_step,
-            max_points=int(4.0 * extent / arc_step) + 8,
-            close_tolerance=0.5 * arc_step,
+            arc_step=resolved_arc_step,
+            max_points=_streamline_point_budget(4.0 * extent, resolved_arc_step),
+            close_tolerance=0.5 * resolved_arc_step,
         ):
             if line.vertices.shape[0] < 4:
                 continue
@@ -646,9 +788,48 @@ def build_superposition_current_field(
             speeds.append(np.round(line.speed, 6).tolist())
             max_speed = max(max_speed, float(np.max(line.speed)))
 
-    probes = candidates[keep[: min(8, keep.size)]] if keep.size else candidates[:1]
-    residual, rate_scale = continuity_residual(state, probes, time=time)
-    normalized = float(np.max(np.abs(residual)) / rate_scale) if rate_scale > 0.0 else 0.0
+    if analytic_zero_current:
+        probes = np.empty((0, 3), dtype=np.float64)
+    elif state.is_stationary:
+        probe_candidates = continuity_probe_candidates(state)
+        probe_current = superposition_current(state, probe_candidates, time=time)
+        current_magnitude = np.linalg.norm(probe_current, axis=1)
+        probe_keep = np.argsort(current_magnitude)[::-1][:_CONTINUITY_PROBE_COUNT]
+        probes = np.asarray(probe_candidates[probe_keep], dtype=np.float64)
+    else:
+        probes = select_continuity_probes(state, count=_CONTINUITY_PROBE_COUNT)
+
+    absolute = 0.0
+    transition_scale = 0.0
+    if analytic_zero_current:
+        audit_times: tuple[float, ...] = ()
+        density_rate_scale = 0.0
+    else:
+        audit_times = continuity_audit_times(state, reference_time=time)
+        for audit_time in audit_times:
+            residual, sampled_scale = continuity_residual(state, probes, time=audit_time)
+            absolute = max(absolute, float(np.max(np.abs(residual))))
+            transition_scale = max(transition_scale, sampled_scale)
+        instantaneous_rate = density_time_derivative(state, probes, time=time)
+        density_rate_scale = float(np.max(np.abs(instantaneous_rate)))
+
+    if state.is_stationary and not analytic_zero_current:
+        current = superposition_current(state, probes, time=time)
+        continuity_scale = float(np.max(np.linalg.norm(current, axis=1)) / differential_length)
+        if continuity_scale <= 0.0:
+            raise RuntimeError("stationary current had no resolvable diagnostic scale")
+        scale_kind: Literal[
+            "transition_coherence", "stationary_current", "analytic_zero_current"
+        ] = "stationary_current"
+    elif analytic_zero_current:
+        continuity_scale = 0.0
+        scale_kind = "analytic_zero_current"
+    else:
+        continuity_scale = transition_scale
+        scale_kind = "transition_coherence"
+        if continuity_scale <= 0.0:
+            raise RuntimeError("non-stationary state had no resolvable transition scale")
+    normalized = absolute / continuity_scale if continuity_scale > 0.0 else 0.0
 
     return SuperpositionCurrentPayload(
         metadata=superposition_metadata(
@@ -661,9 +842,14 @@ def build_superposition_current_field(
         speed=speeds,
         seed_count=len(lines),
         max_speed=max_speed,
-        arc_step_bohr=arc_step,
+        arc_step_bohr=resolved_arc_step,
         seed_density_floor=density_floor,
         extent_bohr=extent,
         continuity_residual=normalized,
-        density_rate_scale=rate_scale,
+        continuity_absolute_residual=absolute,
+        continuity_scale=continuity_scale,
+        continuity_scale_kind=scale_kind,
+        continuity_probe_count=probes.shape[0],
+        continuity_phase_count=len(audit_times),
+        density_rate_scale=density_rate_scale,
     )

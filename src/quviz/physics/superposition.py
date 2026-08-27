@@ -21,6 +21,7 @@ showing an artefact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite, sqrt
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -48,6 +49,8 @@ class SuperpositionTerm:
 
     def __post_init__(self) -> None:
         validate_quantum_numbers(self.n, self.l, self.m)
+        if not isfinite(float(self.coefficient.real)) or not isfinite(float(self.coefficient.imag)):
+            raise ValueError("coefficient must be finite")
 
     @property
     def quantum_numbers(self) -> tuple[int, int, int]:
@@ -66,10 +69,14 @@ class SuperpositionState:
     def __post_init__(self) -> None:
         if not self.terms:
             raise ValueError("a superposition needs at least one term")
-        if self.z <= 0.0:
-            raise ValueError("z must be positive")
-        if self.a_mu <= 0.0:
-            raise ValueError("a_mu must be positive")
+
+        # Canonical support contains every and only the states with an exact
+        # non-zero amplitude.  In particular, do not use a tolerance here: a
+        # tiny coefficient is still a physical component with its own phase.
+        terms = tuple(term for term in self.terms if term.coefficient != 0.0)
+        if not terms:
+            raise ValueError("a superposition needs at least one non-zero coefficient")
+        object.__setattr__(self, "terms", terms)
 
         seen = [term.quantum_numbers for term in self.terms]
         if len(set(seen)) != len(seen):
@@ -77,15 +84,38 @@ class SuperpositionState:
 
         # sum |c|^2 = 1 is the complete condition only because the eigenstates
         # are orthonormal; cross terms would otherwise contribute to the norm.
-        weight = float(sum(abs(term.coefficient) ** 2 for term in self.terms))
+        magnitudes = tuple(abs(term.coefficient) for term in self.terms)
+        if any(magnitude > sqrt(1.0 + NORMALIZATION_TOLERANCE) for magnitude in magnitudes):
+            raise ValueError("coefficients must be normalized: a coefficient magnitude exceeds 1")
+        weight = float(sum(magnitude * magnitude for magnitude in magnitudes))
         if abs(weight - 1.0) > NORMALIZATION_TOLERANCE:
             raise ValueError(
                 f"coefficients must be normalized: sum |c_k|^2 = {weight:.12f}, expected 1"
             )
 
+        if self.z <= 0.0 or not isfinite(self.z):
+            raise ValueError("z must be positive and finite")
+        if self.a_mu <= 0.0 or not isfinite(self.a_mu):
+            raise ValueError("a_mu must be positive and finite")
+        if not isfinite(1.0 / self.a_mu):
+            raise ValueError("a_mu must imply a finite reduced-mass ratio")
+
+    @property
+    def reduced_mass_ratio(self) -> float:
+        r"""Return :math:`\mu/m_e`, the reciprocal of the reduced-Bohr scale."""
+
+        return 1.0 / self.a_mu
+
     @property
     def energies(self) -> tuple[float, ...]:
-        return tuple(hydrogenic_energy_hartree(term.n, z=self.z) for term in self.terms)
+        return tuple(
+            hydrogenic_energy_hartree(
+                term.n,
+                z=self.z,
+                reduced_mass_ratio=self.reduced_mass_ratio,
+            )
+            for term in self.terms
+        )
 
     @property
     def energy_expectation(self) -> float:
@@ -168,12 +198,21 @@ class SuperpositionState:
     def label(self) -> str:
         """Return a compact human-readable description of the mixture."""
 
-        parts = []
+        label = ""
         for term in self.terms:
             amplitude = term.coefficient
-            magnitude = abs(amplitude)
-            body = f"{magnitude:.3g}|{term.n},{term.l},{term.m}>"
-            if abs(amplitude.imag) > 1e-12:
-                body = f"({amplitude:.3g})|{term.n},{term.l},{term.m}>"
-            parts.append(body)
-        return " + ".join(parts)
+            ket = f"|{term.n},{term.l},{term.m}>"
+            if amplitude.imag == 0.0:
+                body = f"{abs(amplitude.real):.3g}{ket}"
+                if not label:
+                    label = f"-{body}" if amplitude.real < 0.0 else body
+                else:
+                    separator = " - " if amplitude.real < 0.0 else " + "
+                    label += f"{separator}{body}"
+                continue
+
+            real = 0.0 if amplitude.real == 0.0 else amplitude.real
+            imag = 0.0 if amplitude.imag == 0.0 else amplitude.imag
+            body = f"({real:.3g}{imag:+.3g}j){ket}"
+            label += f" + {body}" if label else body
+        return label

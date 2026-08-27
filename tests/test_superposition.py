@@ -75,6 +75,90 @@ def test_rejects_duplicate_terms_and_unnormalized_coefficients() -> None:
         SuperpositionState(terms=())
 
 
+def test_zero_terms_are_removed_before_duplicate_and_stationary_checks() -> None:
+    state = _superposition(
+        (1, 0, 0, 1.0),
+        (1, 0, 0, 0.0),
+        (2, 1, 0, complex(-0.0, 0.0)),
+    )
+
+    assert state.terms == (SuperpositionTerm(1, 0, 0, 1.0),)
+    assert state.energies == (-0.5,)
+    assert state.is_stationary is True
+
+
+def test_all_zero_terms_are_rejected_after_canonicalization() -> None:
+    with pytest.raises(ValueError, match="non-zero coefficient"):
+        _superposition((1, 0, 0, 0.0), (2, 1, 0, 0.0))
+
+
+def test_term_validation_precedes_zero_pruning() -> None:
+    with pytest.raises(ValueError, match="n must be a positive integer"):
+        SuperpositionTerm(0, 0, 0, 0.0)
+
+
+def test_all_zero_check_precedes_duplicate_check() -> None:
+    with pytest.raises(ValueError, match="non-zero coefficient"):
+        _superposition((1, 0, 0, 0.0), (1, 0, 0, 0.0))
+
+
+def test_active_duplicate_check_precedes_normalization_check() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        _superposition((1, 0, 0, 0.25), (1, 0, 0, 0.25))
+
+
+def test_finite_but_huge_coefficient_is_rejected_without_overflow() -> None:
+    with pytest.raises(ValueError, match="normalized"):
+        _superposition((1, 0, 0, 1e308))
+
+
+def test_small_nonzero_coefficient_is_not_pruned() -> None:
+    epsilon = 1e-12
+    state = _superposition(
+        (1, 0, 0, sqrt(1.0 - epsilon**2)),
+        (2, 1, 0, epsilon),
+    )
+
+    assert len(state.terms) == 2
+    assert state.terms[1].coefficient == epsilon
+    assert state.is_stationary is False
+
+
+@pytest.mark.parametrize(
+    "coefficient",
+    [
+        complex(float("nan"), 0.0),
+        complex(0.0, float("nan")),
+        complex(float("inf"), 0.0),
+        complex(float("-inf"), 0.0),
+        complex(0.0, float("inf")),
+        complex(0.0, float("-inf")),
+    ],
+)
+def test_superposition_term_rejects_non_finite_coefficients(coefficient: complex) -> None:
+    with pytest.raises(ValueError, match="coefficient must be finite"):
+        SuperpositionTerm(1, 0, 0, coefficient)
+
+
+def test_a_mu_rejects_a_non_finite_derived_mass_ratio() -> None:
+    with pytest.raises(ValueError, match="finite reduced-mass ratio"):
+        SuperpositionState(terms=(SuperpositionTerm(1, 0, 0, 1.0),), a_mu=5e-324)
+
+
+def test_superposition_label_preserves_real_signs_and_complex_phases() -> None:
+    real_state = _superposition(
+        (1, 0, 0, 1.0 / sqrt(2.0)),
+        (2, 1, 0, -1.0 / sqrt(2.0)),
+    )
+    complex_state = _superposition(
+        (1, 0, 0, complex(-0.5, 0.5)),
+        (2, 1, 0, complex(0.5, 0.5)),
+    )
+
+    assert real_state.label() == "0.707|1,0,0> - 0.707|2,1,0>"
+    assert complex_state.label() == "(-0.5+0.5j)|1,0,0> + (0.5+0.5j)|2,1,0>"
+
+
 # --- Gate: norm and energy conservation --------------------------------------
 
 
