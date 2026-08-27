@@ -18,6 +18,13 @@ web/dist/
 web/.vite/
 web/coverage/
 
+# Playwright run artefacts. NOT web/e2e/__screenshots__/ -- the baselines are
+# the committed answer key the visual suite compares against, and ignoring them
+# would leave every run writing its own.
+web/playwright-report/
+web/test-results/
+web/blob-report/
+
 # Generated scientific assets
 outputs/
 .cache/

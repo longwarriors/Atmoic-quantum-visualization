@@ -304,6 +304,103 @@ describe('Inspector reports every measured diagnostic', () => {
     expect(markup).not.toContain('-0.000')
   })
 
+  /**
+   * A plane section's numbers, as `statusFromSlice` builds them: the plane and
+   * its own sample grid (deliberately NOT the isosurface's 3-D grid), the unit
+   * its values are in, the extreme the renderer normalises colour to, and the
+   * terms of the phase-mask rule.
+   */
+  const sliceStatus = (overrides: Partial<SceneStatus> = {}): SceneStatus => ({
+    loading: false,
+    plane: 'xz',
+    sliceObservable: 'phase',
+    sliceResolution: 129,
+    sliceSpacingBohr: 0.125,
+    sliceValueUnit: 'radian',
+    sliceMaxAbsValue: 3.1415,
+    maskedValueSentinel: 0,
+    phaseMaskRelativeAmplitude: 3e-3,
+    phaseMaskAmplitudeScale: 0.5,
+    phaseMaskAmplitudeThreshold: 1.5e-3,
+    phaseMaskNumericFloor: 2.2e-16,
+    phaseMaskedFraction: 0.0625,
+    metadata: eigenstateMetadata(-0.125),
+    ...overrides,
+  })
+
+  it('reports the plane, the sample grid and the unit a slice was measured in', () => {
+    const markup = render(sliceStatus())
+
+    expect(markup).toContain('<dt>Plane</dt><dd>xz</dd>')
+    // resolution × resolution, never the isosurface's cubed grid: a plane
+    // section buys resolution**2 samples and claiming resolution**3 of them
+    // overstates the evidence by two orders of magnitude.
+    expect(markup).toContain('<dt>Slice grid</dt><dd>129 × 129 · Δ=0.125 bohr</dd>')
+    expect(markup).not.toContain('129³')
+    expect(markup).toContain('<dt>Value unit</dt><dd>radian</dd>')
+    expect(markup).toContain('<dt>Max |value|</dt><dd>3.142e+0</dd>')
+  })
+
+  it('reports every term of the mask rule, not just the fraction it produced', () => {
+    const markup = render(sliceStatus())
+
+    expect(markup).toContain('<dt>Phase mask relative</dt><dd>3.000e-3</dd>')
+    expect(markup).toContain('<dt>Phase mask scale</dt><dd>5.000e-1</dd>')
+    expect(markup).toContain('<dt>Phase mask threshold</dt><dd>1.500e-3</dd>')
+    expect(markup).toContain('<dt>Phase mask floor</dt><dd>2.200e-16</dd>')
+    expect(markup).toContain('<dt>Masked fraction</dt><dd>6.250%</dd>')
+    // The finite value a masked sample literally holds. `0.0` is also a
+    // perfectly good phase, so a reader comparing numbers has to be told which
+    // zero means "undefined here".
+    expect(markup).toContain('<dt>Masked value sentinel</dt><dd>0.000</dd>')
+  })
+
+  it('renders an em dash rather than a NaN in any slice field', () => {
+    const markup = render(
+      sliceStatus({
+        sliceSpacingBohr: Number.NaN,
+        sliceMaxAbsValue: Number.NaN,
+        maskedValueSentinel: Number.NaN,
+        phaseMaskRelativeAmplitude: Number.NaN,
+        phaseMaskAmplitudeScale: Number.POSITIVE_INFINITY,
+        phaseMaskAmplitudeThreshold: Number.NaN,
+        phaseMaskNumericFloor: Number.NaN,
+        phaseMaskedFraction: Number.NaN,
+      }),
+    )
+
+    expect(markup).toContain('<dt>Slice grid</dt><dd>129 × 129 · Δ=—</dd>')
+    expect(markup).toContain('<dt>Max |value|</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Phase mask relative</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Phase mask scale</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Phase mask threshold</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Phase mask floor</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Masked fraction</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>Masked value sentinel</dt><dd>—</dd>')
+    expect(markup).not.toContain('NaN')
+    expect(markup).not.toContain('Infinity')
+  })
+
+  it('omits the mask terms a non-phase slice does not report', () => {
+    const markup = render(
+      sliceStatus({
+        sliceObservable: 'probability_density',
+        sliceValueUnit: 'bohr^-3',
+        phaseMaskRelativeAmplitude: undefined,
+        phaseMaskAmplitudeScale: undefined,
+        phaseMaskAmplitudeThreshold: undefined,
+        phaseMaskNumericFloor: undefined,
+      }),
+    )
+
+    expect(markup).toContain('<dt>Value unit</dt><dd>bohr^-3</dd>')
+    expect(markup).not.toContain('Phase mask relative')
+    expect(markup).not.toContain('Phase mask threshold')
+    // The counted fraction is reported for every slice: a section with no mask
+    // has masked nothing, and 0% is a fact where a blank would read as unknown.
+    expect(markup).toContain('<dt>Masked fraction</dt><dd>6.250%</dd>')
+  })
+
   it('shows the charge and reduced-mass scales the superposition was built with', () => {
     const status = superpositionStatus([])
     status.superposition!.z = 2

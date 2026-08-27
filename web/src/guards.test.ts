@@ -86,15 +86,22 @@ import vitestConfig from '../vitest.config'
 const SRC_ROOT = fileURLToPath(new URL('.', import.meta.url))
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
-/** Every file under src/, as a posix-style path relative to src/. */
-function walk(dir: string): string[] {
+/**
+ * Every file under `dir`, as a posix-style path relative to `root`.
+ *
+ * `root` defaults to `dir`, so `walk(SRC_ROOT)` is what it always was. The
+ * parameter exists because the skip scan covers a SECOND tree -- web/e2e, the
+ * Playwright suite -- whose specs never reach vitest and are therefore invisible
+ * to every other guard in this file.
+ */
+function walk(dir: string, root: string = dir): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) {
-      out.push(...walk(full))
+      out.push(...walk(full, root))
     } else {
-      out.push(relative(SRC_ROOT, full).split(sep).join('/'))
+      out.push(relative(root, full).split(sep).join('/'))
     }
   }
   return out.sort()
@@ -622,10 +629,15 @@ interface Hit {
   text: string
 }
 
-function scan(files: string[], matches: (line: string) => boolean): Hit[] {
+function scan(
+  files: string[],
+  matches: (line: string) => boolean,
+  root: string = SRC_ROOT,
+  prepare: (source: string) => string = (source) => source,
+): Hit[] {
   const hits: Hit[] = []
   for (const file of files) {
-    const lines = readFileSync(join(SRC_ROOT, file), 'utf-8').split('\n')
+    const lines = prepare(readFileSync(join(root, file), 'utf-8')).split('\n')
     lines.forEach((text, index) => {
       if (matches(text)) {
         hits.push({ file, line: index + 1, text: text.trim() })
@@ -633,6 +645,88 @@ function scan(files: string[], matches: (line: string) => boolean): Hit[] {
     })
   }
   return hits
+}
+
+/**
+ * `ts.SourceFile` plus the parser's own diagnostics.
+ *
+ * `parseDiagnostics` is an internal field, so it is not in TypeScript's public
+ * declarations; it is declared here as OPTIONAL and required to be present at
+ * run time by `withoutComments` below. That is the fail-closed direction: if a
+ * future TypeScript moves or renames it, the comment stripper throws instead of
+ * silently trusting a parse it can no longer check.
+ */
+interface ParsedSource extends ts.SourceFile {
+  readonly parseDiagnostics?: readonly ts.Diagnostic[]
+}
+
+/**
+ * `source` with every comment replaced by spaces, byte offsets and line breaks
+ * preserved.
+ *
+ * Needed by the e2e scan and by nothing else, and the asymmetry is deliberate.
+ * The src scan reads raw lines, which is STRICTER -- it fires on a forbidden
+ * token wherever it appears, prose included -- and the modules under src/ can
+ * afford that because none of them discusses the modifiers (this file included:
+ * it assembles every token it forbids at run time so it cannot trip itself).
+ * web/e2e cannot: those specs exist to explain why they assert a condition
+ * instead of skipping on it, and web/e2e/webgl.spec.ts says so in a doc comment
+ * that names the exact call (measured: scanning it raw is a hit at
+ * webgl.spec.ts:13). Those files belong to the visual suite, not to this guard,
+ * so the guard reads code and not prose.
+ *
+ * What that costs, precisely: a forbidden modifier hidden inside a comment is
+ * no longer reported -- and a comment cannot skip a test, which is the point.
+ * String literals are NOT blanked, so `runner['sk' + 'ip']` and every other
+ * bracket-indexed spelling stays visible to the patterns.
+ *
+ * The comment ranges come from the real parser rather than a regex, because a
+ * regex literal may contain `//` (`/https:\/\//`) and a string may contain
+ * `/*`. Offsets are preserved -- same length, same newlines -- so the line
+ * numbers `scan` reports are the file's own.
+ */
+function withoutComments(source: string): string {
+  const file: ParsedSource = ts.createSourceFile('scanned.ts', source, ts.ScriptTarget.Latest, true)
+  const diagnostics = file.parseDiagnostics
+  if (diagnostics === undefined) {
+    throw new Error(
+      'ts.SourceFile no longer carries `parseDiagnostics`, so this scan cannot tell a clean parse ' +
+        'from a recovered one -- and a mis-parsed file yields wrong comment ranges, which would ' +
+        'silently blank code. Teach this helper the current API in a reviewed commit.',
+    )
+  }
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `a spec file did not parse (${diagnostics.length} diagnostic(s), first: ` +
+        `${ts.flattenDiagnosticMessageText(diagnostics[0]?.messageText, ' ')}), so its comment ` +
+        'ranges cannot be trusted. A file that does not parse is a failed scan, not an empty one.',
+    )
+  }
+  const chars = source.split('')
+  const blank = (range: ts.CommentRange): void => {
+    for (let index = range.pos; index < range.end; index += 1) {
+      if (chars[index] !== '\n' && chars[index] !== '\r') {
+        chars[index] = ' '
+      }
+    }
+  }
+  const visit = (node: ts.Node): void => {
+    const children = node.getChildren(file)
+    if (children.length > 0) {
+      children.forEach(visit)
+      return
+    }
+    // A leaf token owns the trivia before it (and, for the last token on a
+    // line, after it); every comment in the file is one or the other.
+    for (const range of ts.getLeadingCommentRanges(source, node.getFullStart()) ?? []) {
+      blank(range)
+    }
+    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ?? []) {
+      blank(range)
+    }
+  }
+  visit(file)
+  return chars.join('')
 }
 
 const describeHits = (hits: Hit[]): string =>
@@ -666,6 +760,24 @@ const allFiles = walk(SRC_ROOT)
 const testFiles = allFiles.filter(isTestFile)
 const coverageGatedSources = allFiles.filter(isCoverageGatedSource)
 const pragmaScannedSources = allFiles.filter(isPragmaScannedSource)
+
+/**
+ * The Playwright suite -- the OTHER tree of specs in this repository.
+ *
+ * web/e2e is outside `test.include`, so vitest never collects it, which means
+ * every guard above is blind to it: `allowOnly: false` does not apply, and
+ * scripts/assert-no-skips.mjs derives its expected spec list from src/ and
+ * would not miss a file it never expected. Its own authoritative gate is
+ * scripts/assert-visual-run.mjs (a skipped test, an uncollected spec or an
+ * --update-snapshots run all fail there), and this scan is its secondary guard
+ * exactly as the src scan is assert-no-skips.mjs's: it cannot see every
+ * spelling, but when it hits it names the line.
+ *
+ * A missing e2e directory throws here, at module load, rather than yielding an
+ * empty list -- deleting the visual suite must be a red run, not a quiet one.
+ */
+const E2E_ROOT = fileURLToPath(new URL('../e2e/', import.meta.url))
+const e2eSpecFiles = walk(E2E_ROOT).filter(isTestFile)
 
 describe('guard patterns (positive controls)', () => {
   // If a fragment join ever produced a regex that matches nothing, the scans
@@ -848,6 +960,20 @@ describe('scan scope', () => {
     expect(testFiles).toContain('api/qvpc.test.ts')
     expect(testFiles).toContain('api/client.test.ts')
     expect(testFiles).toContain('scene/color.test.ts')
+  })
+
+  it('reaches the Playwright suite, which no other guard in this file sees', () => {
+    // Named one at a time as well as counted, because this scan passes
+    // VACUOUSLY over an empty list: a wrong E2E_ROOT, a renamed directory or a
+    // suite deleted wholesale would otherwise leave the skip scan below green
+    // while covering nothing at all. These are the two specs playwright
+    // .config.ts's testDir collects today.
+    expect(e2eSpecFiles).toContain('slice.spec.ts')
+    expect(e2eSpecFiles).toContain('webgl.spec.ts')
+    expect(e2eSpecFiles.length).toBeGreaterThanOrEqual(2)
+    // e2e/fixtures.ts is a helper, not a spec: Playwright's default testMatch
+    // collects `*.spec.ts` / `*.test.ts` only, and so does isTestFile.
+    expect(e2eSpecFiles).not.toContain('fixtures.ts')
   })
 
   it('coverage-gates exactly the modules coverage-scope.json lists, and nothing excluded on purpose', () => {
@@ -1199,6 +1325,65 @@ describe('committed suite integrity', () => {
   it('has no skipped, todo, focused or conditionally-run tests', () => {
     const hits = scan(testFiles, matchesForbiddenTestForm)
     expect(hits, `forbidden test modifiers:\n${describeHits(hits)}`).toEqual([])
+  })
+
+  it('has no skipped, todo, focused or conditionally-run tests in the visual suite either', () => {
+    const hits = scan(e2eSpecFiles, matchesForbiddenTestForm, E2E_ROOT, withoutComments)
+    expect(hits, `forbidden test modifiers under e2e/:\n${describeHits(hits)}`).toEqual([])
+  })
+
+  it('reads code and not prose when it scans the visual suite', () => {
+    // The scan above runs over comment-blanked sources, so it could pass by
+    // blanking too much rather than because the specs are clean. These are the
+    // controls for both directions, and they are not optional: without them a
+    // `withoutComments` that returned `''` would make the assertion above
+    // green over any suite at all.
+    const scanText = (source: string): boolean =>
+      withoutComments(source)
+        .split('\n')
+        .some((line) => matchesForbiddenTestForm(line))
+
+    // Still caught. Every spelling FORBIDDEN_TEST_PATTERNS covers, spelled
+    // through the same run-time fragments this file uses everywhere so that
+    // the controls cannot themselves trip the src scan.
+    for (const [label, source] of [
+      ['plain modifier', `test.${SKIP}('x', () => {})`],
+      ['focus modifier', `test.on${'ly'}('x', () => {})`],
+      ['todo modifier', `it.${TODO}('x')`],
+      ['bracket-indexed', `test['${SKIP}']('x', () => {})`],
+      ['conditional runner', `test.${SKIP}If(true)('x', () => {})`],
+      ['destructured modifier', `const { ${SKIP} } = test`],
+      ['runtime context call', `test('x', ({ ctx }) => {\n  ctx.${SKIP}()\n})`],
+      // The reason the ranges come from the parser: a regex literal holding a
+      // `//` is not a comment, and a hand-rolled stripper that thought it was
+      // would blank the rest of the file -- including the line below it.
+      ['after a regex literal', `const p = /https:\\/\\//\ntest.${SKIP}('x', () => {})`],
+      // ... and the same for a `/*` inside a string literal.
+      ['after a string holding a comment opener', `const s = '/*'\ntest.${SKIP}('x', () => {})`],
+    ] as const) {
+      expect(scanText(source), label).toBe(true)
+    }
+
+    // Neutralised: a comment cannot skip a test. The third case is
+    // web/e2e/webgl.spec.ts:13's shape, which is what made this helper
+    // necessary at all.
+    for (const [label, source] of [
+      ['line comment', `// test.${SKIP}('x', () => {})`],
+      ['block comment', `/* test.${SKIP}('x', () => {}) */\ntest('x', () => {})`],
+      ['doc comment prose', `/**\n * \`test.${SKIP}()\` is the wrong spelling here.\n */\nexport {}`],
+      ['trailing comment', `test('x', () => {}) // not test.${SKIP}`],
+    ] as const) {
+      expect(scanText(source), label).toBe(false)
+    }
+
+    // Offsets survive, or a reported line number points at the wrong line.
+    const sample = `/* c */\n// d\ntest('x', () => {})\n`
+    expect(withoutComments(sample)).toHaveLength(sample.length)
+    expect(withoutComments(sample).split('\n')).toHaveLength(sample.split('\n').length)
+    expect(withoutComments(sample).split('\n')[2]).toBe("test('x', () => {})")
+
+    // A file that does not parse is a failed scan, not an empty one.
+    expect(() => withoutComments('const = = 1\n')).toThrow(/did not parse/)
   })
 
   it('has no coverage-ignore pragmas in gated source modules', () => {

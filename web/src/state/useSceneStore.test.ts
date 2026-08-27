@@ -119,17 +119,29 @@ describe('superposition state fields', () => {
 
   it('defaults z and a_mu to 1', () => {
     expect(read().superpositionZ).toBe(1)
-    expect(read().superpositionAMu).toBe(1)
+    expect(read().aMu).toBe(1)
   })
 
   it('updates the superposition basis, z and a_mu through their setters', () => {
     read().setSuperpositionBasis('real')
     read().setSuperpositionZ(2.5)
-    read().setSuperpositionAMu(0.999456)
+    read().setAMu(0.999456)
 
     expect(read().superpositionBasis).toBe('real')
     expect(read().superpositionZ).toBe(2.5)
-    expect(read().superpositionAMu).toBe(0.999456)
+    expect(read().aMu).toBe(0.999456)
+  })
+
+  it('keeps a_mu across a mode change, because both modes now send it', () => {
+    // a_mu stopped being a superposition-only field when the eigenstate slice
+    // route grew it: the eigenstate slice rescales its extent and its amplitude
+    // reference by the same reduced-mass length. A name that still said
+    // "superposition" would be the store claiming otherwise.
+    read().setAMu(0.0054)
+
+    read().setMode('eigenstate')
+
+    expect(read().aMu).toBe(0.0054)
   })
 
   it('leaves the orbital basis alone when the superposition basis changes', () => {
@@ -161,11 +173,108 @@ describe('orbital normalisation', () => {
   })
 
   it('raises the grid resolution to the floor the new n needs', () => {
-    useSceneStore.setState({ resolution: 49 })
+    // Representation named on purpose: the floor being tested is the EIGENSTATE
+    // ISOSURFACE row's, and reading it off whichever representation happened to
+    // be standing is how the store came to apply that row's ceiling to
+    // everything else.
+    useSceneStore.setState({ representation: 'isosurface', resolution: 49 })
 
     read().setOrbital({ n: 3 })
 
     expect(read().resolution).toBe(65)
+  })
+})
+
+/**
+ * The grid is clamped into the bound the CURRENT cell declares, not into the
+ * eigenstate isosurface's 49..81.
+ *
+ * The store used to spell `Math.min(81, ...)` in both places that touch the
+ * resolution, which is the isosurface route's ceiling written down a second
+ * time and applied to every row. A slice runs to 513, so a user who asked for a
+ * 129-sample section had it silently cut to 81 -- and the panel's own slider,
+ * which reads the matrix, offered a value the store would not keep.
+ */
+describe('resolution follows the bound of the representation actually shown', () => {
+  it('keeps a 129-sample slice grid instead of snapping it to the isosurface ceiling', () => {
+    useSceneStore.setState({ representation: 'slice', resolution: 129 })
+
+    read().setOrbital({ n: 2 })
+
+    expect(read().representation).toBe('slice')
+    expect(read().resolution).toBe(129)
+  })
+
+  it('keeps that slice grid through applyPreset too', () => {
+    useSceneStore.setState({ representation: 'slice', resolution: 129 })
+
+    read().applyPreset({ n: 2, l: 1, m: 0, z: 1, basis: 'real' })
+
+    expect(read().resolution).toBe(129)
+  })
+
+  it('lifts a slice grid to the 16n + 17 floor the new n needs', () => {
+    useSceneStore.setState({ representation: 'slice', resolution: 65 })
+
+    read().setOrbital({ n: 5 })
+
+    expect(read().resolution).toBe(97)
+  })
+
+  it('caps a slice grid at the slice route ceiling', () => {
+    useSceneStore.setState({ representation: 'slice', resolution: 900 })
+
+    read().setOrbital({ n: 2 })
+
+    expect(read().resolution).toBe(513)
+  })
+
+  it('leaves the grid alone for a row that declares no resolution at all', () => {
+    // The point-cloud route reads `samples` and `seed`, never a grid. Lifting
+    // its resolution to a surface floor was the store editing a number the cell
+    // does not have.
+    useSceneStore.setState({ representation: 'point_cloud', resolution: 49 })
+
+    read().setOrbital({ n: 4 })
+
+    expect(read().resolution).toBe(49)
+  })
+
+  it('clamps against the representation the store resolves to, not the one asked for', () => {
+    // n = 5 demotes the isosurface to the point cloud, and the isosurface bound
+    // it just left (min 97, max 81) is not a bound at all.
+    useSceneStore.setState({ representation: 'isosurface', resolution: 65 })
+
+    read().setOrbital({ n: 5 })
+
+    expect(read().representation).toBe('point_cloud')
+    expect(read().resolution).toBe(65)
+  })
+
+  it('uses the superposition isosurface range, which carries no 16n + 17 floor', () => {
+    useSceneStore.setState({ representation: 'isosurface', resolution: 49 })
+    read().setMode('superposition')
+
+    read().setOrbital({ n: 4 })
+
+    expect(read().resolution).toBe(49)
+  })
+})
+
+describe('slice plane and observable', () => {
+  it("defaults to the slice routes' own defaults", () => {
+    // routes.py: `plane: PrincipalPlane = PrincipalPlane.XZ` and
+    // `observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY`.
+    expect(read().plane).toBe('xz')
+    expect(read().sliceObservable).toBe('probability_density')
+  })
+
+  it('writes the plane and the observable through their setters', () => {
+    read().setPlane('yz')
+    read().setSliceObservable('phase')
+
+    expect(read().plane).toBe('yz')
+    expect(read().sliceObservable).toBe('phase')
   })
 })
 

@@ -205,6 +205,57 @@ export interface SceneStatus {
   finiteGridMassErrorLowerBound?: number
   finiteGridReportingTolerance?: number
   finiteGridMassStatus?: FiniteGridMassStatus
+  /**
+   * What a slice is a slice OF: the plane it was cut on and the scalar field
+   * it carries.
+   *
+   * Neither is derivable from anything else in this status, and both change
+   * the picture completely, so a status that omitted them would leave the
+   * Inspector describing a section without saying which section it is.
+   */
+  plane?: PrincipalPlane
+  sliceObservable?: SliceObservable
+  /**
+   * The slice's own sample grid, deliberately NOT `gridResolution` /
+   * `gridSpacingBohr`: those describe the isosurface's 3-D marching grid, and
+   * a 2-D section that reused them would be reported as a volume it is not.
+   * `resolution**2` samples are what a slice buys.
+   */
+  sliceResolution?: number
+  sliceSpacingBohr?: number
+  /** The unit of `values`: `radian` for a phase section, `bohr^-3` for a density. */
+  sliceValueUnit?: string
+  /**
+   * The largest `|value|` over the samples whose value is defined.
+   *
+   * Recomputed from the samples because the payload carries no such field --
+   * `max_amplitude_on_plane` is the amplitude |psi| the mask is referenced to,
+   * a different quantity from the maximum of whichever scalar field was
+   * requested -- and a renderer normalising colour needs the latter.
+   */
+  sliceMaxAbsValue?: number
+  /**
+   * The six numbers of the mask rule.
+   *
+   * The first five are the terms a phase slice reports and every other
+   * observable omits: the relative amplitude, the amplitude scale it is taken
+   * against, the resulting threshold, the numeric floor below which the phase
+   * is noise, and the fraction actually masked. The sixth,
+   * `maskedValueSentinel`, is the finite value a masked sample carries -- shown
+   * because it is a legal value of the field it sits in (`0.0` reads as
+   * "positive real"), so a user comparing numbers has to know which `0` means
+   * "undefined here".
+   *
+   * `phaseMaskedFraction` is always the count recomputed from the mask, never
+   * the number the payload reports: a diagnostic that disagrees with the data
+   * it summarises is worse than none.
+   */
+  phaseMaskRelativeAmplitude?: number
+  phaseMaskAmplitudeScale?: number
+  phaseMaskAmplitudeThreshold?: number
+  phaseMaskNumericFloor?: number
+  phaseMaskedFraction?: number
+  maskedValueSentinel?: number
   timeAu?: number
   /**
    * A refetch is in flight while a previously fetched frame is still on

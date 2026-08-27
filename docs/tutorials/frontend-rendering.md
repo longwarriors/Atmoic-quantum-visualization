@@ -13,7 +13,9 @@
 - Inspector 从服务端 metadata 显示标签、能量、单位、几何/颜色语义和引用；
 - 等值面默认不透明并使用已校正绕向的 front faces，避免透明排序制造假结构。
 
-当前仍缺少提交到 CI 的前端交互与截图回归，主 bundle 也需要拆分。完整边界见[当前状态](../project/status.md)。
+PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与右手 $(u,v,n)$ 标架，前端把它上传成一张 `DataTexture` 贴在一块按同一标架旋转的 quad 上（`src/scene/SliceField.tsx`）。
+
+截图回归的接线已经进 CI（`web/e2e/`、`npm run test:visual`、`ci.yml` 的 `web-visual` job），但**基线 PNG 还没有**：它们只能由 Linux/SwiftShader 产生，且必须有人逐张看过第一次失败运行的 `*-actual.png` 之后才提交，见[质量门禁](../reference/quality-gates.md)。交互回归仍只有 vitest 层的组件测试，主 bundle 也需要拆分。完整边界见[当前状态](../project/status.md)。
 
 ## 当前渲染契约
 
@@ -42,6 +44,18 @@
 等值面路径是：后端用 `indexing="ij"`、显式 spacing 和奇数网格生成 scalar field；marching cubes 返回顶点和 faces；后端验证包围质量、法向/绕向和节点；前端只创建 indexed geometry 并应用材质 [@skimage-marching-cubes]。
 
 相位由颜色承载，几何由 $|\psi|^2=c$ 承载。透明度、Fresnel rim、Bloom 或雾都必须足够克制，不能让彼此分离的叶瓣看似连接。
+
+## 平面切片
+
+切片路径是：后端在过原点的主平面上求值，返回行主序标量场（`k = row * resolution + col`，`row` 走 $v$、`col` 走 $u$）、右手 $(u,v,n)$ 标架、导出的 extent 与相位遮罩；前端把每个样本着色成一个 RGBA8 texel，上传成 `DataTexture`，贴在按同一标架旋转的 quad 上。
+
+三条渲染决定必须写出来，不能靠默认值：
+
+- **采样与色彩空间四项全部显式设置**：`magFilter` / `minFilter` 都是 `NearestFilter`（插值会在节线两侧编出后端从未计算过的中间值）、`flipY = false`（行主序的第 0 行就是 $v$ 的第 0 个样本，翻转即上下镜像）、`colorSpace = NoColorSpace`（texel 已经是要显示的字节，再做一次 sRGB 转换等于把色标解码两次）。这四项恰好是 three@0.185.1 `DataTexture` 的默认值，但**默认值是关于当前版本的事实，不是关于本项目的决定**，所以逐条写出并各带一句理由；
+- **quad 的边长是 `resolution * spacing`，不是 `2 * extent`**：样本是格心，整张图比被采样的跨度正好宽一个 spacing；
+- **被遮罩的样本画成全透明且为黑**，而不是画成哨兵值 `0.0` 的颜色——`0.0` 是一个完全合法的相位（“正实数”），照着画会把低振幅区域填成一片“有确定相位”的颜色。
+
+切片显示的是那一张平面上的值，不是节面几何：遮罩标记低振幅 / 相位未定义区域，不是节点证书。
 
 ## 信息层
 

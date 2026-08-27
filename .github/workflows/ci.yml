@@ -144,3 +144,66 @@ jobs:
         run: npm ci --no-audit --no-fund
       - run: npm run test
       - run: npm run build
+
+  web-visual:
+    # The screenshot suite, and the ONLY place it can run. web/playwright
+    # .config.ts throws at module load off Linux, on purpose: the baselines in
+    # web/e2e/__screenshots__ are SwiftShader's pixels on this runner image, and
+    # every other platform renders different ones -- so a developer reaching for
+    # `--update-snapshots` after a red local run would overwrite the CI
+    # baselines with their own machine's rendering and leave the suite green
+    # locally, red here, and describing no regression at all. Nothing in
+    # check.ps1 or `npm run test` covers any of this.
+    #
+    # A separate job from `web` rather than two more steps of it: this one
+    # downloads a browser and system libraries the unit-test job has no use for,
+    # and a red pixel diff has to read as "the picture changed" rather than as
+    # "the front-end gates failed". tests/test_check_script.py pins the job's
+    # existence, its runner, its working directory, both installs, the gate step
+    # and the artefact upload, because deleting the job is cheaper than
+    # defeating any one of them and nothing else in the repository reads it.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      # `npm ci`, never `npm install`, for the reason given in the `web` job --
+      # and one more here: a pixel diff must be an argument about rendering, so
+      # the tree that draws it has to be the tree package-lock.json describes.
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      # `--no-install` makes npx refuse to fetch a *different* Playwright from
+      # the registry if the local one is missing. Browser binaries are bundled
+      # per Playwright version (which is why package.json pins @playwright/test
+      # exactly, with no caret), so without it a broken install would silently
+      # compare this tree's rendering against baselines drawn by a Chromium it
+      # never used. `--with-deps` installs the shared libraries headless
+      # Chromium needs; `chromium` alone because playwright.config.ts drives no
+      # other browser.
+      - name: Install the pinned browser
+        run: npx --no-install playwright install --with-deps chromium
+      # `playwright test` and then scripts/assert-visual-run.mjs, which is what
+      # makes the exit code mean something: Playwright exits 0 for a run in
+      # which every test was skipped, for one that collected no spec at all, and
+      # for one launched with --update-snapshots (which writes the baselines it
+      # was asked to compare against).
+      - run: npm run test:visual
+      # The only step that may carry an `if:`, and only in the safe direction: a
+      # failed comparison prints a pixel count into the log and nothing else,
+      # while the actual/expected/diff PNGs and the HTML report exist only on
+      # the runner. `failure()` rather than `always()` -- `always()` also fires
+      # on a cancelled job and uploads a half-written report. Paths are
+      # repository-relative because `defaults.run.working-directory` applies to
+      # `run:` steps only, never to a `uses:` step's inputs.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
