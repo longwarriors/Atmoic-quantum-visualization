@@ -169,7 +169,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 | `npm run test`（`web/`） | 8 个 spec 文件、264 tests passed，0 skipped，0 todo；报告列出的 4 个门禁模块与 `coverage-scope.json` 完全一致，四项覆盖率均为 100% |
 | `npm run build` | `index-*.js` 1,207.54 kB（gzip 330.35 kB），CSS gzip 3.60 kB |
 
-另经隔离环境实测：CI 等价调用（`uv sync --locked --all-groups` 后 `--group docs pytest`）在 CPython 3.13 下 878 passed（当时树尚无本轮新增的 21 项 CI 钉子测试），锁文件在 3.13 下可原样解析，故 3.13 入矩阵有实证支撑。同轮发现并记录一处待办：`quviz.docs.scan` 运行时导入 `markdown`，但该包只作为 `docs` 依赖组的传递依赖存在，未在 `dependencies`/`dev` 中声明——不带 `--group docs` 的 `uv run pytest` 会在收集期失败；修复需改 `pyproject.toml` 并重新生成 `uv.lock`，留待后续独立小 PR。
+另经隔离环境实测：CI 等价调用（`uv sync --locked --all-groups` 后 `--group docs pytest`）在 CPython 3.13 下 878 passed（当时树尚无本轮新增的 21 项 CI 钉子测试），锁文件在 3.13 下可原样解析，故 3.13 入矩阵有实证支撑。同轮发现的一处依赖失实现已修复：`quviz.docs.scan` 与 `quviz.docs.citations` 运行时导入 `markdown`，而该包此前只作为 `docs` 依赖组的传递依赖存在，未在 `dependencies`/`dev` 中声明——不带 `--group docs` 的 `uv run pytest` 会在收集期以 `ModuleNotFoundError: No module named 'markdown'` 失败，装 wheel 的使用者同样拿不到它。现已把 `markdown>=3.10` 写入 `[project] dependencies` 并重新生成 `uv.lock`（`uv lock --check` 通过，锁文件仅新增两行，把 `markdown` 从 `docs` 组的传递依赖提升为直接依赖）；新增的 `tests/test_declared_dependencies.py` 把 `src/quviz` 下每一个第三方顶层导入按已安装元数据映射回发行名，逐一比对 `[project] dependencies` 的声明，使同类漏声明不能再借传递依赖无声通过。
 
 ### PR-8 待办
 

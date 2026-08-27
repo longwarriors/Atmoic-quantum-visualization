@@ -1007,6 +1007,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "markdown" },
     { name = "numpy" },
     { name = "orjson" },
     { name = "pydantic" },
@@ -1034,6 +1035,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.134" },
+    { name = "markdown", specifier = ">=3.10" },
     { name = "numpy", specifier = ">=2.2" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pydantic", specifier = ">=2.11" },
