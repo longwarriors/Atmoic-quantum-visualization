@@ -305,14 +305,17 @@ def test_s1_1s_gives_the_same_field_on_all_three_planes() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_s2_2pz_xz_is_odd_in_v_to_one_ulp_and_exactly_even_in_u() -> None:
+def test_s2_2pz_xz_is_odd_in_v_to_a_few_ulp_and_exactly_even_in_u() -> None:
     """``values[row, col] == -values[R-1-row, col]`` and ``== values[row, R-1-col]``.
 
     The ``u`` half is bitwise exact: mirroring ``x`` changes only ``phi``, which
-    ``Y_1^0`` ignores. The ``v`` half is exact in the *grid* but one ulp short
-    in the *values*, because ``theta = arccos(z / r)`` does not mirror bitwise;
-    see the module docstring. One ulp of the plane maximum is the tightest
-    bound the current chain can meet, and it is the bound asserted.
+    ``Y_1^0`` ignores. The ``v`` half is exact in the *grid* but a last-digit
+    residue remains in the *values*, because ``theta = arccos(z / r)`` does not
+    mirror bitwise; see the module docstring. The residue depends on the
+    platform's libm rounding of that transcendental chain: measured 1.0 ulp of
+    the plane maximum on Windows (UCRT) and 1.5 ulp on Linux CI (glibc). Four
+    ulp is asserted as a platform-independent bound that is still many orders
+    of magnitude below anything the abs(psi) sabotage could satisfy.
     """
 
     payload = _eigen_slice(
@@ -321,7 +324,7 @@ def test_s2_2pz_xz_is_odd_in_v_to_one_ulp_and_exactly_even_in_u() -> None:
     field = _field(payload)
 
     assert np.array_equal(field, field[:, ::-1]), "2p_z must be exactly even in u = x"
-    assert _antisymmetry_residue_in_ulp(field) <= 1.0
+    assert _antisymmetry_residue_in_ulp(field) <= 4.0
     # Non-vacuity: the field is not flat, so "odd in v" is a real constraint.
     assert float(np.max(np.abs(field))) > 1e-3
 
