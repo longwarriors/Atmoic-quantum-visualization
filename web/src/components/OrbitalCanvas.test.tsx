@@ -938,6 +938,42 @@ describe('SceneRoot', () => {
     await renderer.unmount()
   })
 
+  it('holds the slice"s pose once the frames have run, not only at the commit', async () => {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'slice',
+      orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
+      resolution: SLICE_RESOLUTION,
+      plane: 'xz',
+    })
+    answerWith(sliceBody('xz', false))
+    const camera = defaultCamera()
+
+    const renderer = await mountScene(() => undefined, camera)
+    // The test above reads the pose at the COMMIT, which is where `aimCamera`
+    // has just put it -- and that is precisely the reading that cannot see this
+    // failure. `Bounds` is mounted before any asset exists and starts a fit of
+    // the empty scene from its own layout effect; that fit's goal is a snapshot
+    // of the camera as it was BEFORE the aim, and it is landed from a
+    // `useFrame`, i.e. one frame later. Measured against this scene before the
+    // fix: the settled camera came to rest at (19.2135, 11.5281, 23.0562) --
+    // 1.9214 times the `<Canvas>`'s own opening position (10, 6, 12) -- while
+    // `up` stayed (0, 0, 1), because `Bounds` never carries an `up` in its goal.
+    // That is a plane seen from the default three-quarter direction with the
+    // section's own up: an oblique parallelogram instead of a face-on square,
+    // and exactly what the first CI bootstrap drew for 1s2pz-t8.4-xz.
+    await renderer.advanceFrames(240, 1 / 60)
+
+    expect(camera.up.toArray()).toEqual(cameraUpForPlane('xz'))
+    const facing = camera.position.clone().normalize()
+    const expected = new THREE.Vector3(...cameraDirectionForPlane('xz')).normalize()
+    expect(facing.x).toBeCloseTo(expected.x, 5)
+    expect(facing.y).toBeCloseTo(expected.y, 5)
+    expect(facing.z).toBeCloseTo(expected.z, 5)
+
+    await renderer.unmount()
+  })
+
   it('flags the container only once the scene has actually stopped moving', async () => {
     useSceneStore.setState({
       mode: 'eigenstate',

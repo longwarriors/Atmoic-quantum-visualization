@@ -228,12 +228,22 @@ describe('SliceField', () => {
     await renderer.unmount()
   })
 
-  it('paints it with an unlit, double-sided, alpha-cut material', async () => {
+  it('paints it with an unlit, unfogged, double-sided, alpha-cut material', async () => {
     const renderer = await mountSlice(slicePayload('xz'))
     const material = materialOf(renderer)
 
     expect(material.type).toBe('MeshBasicMaterial')
     expect(material.transparent).toBe(true)
+    // Fog is atmosphere and a colormap is data. three's materials opt INTO fog
+    // by default, and the canvas builds a scene fog scaled to the extent -- so
+    // a quad that spans the whole extent, viewed from far enough back to frame
+    // it, sits deep in that range and every texel is blended towards the fog
+    // colour. Measured against the first CI bootstrap: the centre of the
+    // 1s + 2p_z section came out at luminance 9.6, which is the fog colour
+    // #050a13 exactly, i.e. the data contributed nothing at all. Nothing in
+    // this repo could see that -- the texels are right, and every other
+    // representation hugs the origin where the fog has barely started.
+    expect(material.fog).toBe(false)
     // Masked texels carry alpha 0 and every other texel alpha 255, so a cut
     // anywhere in between discards exactly the masked ones and leaves no
     // blended edge tinting their neighbours.

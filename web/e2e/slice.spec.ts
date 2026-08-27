@@ -64,28 +64,64 @@
  * stable within its own run (identical again 2.5 s later), and visibly
  * different between runs: some face-on to the section, some still at the
  * default three-quarter view. That was `aimCamera`'s imperative placement
- * racing drei's `Bounds` fit and `OrbitControls`' damping, and it was upstream
- * of everything here: no wait a harness can perform fixes a scene that has
- * genuinely stopped moving in the wrong place. (Measured on Windows/ANGLE, but
- * the race was in JavaScript, not in the rasteriser, so SwiftShader would show
- * it too.)
+ * racing drei's `Bounds` fit -- `OrbitControls`' damping was blamed alongside
+ * it, which turned out to be wrong and is what the correction below is about
+ * -- and it was upstream of everything here: no wait a harness can perform
+ * fixes a scene that has genuinely stopped moving in the wrong place.
+ * (Measured on Windows/ANGLE, but the race was in JavaScript, not in the
+ * rasteriser, so SwiftShader would show it too.)
  *
- * Both of those animations are now gone from THIS suite's runs, and not by a
- * test hook. src/components/OrbitalCanvas.tsx reads
- * `(prefers-reduced-motion: reduce)` and, for a viewer who has asked for it,
- * collapses the fit to `maxDuration={0}` and turns `OrbitControls`' damping
- * off. That is the accessibility behaviour on its own terms -- the same code
- * path runs for every such viewer whether or not anybody is taking screenshots
- * -- and playwright.config.ts sets `reducedMotion: 'reduce'` on every context,
- * so it is the path these tests exercise. With no easing curve left to be
- * sampled part-way through and no damping still integrating, the fitted pose is
- * reached in a single frame and there is one of it rather than a family.
+ * REDUCED MOTION WAS ONCE CREDITED WITH FIXING THAT, AND IT DID NOT.
+ * src/components/OrbitalCanvas.tsx does read `(prefers-reduced-motion: reduce)`
+ * and, for a viewer who has asked for it, collapse the fit to
+ * `maxDuration={0}` and turn `OrbitControls`' damping off; that is the
+ * accessibility behaviour on its own terms, the same code path runs for every
+ * such viewer whether or not anybody is taking screenshots, and
+ * playwright.config.ts sets `reducedMotion: 'reduce'` on every context, so it
+ * is the path these tests exercise. What it removes is the easing curve and the
+ * damping tail -- the two things that could be sampled part-way through. What
+ * it does not remove is the race, because the race was never about how LONG the
+ * fit took. It was about what the fit had been aimed at.
  *
- * So step 3 is now expected to PASS -- expected, not measured: this suite
- * cannot run off Linux, so the first evidence either way will be the CI
- * bootstrap itself. If it still fails, that is a second defect of the same
- * kind, and the answer is the same as it was for the first one: find what is
- * still moving. Do not widen the budget.
+ * The mechanism, named properly. `Bounds` is mounted with `observe`, so it runs
+ * fits of its own -- one from its mount, one on every canvas resize -- and each
+ * captures a goal position and rotation from wherever the camera is AT THAT
+ * MOMENT, then lands them from a `useFrame` one or more frames later.
+ * `FitOnAssetChange` aims the camera imperatively but defers its own
+ * `refresh().clip().fit()` to a `requestAnimationFrame`, and r3f's loop runs
+ * before that callback. So a goal captured BEFORE the aim lands AFTER it,
+ * writing the stale position and quaternion back over the aim -- and leaving
+ * `up` alone, because a `Bounds` goal carries no `up` at all. The deferred
+ * `refresh()` then measures the camera where the stale goal left it, and the
+ * direction nobody chose is fitted to the right distance and kept. Collapsing
+ * the durations only narrows the window; it does not close it, which is why
+ * SwiftShader -- where a frame of this scene is expensive -- still lost the
+ * race that Windows/ANGLE wins every time.
+ *
+ * MEASURED, not inferred, in both environments. Mounting the xz slice scene
+ * under `@react-three/test-renderer` and reading the camera after 240 frames
+ * instead of at the commit (src/components/OrbitalCanvas.test.tsx, "holds the
+ * slice's pose once the frames have run") put the settled camera at
+ * (19.2135, 11.5281, 23.0562) -- exactly 1.9214 times the `<Canvas>`'s own
+ * opening position (10, 6, 12) -- with `up` still (0, 0, 1). The first CI
+ * bootstrap drew that same pose: the parallelogram in its `1s2pz-t8.4-xz`
+ * image has screen edge vectors in the ratio 1.158, against 1.174 predicted
+ * for (10, 6, 12) with up (0, 0, 1) and 1.002 for the three-quarter default of
+ * `cameraDirectionFor`. The pose CI settled at is the opening camera wearing
+ * the section's own up, which is precisely what the repro produces.
+ *
+ * The fix is one line, and it is in the aim rather than in this suite:
+ * `FitOnAssetChange` calls `bounds.refresh()` BEFORE it aims. `refresh()`
+ * clears every field of the pending goal, so a fit in flight lands as a no-op
+ * and the aim is the last word before the next fit is computed; a fit started
+ * after the aim measures the aimed pose and is correct by construction.
+ *
+ * So step 3 is expected to pass -- on a stated mechanism now, rather than on a
+ * hope about durations. If it still fails, that is a further defect of the same
+ * kind, and the answer is the one it always was: find what is still moving. Do
+ * not widen the budget. And note that the five images the first bootstrap
+ * produced are NOT the baselines: that run predates both this fix and the
+ * slice's fog fix (src/scene/SliceField.tsx), and every one of them is wrong.
  *
  * The two `.not.toHaveScreenshot` assertions (the mechanism control, and the
  * half-period check in the t = 8.4 test) reference baselines the POSITIVE tests

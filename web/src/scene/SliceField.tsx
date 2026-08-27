@@ -134,6 +134,18 @@ export function SliceField({ data }: SliceFieldProps) {
         // make the same value a different colour at a different exposure, and
         // disagree with the legend printed next to it.
         toneMapped: false,
+        // And the same argument against the OTHER atmospheric control, which
+        // three opts every material into by default. The scene's fog is a depth
+        // cue scaled to the extent; this quad IS the extent, and the camera has
+        // to stand far enough back to frame all of it, so the whole section
+        // sits deep in the fog range -- far past its far distance once the
+        // viewport is tall and narrow. Measured on the first CI bootstrap: the
+        // centre of the 1s + 2p_z section rendered at luminance 9.6, which is
+        // the fog colour #050a13 to the byte. A colormap is data; blending it
+        // towards a colour that means "far away" makes the legend's colours
+        // stop being the rendered ones, and the closer the picture is to
+        // filling the frame, the less of it survives.
+        fog: false,
       }),
     [texture],
   )

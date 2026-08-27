@@ -289,6 +289,19 @@ export function FitOnAssetChange({
     // Null until the first asset of this scene has arrived: there is nothing to
     // frame before that.
     if (fitKey === null) return undefined
+    // ABANDON ANY FIT STILL IN FLIGHT, BEFORE TOUCHING THE CAMERA. `Bounds`
+    // runs fits of its own -- one from its mount, and one on every canvas
+    // resize, because it is mounted with `observe`. Each of those captures a
+    // goal position and rotation from wherever the camera is AT THAT MOMENT and
+    // then lands it from a `useFrame`, i.e. one or more frames later. Aim in
+    // between the two and the landing quietly undoes the aim: it writes the
+    // stale position and quaternion back over it, and leaves `up` alone,
+    // because a `Bounds` goal carries no `up` at all. The result is a section
+    // viewed down a direction nobody chose, with the plane's own up -- an
+    // oblique parallelogram where a face-on square belongs. `refresh()` is what
+    // discards that goal (it clears every `goal` field it has), so this is a
+    // cancellation and not a duplicate of the measurement below.
+    bounds.refresh()
     aimCamera(camera, view, plane)
     const frame = window.requestAnimationFrame(() => bounds.refresh().clip().fit())
     return () => window.cancelAnimationFrame(frame)
