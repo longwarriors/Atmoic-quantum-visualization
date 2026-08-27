@@ -112,16 +112,39 @@
  * whether what is on screen is the frame that was asked for. A `waitForTimeout`
  * here would be choosing between a race and a tax on every green run.
  *
- * **The clock is driven, not waited on.** Playback advances 0.6 a.u. every
- * 420 ms of wall time, and t = 8.4 is the fourteenth step. Pausing a real
- * interval at exactly the fourteenth tick is a race with a 420 ms window; worse,
- * the time slider CANNOT express 8.4 at all (its step base is min = -1000, so
- * its grid is ... 8.0, 8.6 ... -- measured: `fill('8.4')` is rejected as
- * "Malformed value"), which is why playback is the only honest way to reach the
- * instant the fixture was built at. `page.clock` makes those fourteen ticks
- * deterministic, and `./fixtures` holds the answer to the first one so the
- * latest-wins coordinator in useSceneAsset collapses the other thirteen into a
- * single request for the instant under test.
+ * **The clock is set through the panel, not waited on.** The instant under test
+ * is t = 8.4 a.u., and the time slider cannot express it. `TIME_BOUND`
+ * (src/api/capability.ts) transcribes the route's own range as min = -1000 and
+ * gives the widget a 0.6 a.u. increment, so the slider's grid is -1000 + 0.6n
+ * -- ... 8.0, 8.6 ... -- and 8.4 is not on it. Measured against the built app:
+ * `fill('8.4')` is refused as "Malformed value", and every DOM-level assignment
+ * (the `value` property, the prototype setter, `valueAsNumber`) is snapped to
+ * 8.6 before React's change handler ever sees it. The grid does not contain 0
+ * either -- on a fresh load the store says t = 0 while the thumb sits at 0.2.
+ *
+ * capability.ts states what that number is FOR in as many words: "a fractional
+ * step (a mass, a clock) is a display increment only and never snaps the
+ * value", and `clampParameter` honours that -- the request layer clamps the
+ * time into [-1000, 1000] and never rounds it. It is the browser's own range
+ * sanitisation that disagrees. So `advanceToHalfPeriod` clears the display
+ * increment for exactly one assignment, fills 8.4 through the input, and puts
+ * the declared step straight back. Everything downstream is the app's: its
+ * onChange, its store, its query, its texture. What is faked is one attribute
+ * of one widget, for the duration of one event.
+ *
+ * WHY NOT PLAYBACK, AND WHY NOT A FAKE CLOCK. Playback reaches 8.4 honestly --
+ * it steps 0.6 a.u. every 420 ms from the store's initial 0, and the fourteenth
+ * tick is exactly 8.4 -- but stopping it there is a race with a 420 ms window.
+ * (Nor can the two be combined: the slider's grid and the tick ladder are
+ * incommensurate, so no slider value plus any number of ticks lands on 8.4.)
+ * `page.clock` made those fourteen ticks deterministic and is what this suite
+ * used until its first CI run, where it cost every screenshot taken after it:
+ * the clock fakes `requestAnimationFrame` too, `toHaveScreenshot`'s stability
+ * phase polls the element's box across rAF callbacks, and so each capture
+ * following a `pauseAt`/`runFor` starved for its full 30 s and timed out --
+ * a `resume()` before the capture did not revive it. The one screenshot taken
+ * with the clock merely installed passed, which is what identifies the pause
+ * rather than the install as the cause.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
@@ -282,56 +305,68 @@ const chooseObservable = (page: Page, observable: string): Promise<void> =>
 const choosePlane = (page: Page, plane: string): Promise<void> =>
   page.locator(`[data-choice="plane"] button[data-choice-value="${plane}"]`).click()
 
-/** `sceneRequest.ts`: playback steps 0.6 a.u. every 420 ms. */
-const PLAYBACK_INTERVAL_MS = 420
-/** 14 * 0.6 = 8.4 a.u., the instant both time-dependent fixture pairs were built at. */
-const HALF_PERIOD_STEPS = 14
 /**
- * Where the fake clock stops. Any instant far enough past load that nothing the
- * page scheduled during startup is still pending; the value itself is never
- * displayed, because the UI's clock is the physics time in atomic units and has
- * nothing to do with the wall clock.
+ * Half the 1s + 2p_z Bohr period to within 0.023 a.u., and the instant both
+ * time-dependent fixture pairs were computed at. Spelled as the string the
+ * input carries, because that is what is typed into it.
  */
-const CLOCK_PAUSE_AT = new Date('2026-01-01T01:00:00Z')
-/** The wall-clock instant the page loads at, fixed so the pause above is too. */
-const CLOCK_INSTALL_AT = new Date('2026-01-01T00:00:00Z')
+const HALF_PERIOD_AU = '8.4'
 
 /**
- * Advance playback to t = 8.4 a.u. -- the fourteenth 0.6 a.u. step, and half
- * the 1s + 2p_z Bohr period to within 0.023 a.u.
+ * The time slider's declared increment, asserted rather than assumed.
  *
- * Every step here exists because of something that is otherwise a race:
+ * This is `TIME_BOUND.step` reaching the DOM. The helper below suspends it, so
+ * it reads it back first: if the panel ever declares a step that DOES put 8.4
+ * on the grid, the assertion fails, and the right response is to delete the
+ * suspension rather than to keep overriding a constraint that no longer bites.
+ */
+const DECLARED_TIME_STEP = '0.6'
+
+/** The panel's clock: `ParameterRow`'s range input for `timeAu`. */
+const timeSlider = (page: Page): Locator => page.locator('input[data-parameter="timeAu"]')
+
+/**
+ * Set the clock to t = 8.4 a.u. through the panel, and prove the frame on
+ * screen is the new one before returning.
  *
- *   - the clock is PAUSED first, so the fourteen ticks are the only time that
- *     passes and no fifteenth can arrive while the pause button is being
- *     clicked;
- *   - the first tick is run alone and the status bar is read, so the request
- *     for t = 0.6 is provably in flight before the rest run. The harness is
- *     holding its answer, so `useSceneAsset` keeps exactly one request open and
- *     remembers only the newest time behind it: the remaining thirteen ticks
- *     collapse into one queued instant instead of fourteen races;
- *   - playback is stopped BEFORE the held answer is released, so the queued
- *     instant is 8.4 and nothing can advance past it;
- *   - the clock is resumed last, because `page.clock` fakes
- *     requestAnimationFrame too: with it paused the new payload would be in the
- *     scene graph and never drawn, and the screenshot would be of the old frame.
+ * Two things happen here and both are deliberate.
+ *
+ * The DISPLAY INCREMENT is suspended for one assignment. 8.4 is not on the
+ * slider's -1000 + 0.6n grid, so the browser's range sanitisation rewrites it
+ * to 8.6 -- see the note at the top of this file, and capability.ts, which says
+ * the step is a display increment that must never snap a clock. With `step`
+ * cleared the fill is an ordinary user edit: React's own onChange reads 8.4 off
+ * the input, `setTimeAu` stores it, and the query carries `time=8.4`. The
+ * declared step goes back immediately, so the control is left exactly as the
+ * app renders it -- including the thumb re-snapping to 8.6 over a store that
+ * says 8.4, which is the state playback itself produces and not an artefact of
+ * this test.
+ *
+ * The ANSWER IS HELD (`openApp(..., { hold })`), which turns the transition
+ * into something assertable. Without it the fixture is served from memory and
+ * the new frame is up before anything can look; with it the app sits in
+ * `refreshing` -- old frame on screen, new instant named -- until this function
+ * releases it. That is the keep-the-last-frame behaviour asserted directly,
+ * and it replaces the fourteen-tick walk with one request for one instant.
  */
 async function advanceToHalfPeriod(page: Page, ledger: RequestLedger): Promise<void> {
   const status = page.locator('span[data-status]')
-  await page.clock.pauseAt(CLOCK_PAUSE_AT)
-  await page.locator('[data-control="playback"]').click()
+  const clock = timeSlider(page)
 
-  await page.clock.runFor(PLAYBACK_INTERVAL_MS)
+  await expect(clock).toHaveAttribute('step', DECLARED_TIME_STEP)
+  await clock.evaluate((input) => input.setAttribute('step', 'any'))
+  await clock.fill(HALF_PERIOD_AU)
+  await clock.evaluate((input, step) => input.setAttribute('step', step), DECLARED_TIME_STEP)
+
+  // The old frame, still up, labelled with the instant it actually shows and
+  // the one being computed. Both halves matter: a UI that relabelled the frame
+  // on screen with the requested time would print "showing t=8.4" here over
+  // pixels drawn at t=0.
   await expect(status).toHaveAttribute('data-status', 'refreshing', SETTLE)
-  await expect(status).toHaveText(/showing t=0\.0 a\.u\. · computing t=0\.6 a\.u\./, SETTLE)
+  await expect(status).toHaveText(/showing t=0\.0 a\.u\. · computing t=8\.4 a\.u\./, SETTLE)
 
-  await page.clock.runFor(PLAYBACK_INTERVAL_MS * (HALF_PERIOD_STEPS - 1))
-  await expect(status).toHaveText(/computing t=8\.4 a\.u\./, SETTLE)
-
-  await page.locator('[data-control="playback"]').click()
   ledger.releaseHeld()
   await expect(status).toHaveAttribute('data-status', 'ready', SETTLE)
-  await page.clock.resume()
   await expect(contractValue(page, 'Time')).toHaveText('8.40 a.u.', SETTLE)
 }
 
@@ -474,9 +509,10 @@ test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL })
 
 test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ page, baseURL }) => {
   const terms = SUPERPOSITION_TERMS['2s-2pz']
-  const held = superpositionSliceQuestion({ terms, time: '0.6' })
+  // The t = 8.4 section of this mixture: a committed fixture, withheld so the
+  // step away from t = 0 can be caught mid-flight rather than after the fact.
+  const held = superpositionSliceQuestion({ terms, time: HALF_PERIOD_AU })
   const ledger = await openApp(page, baseURL, { hold: held })
-  await page.clock.install({ time: CLOCK_INSTALL_AT })
   await showPlaneSection(page)
   await page.locator('.representation-switch button:has-text("Superposition")').click()
   await settled(page)
@@ -523,9 +559,11 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
       // strip is touched, and that scene is a fixture too.
       '1s2pz-t0-xz',
       'degenerate-stationary-xz-t0',
+      // The held one, now released: a single jump to t = 8.4 asks for the
+      // instant under test and nothing between it and t = 0.
       'degenerate-stationary-xz-t8.4',
     ],
-    declared: [EIGENSTATE_DENSITY_XZ, held],
+    declared: [EIGENSTATE_DENSITY_XZ],
   })
 
   await expect(canvasOf(page)).toHaveScreenshot(
@@ -563,9 +601,11 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   page,
   baseURL,
 }) => {
-  const held = superpositionSliceQuestion({ terms: SUPERPOSITION_TERMS['1s-2pz'], time: '0.6' })
+  const held = superpositionSliceQuestion({
+    terms: SUPERPOSITION_TERMS['1s-2pz'],
+    time: HALF_PERIOD_AU,
+  })
   const ledger = await openApp(page, baseURL, { hold: held })
-  await page.clock.install({ time: CLOCK_INSTALL_AT })
   await showPlaneSection(page)
   await page.locator('.representation-switch button:has-text("Superposition")').click()
   await settled(page)
@@ -576,7 +616,7 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
 
   expectProvenance(ledger, {
     served: [...CATALOGS, '1s2pz-t0-xz', '1s2pz-t8.4-xz'],
-    declared: [EIGENSTATE_DENSITY_XZ, held],
+    declared: [EIGENSTATE_DENSITY_XZ],
   })
 
   await expect(canvasOf(page)).toHaveScreenshot('1s2pz-t8.4-xz.png', screenshotOptions(page))

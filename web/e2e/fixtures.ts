@@ -291,13 +291,19 @@ export interface HarnessOptions {
    */
   transform?: Readonly<Record<string, (payload: unknown) => unknown>>
   /**
-   * One canonical question whose 503 is withheld until `releaseHeld()`.
+   * One canonical question whose answer is withheld until `releaseHeld()` --
+   * a fixture's payload or a declined question's 503, whichever it would have
+   * been.
    *
-   * This is what makes playback deterministic. `useSceneAsset` keeps exactly
-   * one request in flight and remembers only the newest time behind it, so
-   * holding the answer to the first tick's question collapses every later tick
-   * into one queued time -- the one the test is about -- instead of a race
-   * between the clock and the network.
+   * This is what makes the app's keep-the-last-frame behaviour observable. A
+   * committed fixture is served from memory, so the new frame is up before any
+   * assertion could run and `refreshing` -- "what you are looking at is the
+   * PREVIOUS frame, and here is the instant being computed" -- would be caught
+   * only by luck. Holding the answer parks the app in that state for as long
+   * as the test needs it, with no timer on either side of the assertion.
+   *
+   * A test that sets this MUST call `releaseHeld()`: until it does, the
+   * request stays pending and the page never settles.
    */
   hold?: string
 }
@@ -348,6 +354,14 @@ export async function installApiHarness(
       return
     }
     const asked = canonicalQuestion(url)
+    // Withheld BEFORE the fixture lookup, so `hold` means "this question's
+    // answer waits", whatever that answer turns out to be. It used to gate the
+    // 503 branch only, which made the option unusable for the case it is now
+    // for: holding the answer a test HAS a fixture for is what makes the
+    // keep-the-old-frame state observable instead of a race with the network.
+    if (asked === options.hold) {
+      await held
+    }
     const fixture = VISUAL_FIXTURES[asked]
     if (fixture !== undefined) {
       const mutate = transform[fixture]
@@ -364,9 +378,6 @@ export async function installApiHarness(
       return
     }
     declined.push(asked)
-    if (asked === options.hold) {
-      await held
-    }
     await route.fulfill({
       status: 503,
       contentType: 'text/plain',
