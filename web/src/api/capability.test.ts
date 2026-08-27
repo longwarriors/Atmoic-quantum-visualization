@@ -14,7 +14,7 @@ import {
 import type { OrbitalParameters, RepresentationKind } from './types'
 
 /**
- * The five fetchers `executeSceneRequest` dispatches to, stubbed.
+ * The seven fetchers `executeSceneRequest` dispatches to, stubbed.
  *
  * The subset guard below asks one question -- "does every representation the
  * panel offers reach a fetcher?" -- and the honest way to ask it is to run the
@@ -30,7 +30,9 @@ vi.mock('./client', async (importOriginal) => {
     fetchPointCloud: stub,
     fetchIsosurface: stub,
     fetchCurrentField: stub,
+    fetchSlice: stub,
     fetchSuperpositionIsosurface: stub,
+    fetchSuperpositionSlice: stub,
     fetchSuperpositionCurrentField: stub,
   }
 })
@@ -794,13 +796,12 @@ describe('the matrix answers for every representation there is', () => {
 describe('the panel offers no representation the dispatcher cannot fetch', () => {
   const panelIds = controlPanelRepresentationIds()
 
-  it('offers exactly the three representations that have a renderer today', () => {
-    // The slice row exists in the matrix before the slice has a renderer, and
-    // a button for it would offer the user a scene nothing can draw. This
-    // assertion is what keeps that gap deliberate: adding the button is a
-    // change to this list, made in the PR that lands the renderer.
-    expect(panelIds).toEqual(['point_cloud', 'isosurface', 'streamlines'])
-    expect(panelIds).not.toContain('slice')
+  it('offers exactly the four representations that have a renderer today', () => {
+    // The slice row spent one PR in the matrix with no button, because a button
+    // for a scene nothing can draw is worse than no button. The renderer landed,
+    // so the button did: this list is the pin that keeps the two in step, and
+    // adding a fifth representation means editing it in the PR that draws it.
+    expect(panelIds).toEqual(['point_cloud', 'isosurface', 'slice', 'streamlines'])
   })
 
   it.each(panelIds.flatMap((id) => EVERY_MODE.map((mode) => [mode, id] as const)))(

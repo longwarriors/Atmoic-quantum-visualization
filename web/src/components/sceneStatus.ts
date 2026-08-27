@@ -1,3 +1,8 @@
+import {
+  sliceMaskedFraction,
+  sliceValueAt,
+  type AnySlicePayload,
+} from '../api/sliceContract'
 import type {
   CurrentFieldPayload,
   SceneStatus,
@@ -27,6 +32,84 @@ export function statusFromSuperpositionIsosurface(
     timeAu: data.metadata.time_au,
     superposition: data.metadata,
     warnings: data.metadata.warnings,
+  }
+}
+
+/** A reported optional number, or `undefined` where the payload sends none. */
+function reported(value: number | null | undefined): number | undefined {
+  return value ?? undefined
+}
+
+/**
+ * The largest defined `|value|` on the plane.
+ *
+ * Read through `sliceValueAt`, which is the only row-major accessor the
+ * contract module exposes and the only thing that knows a masked sample reads
+ * as `null` rather than as its sentinel. Indexing `values` here instead would
+ * work today -- the sentinel is `0.0` and `|0|` loses every maximum -- and stop
+ * working the moment the sentinel is anything else, which is exactly the class
+ * of silent breakage the accessor exists to prevent.
+ */
+function maxAbsValue(payload: AnySlicePayload): number {
+  const { resolution } = payload
+  let largest = 0
+  for (let row = 0; row < resolution; row += 1) {
+    for (let col = 0; col < resolution; col += 1) {
+      const value = sliceValueAt(payload, row, col)
+      if (value !== null && Math.abs(value) > largest) {
+        largest = Math.abs(value)
+      }
+    }
+  }
+  return largest
+}
+
+/**
+ * Every number the Inspector shows about a plane section, from either slice
+ * payload.
+ *
+ * One adapter for both because they differ only in metadata, which is the one
+ * thing dispatched on here: an eigenstate slice fills `metadata`, a
+ * superposition slice fills `superposition` and the time it is a section of.
+ *
+ * `phaseMaskedFraction` comes from `sliceMaskedFraction`, which COUNTS the
+ * mask and cross-checks the payload's own `phase_masked_fraction` against that
+ * count -- so this function throws on a payload whose diagnostic disagrees
+ * with its data, rather than forwarding the number a user would go on to
+ * quote. The forwarded fraction is the recomputation in every case, including
+ * the unmasked one: a slice carrying no mask has masked nothing, and `0` is a
+ * fact where the raw field's `null` would read as "unknown".
+ */
+export function statusFromSlice(payload: AnySlicePayload): SceneStatus {
+  const status: SceneStatus = {
+    loading: false,
+    plane: payload.plane,
+    sliceObservable: payload.slice_observable,
+    sliceResolution: payload.resolution,
+    sliceSpacingBohr: payload.spacing_bohr,
+    sliceValueUnit: payload.value_unit,
+    sliceMaxAbsValue: maxAbsValue(payload),
+    extentBohr: payload.extent_bohr,
+    maskedValueSentinel: payload.masked_value_sentinel,
+    phaseMaskRelativeAmplitude: reported(payload.phase_mask_relative_amplitude),
+    phaseMaskAmplitudeScale: reported(payload.phase_mask_amplitude_scale),
+    phaseMaskAmplitudeThreshold: reported(payload.phase_mask_amplitude_threshold),
+    phaseMaskNumericFloor: reported(payload.phase_mask_numeric_floor),
+    phaseMaskedFraction: sliceMaskedFraction(payload),
+  }
+  const { metadata } = payload
+  // `warnings` is optional on the generated metadata (the server omits an
+  // empty list) and required on the hand-written type the UI reads; an absent
+  // list means no warnings, which is a fact, so it is spelled as one.
+  const warnings = metadata.warnings ?? []
+  if ('state' in metadata) {
+    return { ...status, metadata: { ...metadata, warnings }, warnings }
+  }
+  return {
+    ...status,
+    timeAu: metadata.time_au,
+    superposition: { ...metadata, warnings },
+    warnings,
   }
 }
 

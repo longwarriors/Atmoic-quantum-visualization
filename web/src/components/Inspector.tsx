@@ -223,6 +223,111 @@ export function Inspector({ status }: InspectorProps) {
             </dd>
           </div>
         ) : null}
+        {/*
+          A plane section's own numbers, every one of them through
+          `formatFinite`: these are the terms a reader would quote off the
+          screen, and a NaN threshold shown as "NaN" reads like a measured one.
+
+          Reported separately from the isosurface's `Grid` above, and never
+          folded into it: that grid is a 3-D marching grid and this one is a
+          plane, so `resolution × resolution` is written out rather than cubed.
+          A slice buys `resolution**2` samples and saying otherwise overstates
+          the evidence behind every number beside it.
+        */}
+        {status.plane !== undefined ? (
+          <div><dt>Plane</dt><dd>{status.plane}</dd></div>
+        ) : null}
+        {status.sliceResolution !== undefined ? (
+          <div>
+            <dt>Slice grid</dt>
+            <dd>
+              {formatFinite(status.sliceResolution, { kind: 'count' })} ×{' '}
+              {formatFinite(status.sliceResolution, { kind: 'count' })} · Δ=
+              {formatFiniteUnit(status.sliceSpacingBohr, { kind: 'fixed', digits: 3 }, 'bohr')}
+            </dd>
+          </div>
+        ) : null}
+        {status.sliceValueUnit !== undefined ? (
+          <div><dt>Value unit</dt><dd>{status.sliceValueUnit}</dd></div>
+        ) : null}
+        {/*
+          The extreme the renderer normalises colour to -- the largest |value|
+          among the samples whose value is DEFINED, recomputed from the data.
+          Not `max_amplitude_on_plane`: for a real or imaginary component
+          |Re ψ| ≤ |ψ| pointwise, so the two differ by a state-dependent amount
+          and quoting one for the other silently mis-scales the ramp's label.
+        */}
+        {status.sliceMaxAbsValue !== undefined ? (
+          <div>
+            <dt>Max |value|</dt>
+            <dd>{formatFinite(status.sliceMaxAbsValue, { kind: 'exponential', digits: 3 })}</dd>
+          </div>
+        ) : null}
+        {/*
+          The mask rule in the order it is applied: the relative amplitude, the
+          scale it is taken against, their product (the threshold), the numeric
+          floor that takes over when the evaluation's own cancellation residue
+          exceeds it, and the fraction that resulted. All five are shown because
+          a bare fraction cannot be checked, and only a phase slice reports the
+          first four -- every other observable omits them, so each is guarded.
+        */}
+        {status.phaseMaskRelativeAmplitude !== undefined ? (
+          <div>
+            <dt>Phase mask relative</dt>
+            <dd>
+              {formatFinite(status.phaseMaskRelativeAmplitude, { kind: 'exponential', digits: 3 })}
+            </dd>
+          </div>
+        ) : null}
+        {status.phaseMaskAmplitudeScale !== undefined ? (
+          <div>
+            <dt>Phase mask scale</dt>
+            <dd>
+              {formatFinite(status.phaseMaskAmplitudeScale, { kind: 'exponential', digits: 3 })}
+            </dd>
+          </div>
+        ) : null}
+        {status.phaseMaskAmplitudeThreshold !== undefined ? (
+          <div>
+            <dt>Phase mask threshold</dt>
+            <dd>
+              {formatFinite(status.phaseMaskAmplitudeThreshold, { kind: 'exponential', digits: 3 })}
+            </dd>
+          </div>
+        ) : null}
+        {status.phaseMaskNumericFloor !== undefined ? (
+          <div>
+            <dt>Phase mask floor</dt>
+            <dd>
+              {formatFinite(status.phaseMaskNumericFloor, { kind: 'exponential', digits: 3 })}
+            </dd>
+          </div>
+        ) : null}
+        {status.phaseMaskedFraction !== undefined ? (
+          <div>
+            <dt>Masked fraction</dt>
+            <dd>
+              {formatFiniteUnit(
+                status.phaseMaskedFraction * 100,
+                { kind: 'fixed', digits: 3 },
+                '%',
+                '',
+              )}
+            </dd>
+          </div>
+        ) : null}
+        {/*
+          The finite value a masked sample literally holds in `values`. Shown
+          because it is a legal value of the field it sits in -- `0.0` reads as
+          a positive real amplitude, and as phase 0 -- so a reader comparing
+          numbers has to be told which zero means "undefined here".
+        */}
+        {status.maskedValueSentinel !== undefined ? (
+          <div>
+            <dt>Masked value sentinel</dt>
+            <dd>{formatFinite(status.maskedValueSentinel, { kind: 'magnitude', digits: 3 })}</dd>
+          </div>
+        ) : null}
         {status.finiteGridMassStatus !== undefined ? (
           <div>
             <dt>Grid mass status</dt>

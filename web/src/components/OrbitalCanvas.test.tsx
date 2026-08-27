@@ -27,23 +27,33 @@
  * config's default `node` environment because the scene reaches
  * `window.devicePixelRatio` and `window.requestAnimationFrame`.
  */
+import type { BoundsProps, OrbitControlsProps } from '@react-three/drei'
 import ReactThreeTestRenderer, { act } from '@react-three/test-renderer'
 import { createElement, type ReactElement } from 'react'
 import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PLANE_FRAMES, parseSlicePayload } from '../api/sliceContract'
 import type {
   CurrentFieldPayload,
   IsosurfacePayload,
   OrbitalMetadata,
   PointCloudData,
+  PrincipalPlane,
   SceneStatus,
+  SlicePayload,
   SuperpositionCurrentPayload,
   SuperpositionIsosurfacePayload,
   SuperpositionMetadata,
+  SuperpositionSlicePayload,
 } from '../api/types'
-import { cameraDirectionFor } from '../scene/camera'
+import {
+  cameraDirectionFor,
+  cameraDirectionForPlane,
+  cameraUpForPlane,
+} from '../scene/camera'
 import { fogRangeFor } from '../scene/fog'
+import { SCENE_READY_ATTRIBUTE } from '../scene/SceneReady'
 import { useSceneStore } from '../state/useSceneStore'
 import { mount } from '../test/mount'
 import {
@@ -54,6 +64,7 @@ import {
   SceneContent,
   SceneRoot,
   sceneAssetInputs,
+  slicePlaneOf,
 } from './OrbitalCanvas'
 import type { SceneAsset } from './useSceneAsset'
 
@@ -87,6 +98,44 @@ vi.mock('@react-three/fiber', async (importOriginal) => {
   }
 })
 
+/* --------------------------------------------------- the two animations */
+
+/**
+ * `Bounds` and `OrbitControls`, RECORDED AND THEN RENDERED FOR REAL.
+ *
+ * The `Canvas` stub above replaces its component because a `WebGLRenderer`
+ * cannot exist here. These two are the opposite case: the camera fit's duration
+ * and the controls' damping flag are the props under test, but the fit is also
+ * what `useBounds` hands `FitOnAssetChange` and the controls are what moves the
+ * camera -- so a stub that swallowed them would take the camera-aiming and
+ * readiness tests in this file down with it. The wrapper records the props it
+ * was handed and passes the same object to the real component, which is why
+ * every other test here behaves exactly as it did before.
+ */
+const boundsProps = vi.hoisted(() => ({ current: null as { maxDuration?: number } | null }))
+const controlsProps = vi.hoisted(() => ({
+  current: null as { enableDamping?: boolean } | null,
+}))
+
+vi.mock('@react-three/drei', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@react-three/drei')>()
+  // Imported here rather than taken from this file's own import: a mock factory
+  // is hoisted above the imports, and reaching a binding that has not been
+  // initialised yet is a TDZ error at module load.
+  const { createElement: element } = await import('react')
+  return {
+    ...actual,
+    Bounds: (props: BoundsProps) => {
+      boundsProps.current = props
+      return element(actual.Bounds, props)
+    },
+    OrbitControls: (props: OrbitControlsProps) => {
+      controlsProps.current = props
+      return element(actual.OrbitControls, props)
+    },
+  }
+})
+
 /* ------------------------------------------------------------- act scope */
 
 interface ActScope {
@@ -115,6 +164,10 @@ afterEach(() => {
   restoreActEnvironment()
   useSceneStore.setState(initialStore, true)
   canvasProps.current = null
+  boundsProps.current = null
+  controlsProps.current = null
+  readyContainer?.remove()
+  readyContainer = null
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -275,6 +328,60 @@ function superpositionCurrent(): SuperpositionCurrentPayload {
   }
 }
 
+/**
+ * A slice section, built as a raw record and pushed through the contract.
+ *
+ * Not cast into shape: a fixture the contract would refuse is a fixture no
+ * renderer can ever be handed, so casting one would prove nothing about the
+ * canvas's slice wiring. The frame comes from the contract's own frozen table
+ * for the same reason -- a second copy of it here could drift with the code it
+ * is supposed to hold still.
+ */
+const SLICE_RESOLUTION = 65
+const SLICE_EXTENT_BOHR = 3.2
+
+function sliceBody(plane: PrincipalPlane, superposition: boolean): Record<string, unknown> {
+  const frame = PLANE_FRAMES[plane]
+  const values: number[] = []
+  for (let row = 0; row < SLICE_RESOLUTION; row += 1) {
+    for (let col = 0; col < SLICE_RESOLUTION; col += 1) {
+      values.push(col - 2 * row)
+    }
+  }
+  return {
+    layout: 'row_major_v_rows_u_columns',
+    plane,
+    slice_observable: 'wavefunction_real',
+    resolution: SLICE_RESOLUTION,
+    extent_bohr: SLICE_EXTENT_BOHR,
+    spacing_bohr: (2 * SLICE_EXTENT_BOHR) / (SLICE_RESOLUTION - 1),
+    origin_bohr: [0, 0, 0],
+    u_axis: [...frame.u_axis],
+    v_axis: [...frame.v_axis],
+    normal: [...frame.normal],
+    length_unit: 'bohr',
+    value_unit: 'bohr^-3/2',
+    masked_value_sentinel: 0,
+    max_amplitude_on_plane: 0.31,
+    metadata: superposition
+      ? superpositionMetadata()
+      : orbitalMetadata({ n: 2, l: 1, m: 0, z: 1, basis: 'real' }, 'slice'),
+    values,
+    valid_mask: null,
+    phase_mask_relative_amplitude: null,
+    phase_mask_amplitude_scale: null,
+    phase_mask_amplitude_threshold: null,
+    phase_mask_numeric_floor: null,
+    phase_masked_fraction: null,
+  }
+}
+
+const slice = (plane: PrincipalPlane = 'xz'): SlicePayload =>
+  parseSlicePayload(sliceBody(plane, false)) as SlicePayload
+
+const superpositionSlice = (plane: PrincipalPlane = 'xy'): SuperpositionSlicePayload =>
+  parseSlicePayload(sliceBody(plane, true)) as SuperpositionSlicePayload
+
 /* ------------------------------------------------------------------ fetch */
 
 let requestedUrls: string[] = []
@@ -319,10 +426,25 @@ async function mountScene(
 ): Promise<Renderer> {
   const renderer = await ReactThreeTestRenderer.create(createElement(SceneRoot, { onStatus }), {
     camera,
+    // The readiness flag lands on the element the canvas sits in, and the test
+    // renderer creates its canvas detached. Giving it a container is what makes
+    // this harness the same shape as the real `<Canvas>`.
+    beforeReturn: (created: HTMLCanvasElement) => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      container.appendChild(created)
+      readyContainer = container
+    },
   })
   await act(async () => undefined)
   return renderer
 }
+
+/** The container `mountScene` put the canvas in, for the readiness flag. */
+let readyContainer: HTMLElement | null = null
+
+const readyFlag = (): string | null =>
+  readyContainer?.getAttribute(SCENE_READY_ATTRIBUTE) ?? null
 
 function defaultCamera(): THREE.PerspectiveCamera {
   const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 500)
@@ -365,8 +487,10 @@ describe('sceneAssetInputs', () => {
       superpositionTerms: '1,0,0,1',
       superpositionBasis: 'real',
       superpositionZ: 4,
-      superpositionAMu: 0.999456,
+      aMu: 0.999456,
       timeAu: 6.5,
+      plane: 'yz',
+      sliceObservable: 'phase',
     })
 
     // The argument is the live store state: if the store renames or drops a
@@ -385,7 +509,21 @@ describe('sceneAssetInputs', () => {
       superpositionBasis: 'real',
       aMu: 0.999456,
       timeAu: 6.5,
+      plane: 'yz',
+      sliceObservable: 'phase',
     })
+  })
+
+  it('carries the slice"s plane and observable, which nothing else can supply', () => {
+    useSceneStore.setState({ plane: 'xy', sliceObservable: 'wavefunction_imag' })
+
+    // These two are the pair whose absence is SILENT: a request that omits
+    // them is answered by routes.py with its own defaults -- a valid section
+    // of a plane nobody asked for, carrying a field nobody asked for, while
+    // the panel goes on displaying the choice the user made.
+    const inputs = sceneAssetInputs(useSceneStore.getState())
+    expect(inputs.plane).toBe('xy')
+    expect(inputs.sliceObservable).toBe('wavefunction_imag')
   })
 
   it('sends the superposition its OWN nuclear charge, not the eigenstate panel"s', () => {
@@ -444,6 +582,23 @@ describe('SceneContent', () => {
       data: superpositionIsosurface(),
     })
     expect(typesUnder(evolving)).toEqual(['Group', 'Mesh'])
+    await evolving.unmount()
+  })
+
+  it('draws either slice as one textured quad', async () => {
+    const stationary = await mountAsset({ kind: 'slice', data: slice() })
+    expect(typesUnder(stationary)).toEqual(['Mesh'])
+    await stationary.unmount()
+
+    // Same renderer for both, for `CurrentStreamlines`' reason: the two
+    // payloads differ only in metadata, and a second component for the
+    // time-dependent one could drift from this one's orientation or colour
+    // space without anything failing.
+    const evolving = await mountAsset({
+      kind: 'superposition_slice',
+      data: superpositionSlice(),
+    })
+    expect(typesUnder(evolving)).toEqual(['Mesh'])
     await evolving.unmount()
   })
 
@@ -515,6 +670,22 @@ describe('cameraViewOf', () => {
   })
 })
 
+describe('slicePlaneOf', () => {
+  it('reports the plane of either slice, and none for anything else', () => {
+    // The plane is read off the PAYLOAD, not off the store: the store holds
+    // what was last asked for, and while a request is in flight that is a
+    // different plane from the one on screen -- which is exactly when aiming
+    // the camera at the store's answer would face the wrong way.
+    expect(slicePlaneOf({ kind: 'slice', data: slice('yz') })).toBe('yz')
+    expect(
+      slicePlaneOf({ kind: 'superposition_slice', data: superpositionSlice('xy') }),
+    ).toBe('xy')
+    expect(slicePlaneOf({ kind: 'isosurface', data: isosurface() })).toBeUndefined()
+    expect(slicePlaneOf({ kind: 'point_cloud', data: pointCloud() })).toBeUndefined()
+    expect(slicePlaneOf(null)).toBeUndefined()
+  })
+})
+
 describe('aimCamera', () => {
   it('puts the camera on the canonical direction for the state, at its own distance', () => {
     const camera = new THREE.PerspectiveCamera()
@@ -560,6 +731,46 @@ describe('aimCamera', () => {
 
     // A zero-length position would normalise to NaN and put the camera nowhere.
     expect(camera.position.length()).toBeCloseTo(10, 6)
+  })
+
+  it('faces a slice down its own normal, with the frame"s v axis as up', () => {
+    for (const plane of ['xy', 'xz', 'yz'] as const) {
+      const camera = new THREE.PerspectiveCamera()
+      camera.position.set(0, 0, 20)
+
+      aimCamera(camera, undefined, plane)
+
+      const direction = new THREE.Vector3(...cameraDirectionForPlane(plane))
+        .normalize()
+        .multiplyScalar(20)
+      expect(camera.position.x).toBeCloseTo(direction.x, 6)
+      expect(camera.position.y).toBeCloseTo(direction.y, 6)
+      expect(camera.position.z).toBeCloseTo(direction.z, 6)
+      // `up` is not decoration on a slice view. The xz plane's normal is -y,
+      // so the camera looks straight down the default up vector: lookAt has no
+      // basis to build from there and the picture degenerates. The frame's own
+      // v axis is also the only choice that puts screen +Y on v, which is what
+      // makes the image the grid the server sampled rather than a rotation of
+      // it.
+      expect(camera.up.toArray()).toEqual(cameraUpForPlane(plane))
+    }
+  })
+
+  it('restores the default up when the scene stops being a slice', () => {
+    const camera = new THREE.PerspectiveCamera()
+    camera.position.set(0, 0, 20)
+    aimCamera(camera, undefined, 'xz')
+    expect(camera.up.toArray()).toEqual([0, 0, 1])
+
+    // The literal transition: an xz slice on screen, then a point cloud. The
+    // second call is handed exactly what the canvas would hand it -- the point
+    // cloud's own view and no plane.
+    aimCamera(camera, cameraViewOf({ kind: 'point_cloud', data: pointCloud() }))
+
+    // Leaving the slice's up in place would tilt every subsequent scene: the
+    // camera object outlives the asset, so a `up` set once and never cleared
+    // is a permanent change to how every orbital afterwards is framed.
+    expect(camera.up.toArray()).toEqual([0, 1, 0])
   })
 })
 
@@ -616,7 +827,7 @@ describe('SceneRoot', () => {
       superpositionTerms: '1,0,0,0.6;2,1,1,0.8',
       superpositionBasis: 'real',
       superpositionZ: 2,
-      superpositionAMu: 0.999456,
+      aMu: 0.999456,
       seedCount: 17,
       timeAu: 4,
       orbital: { n: 2, l: 1, m: 1, z: 9, basis: 'complex' },
@@ -696,6 +907,66 @@ describe('SceneRoot', () => {
     await renderer.unmount()
   })
 
+  it('turns the store into one slice request, draws it, and faces its plane', async () => {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'slice',
+      orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
+      resolution: SLICE_RESOLUTION,
+      plane: 'yz',
+      sliceObservable: 'wavefunction_real',
+      aMu: 0.999456,
+    })
+    answerWith(sliceBody('yz', false))
+    const camera = defaultCamera()
+
+    const renderer = await mountScene(() => undefined, camera)
+
+    const query = queryOf(urlFor('/api/orbitals/slice'))
+    // The two parameters the server silently defaults if they are missing.
+    expect(query.get('plane')).toBe('yz')
+    expect(query.get('observable')).toBe('wavefunction_real')
+    expect(typesUnder(renderer)).toContain('Mesh')
+    // Face-on, down the plane's own normal, with the frame's v axis up.
+    expect(camera.up.toArray()).toEqual(cameraUpForPlane('yz'))
+    const facing = camera.position.clone().normalize()
+    const expected = new THREE.Vector3(...cameraDirectionForPlane('yz')).normalize()
+    expect(facing.x).toBeCloseTo(expected.x, 5)
+    expect(facing.y).toBeCloseTo(expected.y, 5)
+    expect(facing.z).toBeCloseTo(expected.z, 5)
+
+    await renderer.unmount()
+  })
+
+  it('flags the container only once the scene has actually stopped moving', async () => {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'slice',
+      orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
+      resolution: SLICE_RESOLUTION,
+      plane: 'xz',
+    })
+    answerWith(sliceBody('xz', false))
+
+    const renderer = await mountScene(() => undefined)
+
+    // Nothing yet: the asset has arrived but drei's Bounds is still animating
+    // the fit, and no frame has run at all.
+    expect(readyFlag()).toBeNull()
+
+    // Long enough for the 0.8s fit and the control damping to finish at 60Hz.
+    // The point of the flag is that the harness does not have to know that
+    // number -- it waits for the attribute, and this is the one place the
+    // frames are counted out by hand.
+    await renderer.advanceFrames(240, 1 / 60)
+
+    // The VALUE is the scene's identity, so a harness cannot be satisfied by a
+    // previous scene's leftover flag.
+    expect(readyFlag()).toContain('plane=xz')
+
+    await renderer.unmount()
+  })
+
   it('says why a closed cell is empty, and asks the server nothing', async () => {
     useSceneStore.setState({
       mode: 'superposition',
@@ -714,6 +985,169 @@ describe('SceneRoot', () => {
     expect(typesUnder(renderer)).not.toContain('LineSegments')
 
     await renderer.unmount()
+  })
+})
+
+/* ------------------------------------------------- the motion preference */
+
+/**
+ * The query the scene has to ask, spelled out HERE rather than imported.
+ *
+ * A typo in the media string is not an error anywhere: `matchMedia` answers any
+ * syntactically invalid query with `matches: false`, so the feature would
+ * simply never switch on and every test that imported the app's own constant
+ * would agree with it. This literal is the second opinion.
+ */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+/** A `matchMedia` whose answer -- and whose change events -- this spec owns. */
+interface MotionPreference {
+  /** Every query string the app asked about, in order. */
+  readonly asked: string[]
+  /** The listeners currently registered, i.e. what the app has left behind. */
+  readonly listeners: ReadonlySet<(event: MediaQueryListEvent) => void>
+  /** Change the platform's answer and notify whoever is listening. */
+  change(matches: boolean): Promise<void>
+}
+
+/**
+ * Replace `matchMedia` for one test.
+ *
+ * jsdom implements `matchMedia`, but its lists are inert: `matches` is false
+ * for every query and no change event is ever dispatched, so the "no
+ * preference" arm is the only one it can express. Everything below that is
+ * about a viewer who HAS a preference, or who changes it, needs a list that can
+ * be driven -- and the listener set is the only place a leaked subscription is
+ * visible from.
+ */
+function stubMotionPreference(matches: boolean): MotionPreference {
+  const asked: string[] = []
+  const listeners = new Set<(event: MediaQueryListEvent) => void>()
+  const list = {
+    matches,
+    media: REDUCED_MOTION_QUERY,
+    addEventListener(_type: 'change', listener: (event: MediaQueryListEvent) => void): void {
+      listeners.add(listener)
+    },
+    removeEventListener(_type: 'change', listener: (event: MediaQueryListEvent) => void): void {
+      listeners.delete(listener)
+    },
+  }
+  vi.stubGlobal('matchMedia', (query: string) => {
+    asked.push(query)
+    return list
+  })
+  return {
+    asked,
+    listeners,
+    async change(next: boolean): Promise<void> {
+      list.matches = next
+      await act(async () => {
+        for (const listener of [...listeners]) {
+          listener({ matches: next } as MediaQueryListEvent)
+        }
+      })
+    },
+  }
+}
+
+describe('the viewer"s motion preference', () => {
+  /** A scene that is up and answered -- these tests are about neither. */
+  async function mountAnyScene(): Promise<Renderer> {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'isosurface',
+      orbital: { n: 3, l: 2, m: 2, z: 1, basis: 'real' },
+      resolution: 65,
+      probabilityMass: 0.9,
+    })
+    answerWith(isosurface())
+    return mountScene(() => undefined)
+  }
+
+  it('collapses the fit and the damping when the viewer asks for less motion', async () => {
+    const preference = stubMotionPreference(true)
+
+    const renderer = await mountAnyScene()
+
+    // The question actually asked. Anything else and the preference is never
+    // seen, silently, on every platform.
+    expect(preference.asked).toContain(REDUCED_MOTION_QUERY)
+    // Zero is not "do not fit": drei advances the fit by `delta / maxDuration`
+    // per frame, so zero puts the camera at the fitted pose on the first frame
+    // that runs it -- one step, one pose. 0.8 puts it somewhere along an easing
+    // curve, and WHERE depends on which frame the picture was taken at.
+    expect(boundsProps.current?.maxDuration).toBe(0)
+    // Damping keeps integrating after the input that started it, so a scene
+    // that is otherwise finished is still moving. Off, the controls hold the
+    // pose they were given.
+    expect(controlsProps.current?.enableDamping).toBe(false)
+
+    await renderer.unmount()
+  })
+
+  it('keeps the eased fit and the damping when nothing asks for less', async () => {
+    stubMotionPreference(false)
+
+    const renderer = await mountAnyScene()
+
+    // The other half of the accessibility claim: this is a preference being
+    // honoured, not an animation being deleted. A viewer who did not ask still
+    // gets the camera move that shows where the new scene came from.
+    expect(boundsProps.current?.maxDuration).toBe(0.8)
+    expect(controlsProps.current?.enableDamping).toBe(true)
+
+    await renderer.unmount()
+  })
+
+  it('treats a platform that cannot be asked as one with no preference', async () => {
+    // Not hypothetical: `matchMedia` is absent under vitest's default `node`
+    // environment, and reading it off a bare `window` there is a ReferenceError
+    // rather than an undefined -- which would take out every spec that imports
+    // this module rather than degrading to the default behaviour.
+    vi.stubGlobal('matchMedia', undefined)
+
+    const renderer = await mountAnyScene()
+
+    expect(boundsProps.current?.maxDuration).toBe(0.8)
+    expect(controlsProps.current?.enableDamping).toBe(true)
+
+    await renderer.unmount()
+  })
+
+  it('follows a preference that changes while the scene is on screen', async () => {
+    const preference = stubMotionPreference(false)
+    const renderer = await mountAnyScene()
+    expect(boundsProps.current?.maxDuration).toBe(0.8)
+    const before = objectsUnder(renderer).map((object) => object.uuid)
+
+    await preference.change(true)
+
+    // Read live, not once at mount: the setting is changed from the operating
+    // system's own controls, and a scene that only sampled it at startup would
+    // go on swooping until the page was reloaded.
+    expect(boundsProps.current?.maxDuration).toBe(0)
+    expect(controlsProps.current?.enableDamping).toBe(false)
+    // A re-render, not a remount. Rebuilding the tree would throw away the
+    // geometry and the textures the payload was turned into and re-upload them,
+    // which is a visible flash for a setting that changed nothing about what is
+    // being drawn.
+    expect(objectsUnder(renderer).map((object) => object.uuid)).toEqual(before)
+
+    await renderer.unmount()
+  })
+
+  it('stops listening for the preference when the scene goes away', async () => {
+    const preference = stubMotionPreference(false)
+    const renderer = await mountAnyScene()
+    expect(preference.listeners.size).toBe(1)
+
+    await renderer.unmount()
+
+    // A listener left on the media list holds the unmounted tree's setState
+    // forever: every later preference change re-renders a component that is no
+    // longer on screen, and one canvas mount per navigation is one more leak.
+    expect(preference.listeners.size).toBe(0)
   })
 })
 

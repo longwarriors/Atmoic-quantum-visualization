@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   capabilityFor,
+  planSceneRequest,
   type Capability,
   type CapabilityInputs,
   type ParameterId,
 } from '../api/capability'
+import { PRINCIPAL_PLANES, SLICE_OBSERVABLES } from '../api/sliceContract'
 import type { OrbitalParameters, RepresentationKind } from '../api/types'
 import { useSceneStore, type SceneMode } from '../state/useSceneStore'
 import { mount, type MountedTree } from '../test/mount'
@@ -85,13 +87,18 @@ const EVERY_PARAMETER: ParameterId[] = [
   'timeAu',
 ]
 
+/** Every representation the panel offers a button for. */
+const OFFERED: RepresentationKind[] = ['point_cloud', 'isosurface', 'slice', 'streamlines']
+
 /** Every (mode x representation) cell, with an orbital that makes it interesting. */
 const CELLS: [SceneMode, RepresentationKind, OrbitalParameters][] = [
   ['eigenstate', 'point_cloud', REAL_ORBITAL],
   ['eigenstate', 'isosurface', REAL_ORBITAL],
+  ['eigenstate', 'slice', REAL_ORBITAL],
   ['eigenstate', 'streamlines', REAL_ORBITAL],
   ['superposition', 'point_cloud', REAL_ORBITAL],
   ['superposition', 'isosurface', REAL_ORBITAL],
+  ['superposition', 'slice', REAL_ORBITAL],
   ['superposition', 'streamlines', REAL_ORBITAL],
 ]
 
@@ -119,6 +126,24 @@ function representationButton(tree: MountedTree, id: RepresentationKind): HTMLBu
 
 function parameterInput(tree: MountedTree, id: ParameterId): HTMLInputElement | null {
   return tree.container.querySelector<HTMLInputElement>(`input[data-parameter="${id}"]`)
+}
+
+/** The enumerated-choice counterpart of `parameterInput`. */
+function choiceGroup(tree: MountedTree, choice: 'plane' | 'observable'): HTMLElement | null {
+  return tree.container.querySelector<HTMLElement>(`[data-choice="${choice}"]`)
+}
+
+function choiceButtons(
+  tree: MountedTree,
+  choice: 'plane' | 'observable',
+): HTMLButtonElement[] {
+  const group = choiceGroup(tree, choice)
+  if (group === null) throw new Error(`no ${choice} picker on screen`)
+  return Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-choice-value]'))
+}
+
+function choiceValues(tree: MountedTree, choice: 'plane' | 'observable'): string[] {
+  return choiceButtons(tree, choice).map((button) => button.dataset.choiceValue ?? '')
 }
 
 describe('ControlPanel representation buttons read the capability matrix', () => {
@@ -149,7 +174,7 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
     async (mode, selected, orbital) => {
       const tree = await panel(mode, selected, orbital)
       try {
-        for (const representation of ['point_cloud', 'isosurface', 'streamlines'] as const) {
+        for (const representation of OFFERED) {
           const expected = capabilityFor({ mode, orbital, representation })
           const button = representationButton(tree, representation)
           expect(button.disabled, representation).toBe(expected.status !== 'available')
@@ -237,9 +262,11 @@ describe('ControlPanel sliders are the capability matrix bounds', () => {
   it.each([
     ['eigenstate', 'point_cloud', REAL_ORBITAL],
     ['eigenstate', 'isosurface', { n: 3, l: 1, m: 0, z: 1, basis: 'real' } as OrbitalParameters],
+    ['eigenstate', 'slice', { n: 5, l: 1, m: 0, z: 1, basis: 'real' } as OrbitalParameters],
     ['eigenstate', 'streamlines', FLOWING_ORBITAL],
     ['superposition', 'point_cloud', REAL_ORBITAL],
     ['superposition', 'isosurface', REAL_ORBITAL],
+    ['superposition', 'slice', REAL_ORBITAL],
     ['superposition', 'streamlines', REAL_ORBITAL],
   ] as [SceneMode, RepresentationKind, OrbitalParameters][])(
     '%s / %s: exactly the declared parameters, at exactly the declared bounds',
@@ -341,9 +368,102 @@ describe('ControlPanel sliders are the capability matrix bounds', () => {
   })
 })
 
+/**
+ * The enumerated choices are governed the same way the numeric ones are: the
+ * capability declares them or the panel does not offer them.
+ *
+ * `planes` and `observables` are not a slice-shaped exception to the bound
+ * mechanism -- they are the same statement about a cell, made with a list
+ * instead of an interval -- so the panel must read them the same way and never
+ * test `representation === 'slice'` for itself.
+ */
+describe('ControlPanel plane and observable pickers read the capability matrix', () => {
+  it.each(CELLS)(
+    '%s / %s: a picker exists exactly where the cell declares the choice',
+    async (mode, representation, orbital) => {
+      const tree = await panel(mode, representation, orbital)
+      try {
+        const capability = capabilityFor({ mode, orbital, representation })
+        const declared = capability.status === 'available' ? capability : undefined
+        for (const [choice, options] of [
+          ['plane', declared?.planes],
+          ['observable', declared?.observables],
+        ] as const) {
+          const group = choiceGroup(tree, choice)
+          if (options === undefined) {
+            expect(group, `${choice} must not be offered here`).toBeNull()
+            continue
+          }
+          if (group === null) throw new Error(`${choice} picker is missing`)
+          expect(choiceValues(tree, choice), choice).toEqual([...options])
+        }
+      } finally {
+        await tree.unmount()
+      }
+    },
+  )
+
+  it('offers every principal plane and every observable the contract names', async () => {
+    const tree = await panel('eigenstate', 'slice')
+    try {
+      expect(choiceValues(tree, 'plane')).toEqual([...PRINCIPAL_PLANES])
+      expect(choiceValues(tree, 'observable')).toEqual([...SLICE_OBSERVABLES])
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('marks the standing plane and observable as the active choice', async () => {
+    useSceneStore.setState({ plane: 'yz', sliceObservable: 'phase' })
+    const tree = await panel('eigenstate', 'slice')
+    try {
+      const active = (choice: 'plane' | 'observable'): string[] =>
+        choiceButtons(tree, choice)
+          .filter((button) => button.className.includes('active'))
+          .map((button) => button.dataset.choiceValue ?? '')
+      expect(active('plane')).toEqual(['yz'])
+      expect(active('observable')).toEqual(['phase'])
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('offers no picker at all for a cell that cuts no plane', async () => {
+    // The gate is the capability's, not the representation name's. A picker
+    // here would spell a `plane=` onto a request whose route has no plane to
+    // read, which is a 422 the matrix promised could not happen.
+    const tree = await panel('eigenstate', 'isosurface')
+    try {
+      expect(choiceGroup(tree, 'plane')).toBeNull()
+      expect(choiceGroup(tree, 'observable')).toBeNull()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('follows a matrix that newly declares the choice on another cell', async () => {
+    capabilityOverride.current = () => ({
+      status: 'available',
+      endpoint: '/x',
+      parameters: {},
+      latency: 'fast',
+      planes: ['yz'],
+      observables: ['phase'],
+    })
+
+    const tree = await panel('eigenstate', 'point_cloud')
+    try {
+      expect(choiceValues(tree, 'plane')).toEqual(['yz'])
+      expect(choiceValues(tree, 'observable')).toEqual(['phase'])
+    } finally {
+      await tree.unmount()
+    }
+  })
+})
+
 describe('ControlPanel superposition read-outs', () => {
   it('shows the basis, Z and a_mu the request will actually carry, read-only', async () => {
-    useSceneStore.setState({ superpositionBasis: 'complex', superpositionAMu: 1.0 })
+    useSceneStore.setState({ superpositionBasis: 'complex', aMu: 1.0 })
     const tree = await panel('superposition', 'isosurface')
     try {
       const basis = tree.container.querySelector('[data-readonly="basis"]')
@@ -367,7 +487,69 @@ describe('ControlPanel superposition read-outs', () => {
   it('does not show the superposition read-outs for an eigenstate', async () => {
     const tree = await panel('eigenstate', 'point_cloud')
     try {
+      expect(tree.container.querySelector('[data-readonly="basis"]')).toBeNull()
       expect(tree.container.querySelector('[data-readonly="a_mu"]')).toBeNull()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  /**
+   * a_mu is read out iff the request carries one -- not iff the mode is
+   * superposition.
+   *
+   * The gate used to be the superposition block this read-out happened to live
+   * in, written when a_mu reached only the two superposition routes. Four routes
+   * read it now, and an EIGENSTATE SLICE was sending a reduced mass that nothing
+   * on screen stated: the panel showed a hydrogenic label while the server was
+   * asked for a different particle's length scale.
+   */
+  it.each(CELLS)(
+    '%s / %s: reads a_mu out exactly when the plan carries one',
+    async (mode, representation, orbital) => {
+      useSceneStore.setState({ aMu: 0.0054 })
+      const tree = await panel(mode, representation, orbital)
+      try {
+        const readout = tree.container.querySelector('[data-readonly="a_mu"]')
+        const plan = planSceneRequest({
+          ...useSceneStore.getState(),
+          mode,
+          orbital,
+          representation,
+        })
+        const carried = plan.status === 'available' ? plan.params.a_mu : undefined
+        if (carried === undefined) {
+          expect(readout, `${mode} x ${representation}`).toBeNull()
+          return
+        }
+        expect(readout?.tagName).toBe('DD')
+        expect(readout?.textContent).toBe(String(carried))
+      } finally {
+        await tree.unmount()
+      }
+    },
+  )
+
+  it('reads a_mu out for an eigenstate slice, which sends it', async () => {
+    useSceneStore.setState({ aMu: 0.0054 })
+    const tree = await panel('eigenstate', 'slice')
+    try {
+      expect(tree.container.querySelector('[data-readonly="a_mu"]')?.textContent).toBe('0.0054')
+      // Still read-only, and still not a slider: the reason a_mu has no control
+      // is unchanged by which route reads it.
+      expect(tree.container.querySelector('input[data-parameter="aMu"]')).toBeNull()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('shows the CLAMPED a_mu the request will carry, not the store value', async () => {
+    // The route's bound is `gt=0`, and the plan clamps to the declared floor.
+    // A read-out taken from the store would name a value the wire never saw.
+    useSceneStore.setState({ aMu: 0 })
+    const tree = await panel('eigenstate', 'slice')
+    try {
+      expect(tree.container.querySelector('[data-readonly="a_mu"]')?.textContent).toBe('0.005')
     } finally {
       await tree.unmount()
     }
@@ -551,6 +733,40 @@ describe('ControlPanel controls write to the store', () => {
       expect(useSceneStore.getState().seedCount).toBe(96)
     } finally {
       await flow.unmount()
+    }
+  })
+
+  it('writes the plane and the observable the slice is cut with', async () => {
+    const tree = await panel('eigenstate', 'slice')
+    try {
+      const button = (choice: 'plane' | 'observable', value: string): HTMLButtonElement => {
+        const found = choiceButtons(tree, choice).find(
+          (candidate) => candidate.dataset.choiceValue === value,
+        )
+        if (found === undefined) throw new Error(`no ${choice} button for ${value}`)
+        return found
+      }
+      await press(button('plane', 'yz'), 'the yz plane')
+      expect(useSceneStore.getState().plane).toBe('yz')
+      await press(button('plane', 'xy'), 'the xy plane')
+      expect(useSceneStore.getState().plane).toBe('xy')
+
+      await press(button('observable', 'phase'), 'the phase observable')
+      expect(useSceneStore.getState().sliceObservable).toBe('phase')
+      await press(button('observable', 'wavefunction_real'), 'the Re psi observable')
+      expect(useSceneStore.getState().sliceObservable).toBe('wavefunction_real')
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('selects the slice representation when its button is pressed', async () => {
+    const tree = await panel('eigenstate', 'point_cloud')
+    try {
+      await press(representationButton(tree, 'slice'), 'the slice button')
+      expect(useSceneStore.getState().representation).toBe('slice')
+    } finally {
+      await tree.unmount()
     }
   })
 

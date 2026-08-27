@@ -166,6 +166,18 @@ h1, h2, p { margin: 0; }
 .range-row input[type="range"] { appearance: none; width: 100%; height: 3px; border-radius: 99px; background: linear-gradient(90deg, rgba(34,211,238,.55), rgba(139,92,246,.5)); }
 .range-row input[type="range"]::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; border: 2px solid #dffaff; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px rgba(34,211,238,.55); cursor: pointer; }
 .range-row input[type="range"]::-moz-range-thumb { width: 9px; height: 9px; border: 2px solid #dffaff; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px rgba(34,211,238,.55); cursor: pointer; }
+/*
+  The slice's enumerated pickers: plane and observable.
+
+  Laid out inside a `.range-row`, so a choice reads as the same kind of request
+  control a slider is, and spanning the slider's track AND value columns because
+  there is no separate number to print -- the active button is the value.
+*/
+.slice-choices { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(2, 8, 16, 0.44); }
+.slice-choices button { flex: 1 1 auto; min-width: 34px; min-height: 22px; padding: 0 6px; border: 0; border-radius: 6px; color: #7e94a9; background: transparent; font-size: 10px; cursor: pointer; }
+.slice-choices button:hover { color: #e5f6ff; }
+.slice-choices button.active { color: #eafeff; background: linear-gradient(135deg, rgba(34,211,238,.13), rgba(139,92,246,.13)); box-shadow: inset 0 0 0 1px rgba(34,211,238,.2); }
+
 .toggle-row { display: grid; grid-template-columns: 18px 1fr 30px; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 3px; border: 0; color: #8fa5b9; background: transparent; cursor: pointer; text-align: left; }
 .toggle-row:hover { color: #e5f6ff; }
 .switch { position: relative; width: 29px; height: 16px; border-radius: 20px; background: rgba(112, 133, 153, .28); transition: .16s ease; }
@@ -194,6 +206,21 @@ h1, h2, p { margin: 0; }
 .phase-dot.cyan { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
 .phase-dot.red { background: #fa4646; box-shadow: 0 0 8px #fa4646; }
 .phase-wheel { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #47fafa, #4747fa, #fa47fa, #fa4747, #fafa47, #47fa47, #47fafa); }
+
+/*
+  The two slice value ramps. Their stops are the colours scene/sliceColor.ts
+  computes, not colours picked to look similar: #fa4646 is phaseToRgb(0) and
+  #46fafa is phaseToRgb(pi) -- the diverging poles, so a reader who learned
+  "red is +, cyan is -" from a phase-coloured orbital keeps that reading here --
+  #383838 is SLICE_NEUTRAL_RGB, the dark midpoint both value maps paint at
+  zero, and #4646fa / #acacfd are the sequential map's saturated knee and its
+  white-tinted top. A legend swatch that drifts from the texture beside it is
+  worse than no swatch, so these stops are the only thing in this file that may
+  change when that module's constants do.
+*/
+.diverging-ramp { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #46fafa, #383838, #fa4646); }
+/* The knee sits at 50%, exactly where sequentialRgb's SEQUENTIAL_KNEE is. */
+.density-ramp { height: 7px; border-radius: 10px; background: linear-gradient(90deg, #383838, #4646fa 50%, #acacfd); }
 
 .speed-ramp {
   height: 10px;

@@ -1087,6 +1087,297 @@ def test_no_step_of_the_web_job_can_be_skipped() -> None:
             )
 
 
+# --- ci.yml web-visual job --------------------------------------------------
+
+#: The job that runs the Playwright screenshot suite. It is a job of its own
+#: rather than two more steps of ``web`` because it needs a browser download and
+#: system libraries the unit-test job has no use for, and because a red pixel
+#: diff must be readable as "the picture changed", not as "the front-end gates
+#: failed".
+VISUAL_JOB = "web-visual"
+
+#: The browser install, spelled exactly. ``--no-install`` makes npx refuse to
+#: fetch a *different* Playwright from the registry when the local one is
+#: missing: the browser binaries are bundled per Playwright version, so a run
+#: that silently downloaded another version would compare this tree's rendering
+#: against baselines drawn by a Chromium it never used. ``--with-deps`` is what
+#: puts the shared libraries headless Chromium needs on the runner, and
+#: ``chromium`` is the only browser the suite drives (playwright.config.ts pins
+#: ``browserName: 'chromium'``), so installing the other two would only add
+#: minutes.
+VISUAL_BROWSER_INSTALL = "npx --no-install playwright install --with-deps chromium"
+
+#: The gate itself: ``playwright test`` followed by
+#: ``node scripts/assert-visual-run.mjs`` (web/package.json pins that pair).
+VISUAL_TEST_COMMAND = "npm run test:visual"
+
+#: The failure artefact. Playwright writes the HTML report and the actual /
+#: expected / diff PNGs of every failed comparison to these two directories,
+#: and they are the only way to see WHAT changed: the CI log carries a
+#: pixel-count and nothing else. Paths are repository-relative because
+#: ``defaults.run.working-directory`` applies to ``run:`` steps only, never to
+#: a ``uses:`` step's inputs.
+VISUAL_ARTIFACT_NAME = "playwright-report"
+VISUAL_ARTIFACT_PATHS = ("web/playwright-report", "web/test-results")
+VISUAL_ARTIFACT_RETENTION_DAYS = 7
+
+
+def _visual_job() -> dict[str, object]:
+    """The ``web-visual`` job, or a failure that says the visual gate is gone.
+
+    Every assertion in this group goes through here for the same reason
+    ``_web_job`` exists: deleting the job is cheaper than defeating any single
+    pin below, and nothing else in this repository would notice. ``npm run
+    test:visual`` cannot run on the Windows development machines at all
+    (playwright.config.ts throws off Linux, by design), so CI is not merely the
+    convenient place to run the screenshot suite -- it is the ONLY place it
+    ever runs.
+    """
+
+    jobs = _workflow().get("jobs")
+    assert isinstance(jobs, dict), "ci.yml declares no jobs"
+    assert VISUAL_JOB in jobs, (
+        f"ci.yml has no `{VISUAL_JOB}` job: nothing anywhere runs `{VISUAL_TEST_COMMAND}`, so the "
+        "screenshot suite, its baselines and scripts/assert-visual-run.mjs are all dead weight "
+        "while the workflow still reports green. playwright.config.ts throws off Linux on "
+        "purpose, so this job is not a convenience -- it is the only environment the suite can "
+        f"run in at all. Jobs found: {sorted(jobs)}"
+    )
+    job = jobs[VISUAL_JOB]
+    assert isinstance(job, dict), f"ci.yml's `{VISUAL_JOB}` job is not a mapping"
+    return job
+
+
+def _visual_steps() -> list[dict[str, object]]:
+    steps = _visual_job().get("steps")
+    assert isinstance(steps, list) and steps, f"ci.yml's `{VISUAL_JOB}` job has no steps"
+    for step in steps:
+        assert isinstance(step, dict), (
+            f"ci.yml's `{VISUAL_JOB}` job has a non-mapping step: {step!r}"
+        )
+    return steps
+
+
+def _visual_runs() -> list[str]:
+    return [" ".join(str(step.get("run", "")).split()) for step in _visual_steps()]
+
+
+def test_ci_visual_job_runs_on_linux_inside_web() -> None:
+    """``ubuntu-latest`` and ``working-directory: web``, both load-bearing.
+
+    The baselines in ``web/e2e/__screenshots__`` are SwiftShader's pixels on
+    the Linux runner image; ``runs-on: windows-latest`` or ``macos-latest``
+    would not merely produce a different rendering, it would fail to load the
+    config at all -- which is a red job for a reason that has nothing to do
+    with the code under review. And without the working directory every ``npm``
+    step runs at the repository root, where there is no ``test:visual`` script.
+    """
+
+    job = _visual_job()
+    assert job.get("runs-on") == "ubuntu-latest", (
+        f"ci.yml's `{VISUAL_JOB}` job runs on {job.get('runs-on')!r}; the baselines are drawn by "
+        "SwiftShader on the Linux runner image and playwright.config.ts refuses to load anywhere "
+        "else"
+    )
+    defaults = job.get("defaults")
+    assert isinstance(defaults, dict), (
+        f"ci.yml's `{VISUAL_JOB}` job declares no `defaults:`; every npm step would run at the "
+        "repository root instead of in web/"
+    )
+    run_defaults = defaults.get("run")
+    assert isinstance(run_defaults, dict), (
+        f"ci.yml's `{VISUAL_JOB}` job declares no `defaults.run:`"
+    )
+    assert run_defaults.get("working-directory") == "web", (
+        f"ci.yml's `{VISUAL_JOB}` job must set `defaults.run.working-directory: web`; found "
+        f"{run_defaults.get('working-directory')!r}"
+    )
+
+
+def test_ci_visual_job_installs_the_lockfile_and_the_bundled_browser() -> None:
+    """Checkout, Node, ``npm ci``, and the browser -- each spelled exactly.
+
+    The install pins are the ``web`` job's, for the same reasons: ``npm ci``
+    installs exactly ``package-lock.json`` and ``npm install`` may resolve
+    something else, so the literal string must not appear anywhere in the job.
+    The browser install is the pin this job adds. ``playwright install``
+    without ``--no-install`` lets npx fetch a Playwright the lockfile does not
+    pin when the local one is missing, and since the browser binaries are
+    bundled per Playwright version that is a run comparing this tree's
+    rendering against baselines drawn by a Chromium it never used.
+    """
+
+    steps = _visual_steps()
+    uses = [str(step.get("uses", "")) for step in steps]
+    assert any(u.startswith("actions/checkout@") for u in uses), (
+        f"ci.yml's `{VISUAL_JOB}` job never checks the repository out. Steps used: {uses}"
+    )
+    assert any(u.startswith("actions/setup-node@") for u in uses), (
+        f"ci.yml's `{VISUAL_JOB}` job has no actions/setup-node step, so it runs on whatever Node "
+        f"the runner image happens to ship. Steps used: {uses}"
+    )
+    runs = _visual_runs()
+    assert WEB_INSTALL_COMMAND in runs, (
+        f"ci.yml's `{VISUAL_JOB}` job never runs `{WEB_INSTALL_COMMAND}` as a step of its own; the "
+        "screenshot suite must be built from the tree package-lock.json describes, or a pixel "
+        f"diff is an argument about dependencies. Steps run: {runs}"
+    )
+    assert VISUAL_BROWSER_INSTALL in runs, (
+        f"ci.yml's `{VISUAL_JOB}` job never runs `{VISUAL_BROWSER_INSTALL}` as a step of its own. "
+        "Without it Playwright has no browser to launch; with a different spelling it may fetch a "
+        f"Playwright -- and therefore a Chromium -- the lockfile does not pin. Steps run: {runs}"
+    )
+    scripts = "\n".join(runs)
+    assert "npm install" not in scripts, (
+        f"ci.yml's `{VISUAL_JOB}` job mentions `npm install`; a missing package-lock.json must "
+        f"fail the job, not be resolved fresh. Steps run:\n{scripts}"
+    )
+
+
+def test_ci_visual_job_runs_the_same_node_as_the_web_job() -> None:
+    """One Node across both front-end jobs, never two.
+
+    ``npm run test:visual`` builds the bundle it screenshots (playwright
+    .config.ts's ``webServer`` runs ``npm run build``), so a second Node
+    version here would mean the pixels were drawn by a build no other gate
+    ever produced -- and a baseline that only reproduces under one toolchain
+    is not a regression test of the code.
+    """
+
+    def node_versions(steps: list[dict[str, object]], label: str) -> list[str]:
+        found: list[str] = []
+        for step in steps:
+            if not str(step.get("uses", "")).startswith("actions/setup-node@"):
+                continue
+            inputs = step.get("with")
+            assert isinstance(inputs, dict), f"{label}'s setup-node step has a non-mapping `with:`"
+            declared = inputs.get("node-version")
+            assert declared is not None, (
+                f"{label}'s setup-node step names no `node-version`, so the job runs on whatever "
+                "the runner image ships and attests to no version at all"
+            )
+            found.append(str(declared))
+        assert found, f"{label} has no actions/setup-node step"
+        return found
+
+    web = node_versions(_web_steps(), "ci.yml's `web` job")
+    visual = node_versions(_visual_steps(), f"ci.yml's `{VISUAL_JOB}` job")
+    assert set(web) == set(visual), (
+        f"ci.yml's `web` job installs Node {sorted(set(web))} and its `{VISUAL_JOB}` job installs "
+        f"Node {sorted(set(visual))}; the visual suite builds the bundle it screenshots, so the "
+        "two must be one toolchain"
+    )
+
+
+def test_ci_visual_job_runs_the_visual_gate_as_a_step_of_its_own() -> None:
+    """``npm run test:visual``, after the browser install, and nothing folded in.
+
+    A step of its own, compared with ``==`` rather than ``in``: folded into a
+    ``run:`` block with other commands it could be preceded by an ``echo`` that
+    swallows the exit code, or followed by one. And after the browser install
+    for the obvious reason -- Playwright with no browser fails on the first
+    ``launch()``, which reads in the log like a rendering failure.
+    """
+
+    runs = _visual_runs()
+    assert VISUAL_TEST_COMMAND in runs, (
+        f"ci.yml's `{VISUAL_JOB}` job never runs `{VISUAL_TEST_COMMAND}` as a step of its own, so "
+        "no screenshot is ever compared and scripts/assert-visual-run.mjs never audits a report. "
+        f"Steps run: {runs}"
+    )
+    assert runs.index(VISUAL_BROWSER_INSTALL) < runs.index(VISUAL_TEST_COMMAND), (
+        f"ci.yml's `{VISUAL_JOB}` job runs `{VISUAL_TEST_COMMAND}` before installing the browser; "
+        f"found the steps at indices {runs.index(VISUAL_TEST_COMMAND)} and "
+        f"{runs.index(VISUAL_BROWSER_INSTALL)}"
+    )
+
+
+def test_ci_visual_job_uploads_the_playwright_report_when_it_fails() -> None:
+    """The one artefact, on the one condition that makes it evidence.
+
+    A failed screenshot comparison prints a pixel count into the log and
+    nothing else; the actual/expected/diff PNGs and the HTML report are the
+    only way to see WHICH pixels moved, and they exist only on the runner. So
+    the upload is pinned by name, by both paths, and by retention -- an upload
+    that keeps the report for zero days is the same as no upload.
+    """
+
+    uploads = [
+        step
+        for step in _visual_steps()
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1, (
+        f"ci.yml's `{VISUAL_JOB}` job must have exactly one actions/upload-artifact step; found "
+        f"{len(uploads)}. Without it a failed comparison is a pixel count in a log and the diff "
+        "images die with the runner."
+    )
+    (upload,) = uploads
+    inputs = upload.get("with")
+    assert isinstance(inputs, dict), (
+        f"the upload step of ci.yml's `{VISUAL_JOB}` job has no `with:`"
+    )
+    assert inputs.get("name") == VISUAL_ARTIFACT_NAME, (
+        f"the artefact must be named {VISUAL_ARTIFACT_NAME!r}; found {inputs.get('name')!r}"
+    )
+    paths = tuple(str(inputs.get("path", "")).split())
+    assert paths == VISUAL_ARTIFACT_PATHS, (
+        "the upload must carry both the HTML report and the per-test output directory holding the "
+        f"actual/expected/diff PNGs, as repository-relative paths (`defaults.run.working-directory`"
+        f" does not apply to a `uses:` step).\n  found:    {paths}\n"
+        f"  expected: {VISUAL_ARTIFACT_PATHS}"
+    )
+    assert int(str(inputs.get("retention-days"))) == VISUAL_ARTIFACT_RETENTION_DAYS, (
+        f"the artefact's retention-days must be {VISUAL_ARTIFACT_RETENTION_DAYS}; found "
+        f"{inputs.get('retention-days')!r}"
+    )
+
+
+def test_only_the_upload_step_of_the_visual_job_is_conditional() -> None:
+    """One ``if:``, on one step, spelled exactly ``failure()``.
+
+    The ``web`` job forbids ``if:`` outright, and every gate step here is held
+    to that same rule: an ``if:`` on the install, the browser or the test step
+    turns a green job into one that ran nothing. The upload is the single
+    exception, and it is an exception in the safe direction -- it runs only
+    when something already failed, so it cannot make a red run green.
+
+    ``failure()`` and not ``always()``: ``always()`` also runs when the job was
+    CANCELLED, which uploads a half-written report; and not the bare
+    ``${{ failure() }}``, because the two spellings would then have to be kept
+    in sync by nobody. ``continue-on-error`` stays forbidden everywhere,
+    including on the upload: a job that goes green because its artefact upload
+    was advisory is not what that flag would be doing there -- but a step that
+    may fail silently is precisely how the previous three holes in this file
+    were spelled.
+    """
+
+    job = _visual_job()
+    for escape in ("if", "continue-on-error"):
+        assert escape not in job, (
+            f"ci.yml's `{VISUAL_JOB}` job carries `{escape}: {job[escape]!r}`; the visual gate "
+            "must not be conditional or advisory"
+        )
+    for index, step in enumerate(_visual_steps()):
+        assert "continue-on-error" not in step, (
+            f"step {index} of ci.yml's `{VISUAL_JOB}` job carries `continue-on-error: "
+            f"{step['continue-on-error']!r}`; an advisory step is a gate that is not enforced: "
+            f"{step!r}"
+        )
+        if "if" not in step:
+            continue
+        assert str(step.get("uses", "")).startswith("actions/upload-artifact@"), (
+            f"step {index} of ci.yml's `{VISUAL_JOB}` job carries `if: {step['if']!r}` and is not "
+            "the artefact upload. Every step that installs, builds or compares must run "
+            f"unconditionally, or the job reports green having done nothing: {step!r}"
+        )
+        assert step["if"] == "failure()", (
+            f"the upload step's `if:` must be exactly `failure()`; found {step['if']!r}. "
+            "`always()` also fires on a cancelled job, and `success()` never uploads the report "
+            "anyone would want to read."
+        )
+
+
 # --- web/package.json test chain -------------------------------------------
 
 #: The ``test`` script's ``&&``-joined stages, in full and in order.
@@ -1355,6 +1646,19 @@ WEB_SCRIPTS = (
     "assert-coverage-scope.mjs",
     "assert-no-skips.d.mts",
     "assert-no-skips.mjs",
+    # The visual suite's post-run gate, and the counterpart of
+    # ``assert-no-skips.mjs``: ``playwright test`` exits 0 for a run in which
+    # every test was skipped, for one that collected no spec file at all, and
+    # for one launched with ``--update-snapshots`` -- which writes the
+    # baselines it was asked to compare against, so every screenshot assertion
+    # passes by construction. It runs in no ``npm test`` stage
+    # (``NPM_TEST_STAGES`` above is exact) and reads only Playwright's own JSON
+    # report, so it cannot rewrite anything the coverage verifiers read; its
+    # audit logic is exercised by web/src/visualGate.test.ts in the ordinary
+    # vitest suite, because Playwright itself cannot run on the Windows dev
+    # machines by design.
+    "assert-visual-run.d.mts",
+    "assert-visual-run.mjs",
     "capture-resolved-coverage.d.mts",
     "capture-resolved-coverage.mjs",
     "clean-coverage.mjs",

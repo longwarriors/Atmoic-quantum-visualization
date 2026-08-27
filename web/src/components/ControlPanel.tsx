@@ -2,6 +2,7 @@ import {
   Atom,
   Clock,
   Cloud,
+  Grid2x2,
   Layers3,
   Pause,
   Play,
@@ -19,7 +20,13 @@ import {
   type SceneRequestInputs,
 } from '../api/capability'
 import { fetchCatalog, fetchSuperpositionCatalog } from '../api/client'
-import type { OrbitalPreset, RepresentationKind, SuperpositionPreset } from '../api/types'
+import type {
+  OrbitalPreset,
+  PrincipalPlane,
+  RepresentationKind,
+  SliceObservable,
+  SuperpositionPreset,
+} from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
 import { nextTimeAu } from './sceneRequest'
 
@@ -111,7 +118,74 @@ function DisplayRow({
 }
 
 /**
- * The three representations, with the sentence each one is *for*.
+ * A picker over an ENUMERATED request choice -- which plane, which field.
+ *
+ * The counterpart of `ParameterRow`, and deliberately built on the same rule:
+ * `options` is not written here, it is the list the capability declares for this
+ * cell, so a choice the route does not offer cannot be pressed and one it does
+ * offer cannot be withheld. `planes` and `observables` are the matrix making the
+ * same kind of statement a `ParameterBound` makes, with a list instead of an
+ * interval, and treating them any other way would put a second opinion about
+ * the routes back into the panel.
+ */
+function ChoiceRow<T extends string>({
+  choice,
+  label,
+  options,
+  labels,
+  value,
+  onChange,
+}: {
+  choice: string
+  label: string
+  options: readonly T[]
+  labels: Readonly<Record<T, string>>
+  value: T
+  onChange: (value: T) => void
+}) {
+  return (
+    // `range-row` is reused rather than duplicated: this is the same
+    // label-then-control line a slider draws, and only the control differs.
+    <div className="range-row">
+      <span className="control-label">{label}</span>
+      <div className="slice-choices" data-choice={choice}>
+        {options.map((option) => (
+          <button
+            type="button"
+            key={option}
+            data-choice-value={option}
+            className={value === option ? 'active' : ''}
+            onClick={() => onChange(option)}
+          >
+            {labels[option]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * How each plane and each observable is spelled on screen.
+ *
+ * Total records rather than a formatter, so a fifth observable added to the
+ * contract stops this file compiling instead of rendering a raw wire name.
+ */
+const PLANE_LABEL: Readonly<Record<PrincipalPlane, string>> = {
+  xy: 'xy',
+  xz: 'xz',
+  yz: 'yz',
+}
+
+const OBSERVABLE_LABEL: Readonly<Record<SliceObservable, string>> = {
+  probability_density: '|ψ|²',
+  wavefunction_real: 'Re ψ',
+  wavefunction_imag: 'Im ψ',
+  phase: 'arg ψ',
+}
+
+/**
+ * The four representations, with the sentence each one is *for*.
  *
  * `purpose` is the title of an AVAILABLE button only. A refused button's title
  * is the matrix's own `reason`, verbatim -- not a paraphrase written here,
@@ -135,6 +209,14 @@ const REPRESENTATIONS: {
     label: 'Density surface',
     icon: Layers3,
     purpose: 'A |ψ|² level set enclosing the requested probability mass',
+  },
+  {
+    id: 'slice',
+    label: 'Plane section',
+    // A 2-D sampled section, which is what this icon says and what the route
+    // returns: `resolution**2` samples on one principal plane.
+    icon: Grid2x2,
+    purpose: 'One scalar field sampled on a principal plane through the nucleus',
   },
   {
     id: 'streamlines',
@@ -201,12 +283,21 @@ export function ControlPanel() {
     seedCount: store.seedCount,
     superpositionTerms: store.superpositionTerms,
     superpositionBasis: store.superpositionBasis,
-    aMu: store.superpositionAMu,
+    aMu: store.aMu,
     timeAu: store.timeAu,
+    plane: store.plane,
+    sliceObservable: store.sliceObservable,
   }
 
   const current = capabilityFor(requestInputs)
   const bounds = current.status === 'available' ? current.parameters : {}
+  /**
+   * The enumerated choices this cell declares, on exactly the terms `bounds`
+   * is on: undefined means the route reads no such choice, and the picker for
+   * it is not rendered at all.
+   */
+  const planes = current.status === 'available' ? current.planes : undefined
+  const observables = current.status === 'available' ? current.observables : undefined
   /** What the request will actually carry, or a refusal that carries nothing. */
   const plan = planSceneRequest(requestInputs)
 
@@ -220,7 +311,7 @@ export function ControlPanel() {
     // Not in PARAMETER_ROWS on purpose: a_mu has no slider (changing it makes
     // the state not-hydrogen while every label still says hydrogenic); the map
     // stays total so a request can still carry the store's value.
-    aMu: store.superpositionAMu,
+    aMu: store.aMu,
   }
   const parameterSetter: Record<ParameterId, (value: number) => void> = {
     samples: store.setSamples,
@@ -229,7 +320,7 @@ export function ControlPanel() {
     probabilityMass: store.setProbabilityMass,
     seedCount: store.setSeedCount,
     timeAu: store.setTimeAu,
-    aMu: store.setSuperpositionAMu,
+    aMu: store.setAMu,
   }
 
   /**
@@ -380,13 +471,14 @@ export function ControlPanel() {
             </div>
             {plan.status === 'available' ? (
               /*
-               * The three fields the superposition request states explicitly so
+               * The two fields the superposition request states explicitly so
                * the server cannot default them. Read from the PLAN, not from
-               * the store, so this read-out cannot name a basis or a reduced
-               * mass different from the one the query carries. Read-only by
-               * decision: a_mu ships at 1.0 with no control at all, because a
-               * slider for it would invite changing the particle without
-               * changing anything else that says which particle it is.
+               * the store, so this read-out cannot name a basis or a charge
+               * different from the one the query carries.
+               *
+               * a_mu used to be the third entry here, and being HERE was its
+               * only gate -- see the read-out below, which is gated on the plan
+               * carrying the parameter instead.
                */
               <dl className="readout" data-readonly-group="superposition">
                 <div>
@@ -396,10 +488,6 @@ export function ControlPanel() {
                 <div>
                   <dt>Z</dt>
                   <dd data-readonly="z">{String(plan.params.z)}</dd>
-                </div>
-                <div>
-                  <dt>a<sub>μ</sub></dt>
-                  <dd data-readonly="a_mu">{String(plan.params.a_mu)}</dd>
                 </div>
               </dl>
             ) : null}
@@ -442,6 +530,28 @@ export function ControlPanel() {
           })}
         </div>
 
+        {planes === undefined ? null : (
+          <ChoiceRow
+            choice="plane"
+            label="Plane"
+            options={planes}
+            labels={PLANE_LABEL}
+            value={store.plane}
+            onChange={store.setPlane}
+          />
+        )}
+
+        {observables === undefined ? null : (
+          <ChoiceRow
+            choice="observable"
+            label="Field"
+            options={observables}
+            labels={OBSERVABLE_LABEL}
+            value={store.sliceObservable}
+            onChange={store.setSliceObservable}
+          />
+        )}
+
         {PARAMETER_ROWS.map(({ id, label, suffix }) => {
           const bound = bounds[id]
           if (bound === undefined) return null
@@ -457,6 +567,31 @@ export function ControlPanel() {
             />
           )
         })}
+
+        {plan.status === 'available' && plan.params.a_mu !== undefined ? (
+          /*
+           * The reduced-mass ratio, read out iff the REQUEST CARRIES ONE.
+           *
+           * Read-only by decision: a_mu has no slider because changing it makes
+           * the state not-hydrogen while every label on screen still says
+           * hydrogenic. But read-only is not the same as invisible, and the gate
+           * used to be "is the mode superposition?" -- written when a_mu reached
+           * only the two superposition routes. It reaches four now, so an
+           * eigenstate slice was sending a reduced mass nothing on screen
+           * stated. The plan is the one thing that knows whether this request
+           * has an `a_mu` at all, so it is what decides.
+           *
+           * The value comes from the plan too, which is the clamped one: a
+           * read-out of the store's raw number would name a length scale the
+           * wire never carried.
+           */
+          <dl className="readout" data-readonly-group="request">
+            <div>
+              <dt>a<sub>μ</sub></dt>
+              <dd data-readonly="a_mu">{String(plan.params.a_mu)}</dd>
+            </div>
+          </dl>
+        ) : null}
 
         {/*
           Below this line nothing reaches a route: these set how the asset is

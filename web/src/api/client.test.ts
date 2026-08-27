@@ -23,12 +23,15 @@ import {
   fetchIsosurface,
   fetchMetadata,
   fetchPointCloud,
+  fetchSlice,
   fetchSuperpositionCatalog,
   fetchSuperpositionCurrentField,
   fetchSuperpositionIsosurface,
+  fetchSuperpositionSlice,
   parsePointCloud,
 } from './client'
 import { parsePointCloud as parsePointCloudFromQvpc } from './qvpc'
+import { SliceContractError } from './sliceContract'
 import type {
   CurrentFieldPayload,
   OrbitalMetadata,
@@ -545,6 +548,235 @@ describe('fetchSuperpositionCurrentField', () => {
     await expect(fetchSuperpositionCurrentField(terms, 0, 24, 'complex', 1, 1)).rejects.toBe(
       failure,
     )
+  })
+})
+
+/* ------------------------------------------------------------------ slices */
+
+/**
+ * The committed slice golden, re-parsed per case.
+ *
+ * `tests/fixtures/slice_golden.json` is the 1s `xy` phase section at
+ * resolution 65, written by `scripts/write_slice_golden.py` and rebuilt byte
+ * for byte by `tests/test_slice_contract.py`. Using it here rather than a
+ * hand-rolled object is what makes the boundary check below meaningful: the
+ * validation the two fetchers run is exercised against the same bytes the
+ * server is pinned to produce, so a case that mutates one field is mutating a
+ * payload that was otherwise genuinely valid.
+ */
+const SLICE_GOLDEN_TEXT = readFileSync(
+  fileURLToPath(new URL('../../../tests/fixtures/slice_golden.json', import.meta.url)),
+  'utf-8',
+)
+
+type MutableSlice = Record<string, unknown>
+
+const freshSlice = (): MutableSlice => JSON.parse(SLICE_GOLDEN_TEXT) as MutableSlice
+
+/** The same grid carrying superposition metadata, which is the only difference. */
+function freshSuperpositionSlice(): MutableSlice {
+  const payload = freshSlice()
+  payload.metadata = superpositionMetadata
+  return payload
+}
+
+describe('fetchSlice', () => {
+  /**
+   * Every knob `/api/orbitals/slice` accepts, spelled out.
+   *
+   * The same silent-default hazard the superposition routes have, and worse
+   * here: `plane` and `observable` both have server-side defaults (`xz` and
+   * `probability_density`), so a dropped parameter does not fail -- it returns
+   * a perfectly valid picture of a different section of a different field. The
+   * whole query string is pinned, not a subset.
+   */
+  it('requests the slice route with every server-side knob', async () => {
+    routeFetch({ '/api/orbitals/slice': () => jsonResponse(freshSlice()) })
+    const controller = new AbortController()
+
+    const payload = await fetchSlice(params, 65, 1.5, 'yz', 'phase', controller.signal)
+
+    const { url, init } = requestTo('/api/orbitals/slice')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      n: '3',
+      l: '2',
+      m: '-1',
+      z: '2',
+      basis: 'complex',
+      resolution: '65',
+      a_mu: '1.5',
+      plane: 'yz',
+      observable: 'phase',
+    })
+    expect(url.search).toBe(
+      '?n=3&l=2&m=-1&z=2&basis=complex&resolution=65&a_mu=1.5&plane=yz&observable=phase',
+    )
+    expect(init).toEqual({ signal: controller.signal })
+    expect(payload.plane).toBe('xy')
+    expect(payload.resolution).toBe(65)
+    expect(payload.metadata.state.n).toBe(1)
+  })
+
+  /**
+   * The boundary check, which is the whole reason this fetcher does not just
+   * cast `response.json()`. A payload whose `normal` is mirrored type-checks
+   * perfectly and renders as a picture whose every phase winding and
+   * circulation runs backwards; the only place that can still be caught is
+   * here, before it becomes a scene.
+   */
+  it('rejects a payload that breaks the slice contract, naming the field', async () => {
+    routeFetch({
+      '/api/orbitals/slice': () => {
+        const payload = freshSlice()
+        payload.normal = [0, 0, -1]
+        return jsonResponse(payload)
+      },
+    })
+
+    let thrown: unknown
+    try {
+      await fetchSlice(params, 65, 1, 'xy', 'phase')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(SliceContractError)
+    expect((thrown as SliceContractError).field).toBe('normal')
+  })
+
+  it('rejects a payload whose mask disagrees with the fraction it reports', async () => {
+    routeFetch({
+      '/api/orbitals/slice': () => {
+        const payload = freshSlice()
+        ;(payload.valid_mask as boolean[])[3] = false
+        return jsonResponse(payload)
+      },
+    })
+
+    await expect(fetchSlice(params, 65, 1, 'xy', 'phase')).rejects.toThrow(
+      /phase_masked_fraction/,
+    )
+  })
+
+  /**
+   * A superposition payload arriving from the eigenstate route is a routing
+   * mistake, not a rendering one: the two payloads differ only in metadata, so
+   * nothing downstream would notice until an Inspector asked for `state`.
+   */
+  it('refuses a payload carrying superposition metadata', async () => {
+    routeFetch({ '/api/orbitals/slice': () => jsonResponse(freshSuperpositionSlice()) })
+
+    let thrown: unknown
+    try {
+      await fetchSlice(params, 65, 1, 'xy', 'phase')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(SliceContractError)
+    expect((thrown as SliceContractError).field).toBe('metadata')
+  })
+
+  it('rejects with the server error body on an HTTP error', async () => {
+    routeFetch({
+      '/api/orbitals/slice': () => errorResponse('resolution below the n=4 floor', 422),
+    })
+    await expect(fetchSlice(params, 65, 1, 'xy', 'phase')).rejects.toThrow(
+      serverError('resolution below the n=4 floor'),
+    )
+  })
+
+  it('propagates a network failure unchanged', async () => {
+    const failure = new TypeError('fetch failed')
+    fetchMock.mockRejectedValue(failure)
+    await expect(fetchSlice(params, 65, 1, 'xy', 'phase')).rejects.toBe(failure)
+  })
+})
+
+describe('fetchSuperpositionSlice', () => {
+  it('requests the superposition slice with every server-side knob', async () => {
+    routeFetch({ '/api/superposition/slice': () => jsonResponse(freshSuperpositionSlice()) })
+    const controller = new AbortController()
+
+    const payload = await fetchSuperpositionSlice(
+      terms,
+      1.25,
+      65,
+      'real',
+      2,
+      1.5,
+      'xy',
+      'wavefunction_real',
+      controller.signal,
+    )
+
+    const { url, init } = requestTo('/api/superposition/slice')
+    expect(url.searchParams.get('terms')).toBe(terms)
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      terms,
+      time: '1.25',
+      resolution: '65',
+      basis: 'real',
+      z: '2',
+      a_mu: '1.5',
+      plane: 'xy',
+      observable: 'wavefunction_real',
+    })
+    expect(url.search).toBe(
+      `?terms=${encodedTerms}&time=1.25&resolution=65&basis=real&z=2&a_mu=1.5` +
+        '&plane=xy&observable=wavefunction_real',
+    )
+    expect(init).toEqual({ signal: controller.signal })
+    expect(payload.metadata.terms).toEqual(superpositionMetadata.terms)
+  })
+
+  it('rejects a payload that breaks the slice contract, naming the field', async () => {
+    routeFetch({
+      '/api/superposition/slice': () => {
+        const payload = freshSuperpositionSlice()
+        payload.spacing_bohr = 1
+        return jsonResponse(payload)
+      },
+    })
+
+    let thrown: unknown
+    try {
+      await fetchSuperpositionSlice(terms, 0, 65, 'complex', 1, 1, 'xy', 'phase')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(SliceContractError)
+    expect((thrown as SliceContractError).field).toBe('spacing_bohr')
+  })
+
+  it('refuses a payload carrying eigenstate metadata', async () => {
+    routeFetch({ '/api/superposition/slice': () => jsonResponse(freshSlice()) })
+
+    let thrown: unknown
+    try {
+      await fetchSuperpositionSlice(terms, 0, 65, 'complex', 1, 1, 'xy', 'phase')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(SliceContractError)
+    expect((thrown as SliceContractError).field).toBe('metadata')
+  })
+
+  it('rejects with the server error body on an HTTP error', async () => {
+    routeFetch({ '/api/superposition/slice': () => errorResponse('terms: unparsable', 422) })
+    await expect(
+      fetchSuperpositionSlice('nonsense', 0, 65, 'complex', 1, 1, 'xy', 'phase'),
+    ).rejects.toThrow(serverError('terms: unparsable'))
+  })
+
+  it('propagates a network failure unchanged', async () => {
+    const failure = new TypeError('fetch failed')
+    fetchMock.mockRejectedValue(failure)
+    await expect(
+      fetchSuperpositionSlice(terms, 0, 65, 'complex', 1, 1, 'xy', 'phase'),
+    ).rejects.toBe(failure)
   })
 })
 

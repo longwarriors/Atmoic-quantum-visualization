@@ -13,6 +13,7 @@ const baseInputs: SceneIdentityInputs = {
   resolution: 65,
   probabilityMass: 0.9,
   seedCount: 48,
+  aMu: 1,
 }
 
 /**
@@ -66,6 +67,50 @@ describe('sceneIdentityKey', () => {
     ]
     const keys = [sceneIdentityKey(snapshot()), ...mutations.map((patch) => sceneIdentityKey(snapshot(patch)))]
     expect(new Set(keys).size, `colliding keys: ${keys.join('\n')}`).toBe(keys.length)
+  })
+
+  /**
+   * The three inputs a slice adds to the scene's identity.
+   *
+   * Every one of them changes the picture the server returns, and none of them
+   * used to reach the key: `plane` and `sliceObservable` were introduced with
+   * the slice rows, and `aMu` lived as an appendage inside `assetIdentityKey`
+   * where the eigenstate slice -- the one non-superposition route that reads
+   * `a_mu` -- could not see it. A key blind to any of the three keeps the old
+   * section on screen after the user asks for a different one, which is the
+   * failure mode that is hardest to notice: the picture is a perfectly good
+   * picture of the wrong thing.
+   */
+  it('distinguishes slices that differ only in plane, only in observable, or only in a_mu', () => {
+    const slice = snapshot({
+      representation: 'slice',
+      plane: 'xz',
+      sliceObservable: 'phase',
+      aMu: 1,
+    })
+    const keys = [
+      sceneIdentityKey(slice),
+      sceneIdentityKey({ ...slice, plane: 'yz' }),
+      sceneIdentityKey({ ...slice, plane: 'xy' }),
+      sceneIdentityKey({ ...slice, sliceObservable: 'probability_density' }),
+      sceneIdentityKey({ ...slice, sliceObservable: 'wavefunction_real' }),
+      // The muonic ratio: a different Bohr length, so a different extent and a
+      // different amplitude scale for the phase mask -- a different object.
+      sceneIdentityKey({ ...slice, aMu: 0.0054 }),
+    ]
+    expect(new Set(keys).size, `colliding keys:\n${keys.join('\n')}`).toBe(keys.length)
+  })
+
+  it('spells an absent plane and observable as "none", distinct from any real choice', () => {
+    // A non-slice scene carries neither, and "absent" must not read as one of
+    // the values a slice can hold.
+    const absent = sceneIdentityKey(snapshot())
+    expect(absent).toContain('plane=none')
+    expect(absent).toContain('sliceObservable=none')
+    for (const plane of ['xy', 'xz', 'yz'] as const) {
+      expect(sceneIdentityKey(snapshot({ plane })), plane).not.toBe(absent)
+    }
+    expect(sceneIdentityKey(snapshot({ sliceObservable: 'phase' }))).not.toBe(absent)
   })
 
   it('separates its fields, so one field cannot spell another', () => {

@@ -1,4 +1,5 @@
-import type { BasisKind } from '../api/types'
+import { PLANE_FRAMES } from '../api/sliceContract'
+import type { BasisKind, PrincipalPlane } from '../api/types'
 
 /**
  * Where to put the camera when a new scene arrives.
@@ -54,4 +55,37 @@ function direction(state: CameraViewState | undefined): CameraDirection {
     return state.m === 2 || state.m === -2 ? ALONG_Z : ALONG_X
   }
   return DEFAULT_CAMERA_DIRECTION
+}
+
+/**
+ * Where to stand to look at a principal plane face-on, and which way is up
+ * when you do.
+ *
+ * A slice is a picture of the (u, v) grid the server sampled, so the only
+ * honest way to show it is the one where screen +X is u and screen +Y is v:
+ * any other viewpoint hands the reader a rotated or mirrored copy of a payload
+ * whose whole point is that its handedness is pinned down. Placing the camera
+ * along the frame's OWN normal with the frame's v axis as `up` gets that for
+ * free -- three's lookAt builds x = up x z and y = z x x, and the frozen frames
+ * are orthonormal and right-handed, so x lands on u and y on v -- and it needs
+ * no per-plane special case, only the table.
+ *
+ * The `xz` plane is where a shortcut shows: its normal is -y, because
+ * x_hat x z_hat = -y_hat. Reaching for +y instead mirrors the picture, and the
+ * usual reflex of "up is +y" is worse still -- there it is parallel to the view
+ * direction, where lookAt has no basis to build at all.
+ *
+ * Both return plain tuples and import nothing from three, for the reason
+ * `cameraDirectionFor` does: this is arithmetic over a frozen table, it belongs
+ * in the test suite, and the caller scales and normalises what it is handed.
+ */
+export function cameraDirectionForPlane(plane: PrincipalPlane): [number, number, number] {
+  // Copied, not aliased: PLANE_FRAMES is the contract's frozen table, and the
+  // canvas normalises the vector it is given in place.
+  return [...PLANE_FRAMES[plane].normal]
+}
+
+/** The frame's v axis: what screen +Y must be for the slice to read as sampled. */
+export function cameraUpForPlane(plane: PrincipalPlane): [number, number, number] {
+  return [...PLANE_FRAMES[plane].v_axis]
 }

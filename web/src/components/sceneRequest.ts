@@ -1,4 +1,9 @@
-import type { OrbitalParameters, RepresentationKind } from '../api/types'
+import type {
+  OrbitalParameters,
+  PrincipalPlane,
+  RepresentationKind,
+  SliceObservable,
+} from '../api/types'
 import type { SceneMode } from '../state/useSceneStore'
 
 /**
@@ -19,6 +24,28 @@ export interface SceneIdentityInputs {
   resolution: number
   probabilityMass: number
   seedCount: number
+  /**
+   * The reduced-mass ratio a_mu, part of the core identity rather than a
+   * superposition-only appendage.
+   *
+   * It used to be spelled onto the key by `assetIdentityKey` alongside the
+   * superposition's basis, on the assumption that only the superposition routes
+   * read it. `/api/orbitals/slice` reads it too -- it is the one eigenstate
+   * route that does -- and a_mu rescales both the derived extent and the
+   * amplitude scale the phase mask is referenced to, so two eigenstate slices
+   * differing only in a_mu are two different pictures.
+   */
+  aMu: number
+  /**
+   * The plane a slice is cut on and the field it carries, absent on every
+   * scene that is not a slice.
+   *
+   * Optional because only the two slice rows have them; encoded as `none` when
+   * absent so that "this scene has no plane" is a value of its own rather than
+   * a gap that reads as whichever plane was asked for last.
+   */
+  plane?: PrincipalPlane
+  sliceObservable?: SliceObservable
 }
 
 export interface FetchDecision {
@@ -50,6 +77,11 @@ export interface FetchCoordinator {
  * Fields are separated rather than concatenated, and the one free-form field
  * (the superposition terms) goes last, so no value can spell out another
  * field's and collide with it.
+ *
+ * The two optional fields are spelled `plane=none` / `sliceObservable=none`
+ * when absent rather than omitted: an omitted field would make the key of a
+ * scene that has no plane a PREFIX-compatible neighbour of one that does, and
+ * "absent" is a state the key has to be able to say.
  */
 export function sceneIdentityKey(inputs: SceneIdentityInputs): string {
   const { orbital } = inputs
@@ -61,11 +93,14 @@ export function sceneIdentityKey(inputs: SceneIdentityInputs): string {
     `m=${orbital.m}`,
     `z=${orbital.z}`,
     `basis=${orbital.basis}`,
+    `aMu=${inputs.aMu}`,
     `samples=${inputs.samples}`,
     `seed=${inputs.seed}`,
     `resolution=${inputs.resolution}`,
     `mass=${inputs.probabilityMass}`,
     `seedCount=${inputs.seedCount}`,
+    `plane=${inputs.plane ?? 'none'}`,
+    `sliceObservable=${inputs.sliceObservable ?? 'none'}`,
     `terms=${inputs.superpositionTerms}`,
   ].join('|')
 }

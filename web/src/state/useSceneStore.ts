@@ -1,7 +1,13 @@
 import { create } from 'zustand'
 
-import { capabilityFor } from '../api/capability'
-import type { BasisKind, OrbitalParameters, RepresentationKind } from '../api/types'
+import { capabilityFor, type ParameterBound } from '../api/capability'
+import type {
+  BasisKind,
+  OrbitalParameters,
+  PrincipalPlane,
+  RepresentationKind,
+  SliceObservable,
+} from '../api/types'
 
 export type SceneMode = 'eigenstate' | 'superposition'
 
@@ -21,12 +27,27 @@ interface SceneStore {
   /**
    * Reduced-mass ratio a_mu, carried in the store so the request states it
    * rather than letting the server default it. Read-only in the UI today.
+   *
+   * NOT `superpositionAMu` any more: four routes read this parameter and two of
+   * them are eigenstate routes -- the eigenstate slice rescales both its derived
+   * extent and the amplitude the phase mask is referenced to by this ratio. A
+   * name that said "superposition" was the store asserting a mode-dependence the
+   * capability matrix does not have.
    */
-  superpositionAMu: number
+  aMu: number
   timeAu: number
   playing: boolean
   orbital: OrbitalParameters
   representation: RepresentationKind
+  /**
+   * Which principal plane a slice is cut on, and which scalar field it carries.
+   *
+   * Both start at the value routes.py declares as its own default, so a slice
+   * requested before either picker is touched is the slice the route documents
+   * rather than one this store invented.
+   */
+  plane: PrincipalPlane
+  sliceObservable: SliceObservable
   samples: number
   seed: number
   resolution: number
@@ -43,11 +64,13 @@ interface SceneStore {
   setSuperposition: (terms: string, label: string) => void
   setSuperpositionBasis: (value: BasisKind) => void
   setSuperpositionZ: (value: number) => void
-  setSuperpositionAMu: (value: number) => void
+  setAMu: (value: number) => void
   setTimeAu: (value: number) => void
   setPlaying: (value: boolean) => void
   setOrbital: (patch: Partial<OrbitalParameters>) => void
   setRepresentation: (value: RepresentationKind) => void
+  setPlane: (value: PrincipalPlane) => void
+  setSliceObservable: (value: SliceObservable) => void
   setSamples: (value: number) => void
   setSeed: (value: number) => void
   setResolution: (value: number) => void
@@ -72,8 +95,32 @@ function normalizeOrbital(current: OrbitalParameters, patch: Partial<OrbitalPara
   return { n, l, m, z, basis }
 }
 
-function minimumSurfaceResolution(n: number): number {
-  return Math.max(49, 16 * n + 17)
+/**
+ * The grid, moved into whatever range the cell that will actually be drawn
+ * declares for it -- and left exactly alone when that cell has no grid.
+ *
+ * Both writers of `resolution` used to spell `Math.min(81, Math.max(value,
+ * max(49, 16n + 17)))`, which is the EIGENSTATE ISOSURFACE row's bound written
+ * down a second time and then applied to every row there is. A slice runs to
+ * 513, so a 129-sample section was silently cut to 81 -- by a store that had
+ * just been told, by the same matrix the panel's slider reads, that 129 was
+ * fine. The point cloud has no grid at all, and had one edited anyway.
+ *
+ * `representation` is the RESOLVED one, not the requested one: a demoted cell's
+ * abandoned bound can be empty (the isosurface at n = 5 declares min 97 > max
+ * 81) and clamping into it would produce a number no route ever offered.
+ */
+function clampResolution(
+  mode: SceneMode,
+  orbital: OrbitalParameters,
+  representation: RepresentationKind,
+  resolution: number,
+): number {
+  const capability = capabilityFor({ mode, orbital, representation })
+  const bound: ParameterBound | undefined =
+    capability.status === 'available' ? capability.parameters.resolution : undefined
+  if (bound === undefined) return resolution
+  return Math.min(bound.max, Math.max(bound.min, resolution))
 }
 
 /**
@@ -127,11 +174,15 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   superpositionLabel: '1s + 2p_z (Bohr oscillation)',
   superpositionBasis: 'complex',
   superpositionZ: 1.0,
-  superpositionAMu: 1.0,
+  aMu: 1.0,
   timeAu: 0,
   playing: false,
   orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
   representation: 'point_cloud',
+  // routes.py: `plane: PrincipalPlane = PrincipalPlane.XZ`,
+  // `observable: SliceObservable = SliceObservable.PROBABILITY_DENSITY`.
+  plane: 'xz',
+  sliceObservable: 'probability_density',
   samples: 28000,
   seed: 7,
   resolution: 65,
@@ -162,21 +213,22 @@ export const useSceneStore = create<SceneStore>()((set) => ({
     set({ superpositionTerms, superpositionLabel, timeAu: 0 }),
   setSuperpositionBasis: (superpositionBasis) => set({ superpositionBasis }),
   setSuperpositionZ: (superpositionZ) => set({ superpositionZ }),
-  setSuperpositionAMu: (superpositionAMu) => set({ superpositionAMu }),
+  setAMu: (aMu) => set({ aMu }),
   setTimeAu: (timeAu) => set({ timeAu }),
   setPlaying: (playing) => set({ playing }),
   setOrbital: (patch) =>
     set((state) => {
       const orbital = normalizeOrbital(state.orbital, patch)
+      const representation = resolveRepresentation(
+        state.mode,
+        orbital,
+        state.representation,
+        state.representation,
+      )
       return {
         orbital,
-        representation: resolveRepresentation(
-          state.mode,
-          orbital,
-          state.representation,
-          state.representation,
-        ),
-        resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
+        representation,
+        resolution: clampResolution(state.mode, orbital, representation, state.resolution),
       }
     }),
   setRepresentation: (representation) =>
@@ -188,6 +240,8 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         state.representation,
       ),
     })),
+  setPlane: (plane) => set({ plane }),
+  setSliceObservable: (sliceObservable) => set({ sliceObservable }),
   setSamples: (samples) => set({ samples }),
   setSeed: (seed) => set({ seed }),
   setResolution: (resolution) => set({ resolution }),
@@ -203,15 +257,16 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   applyPreset: (preset) =>
     set((state) => {
       const orbital = normalizeOrbital(state.orbital, preset)
+      const representation = resolveRepresentation(
+        state.mode,
+        orbital,
+        state.representation,
+        state.representation,
+      )
       return {
         orbital,
-        representation: resolveRepresentation(
-          state.mode,
-          orbital,
-          state.representation,
-          state.representation,
-        ),
-        resolution: Math.min(81, Math.max(state.resolution, minimumSurfaceResolution(orbital.n))),
+        representation,
+        resolution: clampResolution(state.mode, orbital, representation, state.resolution),
       }
     }),
 }))

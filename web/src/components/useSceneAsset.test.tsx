@@ -243,6 +243,23 @@ const eigenstateCurrentField: CurrentFieldPayload = {
   integration_rule: 'rk4',
 }
 
+/**
+ * The committed slice golden, resolved from the vitest root for the same
+ * reason the QVPC binary is: under jsdom `import.meta.url` is an http:// URL.
+ */
+const sliceGoldenPath = resolve(process.cwd(), '..', 'tests', 'fixtures', 'slice_golden.json')
+const SLICE_GOLDEN_TEXT = readFileSync(sliceGoldenPath, 'utf-8')
+
+type MutableSlice = Record<string, unknown>
+
+const eigenstateSlice = (): MutableSlice => JSON.parse(SLICE_GOLDEN_TEXT) as MutableSlice
+
+function superpositionSlice(timeAu: number): MutableSlice {
+  const payload = eigenstateSlice()
+  payload.metadata = superpositionMetadata(timeAu)
+  return payload
+}
+
 const baseInputs: SceneAssetInputs = {
   mode: 'eigenstate',
   orbital: { n: 2, l: 1, m: 1, z: 1, basis: 'complex' },
@@ -259,6 +276,13 @@ const baseInputs: SceneAssetInputs = {
 }
 
 const superpositionInputs: SceneAssetInputs = { ...baseInputs, mode: 'superposition' }
+
+const sliceInputs: SceneAssetInputs = {
+  ...baseInputs,
+  representation: 'slice',
+  plane: 'xy',
+  sliceObservable: 'phase',
+}
 
 /* -------------------------------------------------------------- the host */
 
@@ -547,6 +571,97 @@ describe('useSceneAsset', () => {
     await tree.unmount()
   })
 
+  it('asks the eigenstate slice route and reports the section it got back', async () => {
+    const { capture, statuses, element } = host(sliceInputs)
+    const tree = await mount(element(sliceInputs))
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url.startsWith('/api/orbitals/slice')).toBe(true)
+    expect(queryValue(calls[0].url, 'plane')).toBe('xy')
+    expect(queryValue(calls[0].url, 'observable')).toBe('phase')
+    // The one eigenstate route that reads a_mu: it rescales the derived extent
+    // and the amplitude scale the phase mask is referenced to.
+    expect(queryValue(calls[0].url, 'a_mu')).toBe('1')
+
+    await act(async () => {
+      calls[0].settle(jsonOk(eigenstateSlice()))
+    })
+
+    expect(capture.current?.asset?.kind).toBe('slice')
+    const status = latest(statuses)
+    expect(status.plane).toBe('xy')
+    expect(status.sliceObservable).toBe('phase')
+    expect(status.sliceResolution).toBe(65)
+    expect(status.phaseMaskedFraction).toBe(0)
+    expect(status.metadata?.state.n).toBe(1)
+    expect(sceneExtentBohr(capture.current?.asset ?? null)).toBeCloseTo(7.31228962362227, 12)
+    await tree.unmount()
+  })
+
+  it('asks the superposition slice route and reports the instant it is a section of', async () => {
+    const inputs: SceneAssetInputs = { ...sliceInputs, mode: 'superposition' }
+    const { capture, statuses, element } = host(inputs)
+    const tree = await mount(element(inputs))
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url.startsWith('/api/superposition/slice')).toBe(true)
+    expect(queryValue(calls[0].url, 'plane')).toBe('xy')
+    expect(queryValue(calls[0].url, 'time')).toBe('0')
+
+    await act(async () => {
+      calls[0].settle(jsonOk(superpositionSlice(0)))
+    })
+
+    expect(capture.current?.asset?.kind).toBe('superposition_slice')
+    const status = latest(statuses)
+    expect(status.superposition?.time_au).toBe(0)
+    expect(status.sliceObservable).toBe('phase')
+    expect(status.renderedTimeAu).toBe(0)
+    await tree.unmount()
+  })
+
+  it('treats a different plane as a different scene', async () => {
+    // The failure this pins is the quiet one: a plane change that did not
+    // reach the identity key leaves the old section on screen, and an `xz`
+    // section of a state is a perfectly convincing picture of the wrong thing.
+    const { capture, element } = host(sliceInputs)
+    const tree = await mount(element(sliceInputs))
+
+    await tree.update(element({ ...sliceInputs, plane: 'xz' }))
+
+    expect(calls[0].signal?.aborted).toBe(true)
+    expect(calls).toHaveLength(2)
+    expect(queryValue(calls[1].url, 'plane')).toBe('xz')
+    expect(capture.current?.asset).toBeNull()
+    await tree.unmount()
+  })
+
+  it('treats a different observable as a different scene', async () => {
+    const { element } = host(sliceInputs)
+    const tree = await mount(element(sliceInputs))
+
+    await tree.update(element({ ...sliceInputs, sliceObservable: 'wavefunction_real' }))
+
+    expect(calls).toHaveLength(2)
+    expect(queryValue(calls[1].url, 'observable')).toBe('wavefunction_real')
+    await tree.unmount()
+  })
+
+  it('treats a different reduced mass as a different scene', async () => {
+    // a_mu is no longer a superposition-only appendage on the key: the
+    // eigenstate slice route reads it, and a muonic Bohr length is a different
+    // extent and a different mask threshold.
+    const { element } = host(sliceInputs)
+    const tree = await mount(element(sliceInputs))
+
+    await tree.update(element({ ...sliceInputs, aMu: 0.0054 }))
+
+    expect(calls[0].signal?.aborted).toBe(true)
+    expect(calls).toHaveLength(2)
+    expect(queryValue(calls[1].url, 'a_mu')).toBe('0.0054')
+    await tree.unmount()
+  })
+
   it('has no extent to report without an asset', () => {
     expect(sceneExtentBohr(null)).toBeUndefined()
   })
@@ -647,8 +762,15 @@ describe('executeSceneRequest', () => {
       { ...baseInputs, representation: 'point_cloud' },
       { ...baseInputs, representation: 'isosurface' },
       { ...baseInputs, representation: 'streamlines' },
+      { ...baseInputs, representation: 'slice', plane: 'yz', sliceObservable: 'phase' },
       { ...superpositionInputs, representation: 'isosurface' },
       { ...superpositionInputs, representation: 'streamlines' },
+      {
+        ...superpositionInputs,
+        representation: 'slice',
+        plane: 'yz',
+        sliceObservable: 'phase',
+      },
     ]
 
     for (const inputs of cells) {
@@ -683,5 +805,45 @@ describe('executeSceneRequest', () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow('resolution')
+  })
+
+  /**
+   * The enumerated counterpart of the missing-number case, and it fails closed
+   * for a sharper reason: `plane` and `observable` have server-side defaults,
+   * so a plan that forgot one would not 422 -- it would return a valid section
+   * of a different field, and the panel would go on describing the section it
+   * asked for.
+   */
+  it.each([
+    ['plane', { resolution: 65, a_mu: 1, observable: 'phase' }],
+    ['observable', { resolution: 65, a_mu: 1, plane: 'xy' }],
+  ])('refuses a slice plan with no %s', async (missing, params) => {
+    await expect(
+      executeSceneRequest(
+        {
+          status: 'available',
+          endpoint: '/api/orbitals/slice',
+          params,
+          latency: 'slow',
+        },
+        sliceInputs,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(missing)
+  })
+
+  it('refuses a slice plan naming a plane that is not a principal plane', async () => {
+    await expect(
+      executeSceneRequest(
+        {
+          status: 'available',
+          endpoint: '/api/superposition/slice',
+          params: { resolution: 65, a_mu: 1, time: 0, plane: 'xw', observable: 'phase' },
+          latency: 'slow',
+        },
+        { ...sliceInputs, mode: 'superposition' },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('xw')
   })
 })

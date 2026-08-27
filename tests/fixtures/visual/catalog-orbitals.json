@@ -1,0 +1,58 @@
+[
+  {
+    "basis": "real",
+    "id": "1s",
+    "l": 0,
+    "label": "1s",
+    "m": 0,
+    "n": 1
+  },
+  {
+    "basis": "real",
+    "id": "2px",
+    "l": 1,
+    "label": "2pₓ",
+    "m": 1,
+    "n": 2
+  },
+  {
+    "basis": "real",
+    "id": "2py",
+    "l": 1,
+    "label": "2pᵧ",
+    "m": -1,
+    "n": 2
+  },
+  {
+    "basis": "real",
+    "id": "2pz",
+    "l": 1,
+    "label": "2p_z",
+    "m": 0,
+    "n": 2
+  },
+  {
+    "basis": "real",
+    "id": "3dxy",
+    "l": 2,
+    "label": "3dₓᵧ",
+    "m": -2,
+    "n": 3
+  },
+  {
+    "basis": "real",
+    "id": "3dz2",
+    "l": 2,
+    "label": "3d_z²",
+    "m": 0,
+    "n": 3
+  },
+  {
+    "basis": "complex",
+    "id": "3d-complex",
+    "l": 2,
+    "label": "3d, m=2",
+    "m": 2,
+    "n": 3
+  }
+]

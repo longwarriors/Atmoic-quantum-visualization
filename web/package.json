@@ -13,7 +13,9 @@
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false",
     "test": "node scripts/clean-coverage.mjs && tsc -p tsconfig.test.json --noEmit && vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/vitest-results.json && node scripts/assert-no-skips.mjs && node scripts/assert-coverage-scope.mjs",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:visual": "playwright test && node scripts/assert-visual-run.mjs",
+    "test:visual:update": "playwright test --update-snapshots"
   },
   "dependencies": {
     "@react-three/drei": "10.7.8",
@@ -27,6 +29,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@react-three/test-renderer": "9.1.1",
     "@types/node": "^24.13.3",
     "@types/react": "19.2.18",

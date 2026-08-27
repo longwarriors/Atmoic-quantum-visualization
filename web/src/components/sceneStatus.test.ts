@@ -1,12 +1,19 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
+import { SliceContractError, type AnySlicePayload } from '../api/sliceContract'
 import type {
   CurrentFieldPayload,
   OrbitalMetadata,
   SuperpositionIsosurfacePayload,
   SuperpositionMetadata,
 } from '../api/types'
-import { statusFromCurrentField, statusFromSuperpositionIsosurface } from './sceneStatus'
+import {
+  statusFromCurrentField,
+  statusFromSlice,
+  statusFromSuperpositionIsosurface,
+} from './sceneStatus'
 
 const superpositionMetadata: SuperpositionMetadata = {
   terms: [{ n: 1, l: 0, m: 0, coefficient_real: 1, coefficient_imag: 0 }],
@@ -115,5 +122,153 @@ describe('scene payload status adapters', () => {
       metadata: orbitalMetadata,
       warnings: ['current warning'],
     })
+  })
+})
+
+/* ------------------------------------------------------------------ slices */
+
+/**
+ * The committed slice golden: the 1s `xy` phase section at resolution 65,
+ * every sample unmasked and every phase exactly `0.0`.
+ *
+ * Re-parsed per case because every case below mutates it, and a case that saw
+ * another's edit would be asserting about a payload nobody wrote.
+ */
+const SLICE_GOLDEN_TEXT = readFileSync(
+  fileURLToPath(new URL('../../../tests/fixtures/slice_golden.json', import.meta.url)),
+  'utf-8',
+)
+
+type MutableSlice = Record<string, unknown>
+
+const freshSlice = (): MutableSlice => JSON.parse(SLICE_GOLDEN_TEXT) as MutableSlice
+
+/** A payload built by hand is not a validated one; `statusFromSlice` takes it as it is. */
+const asSlice = (payload: MutableSlice): AnySlicePayload => payload as unknown as AnySlicePayload
+
+/**
+ * The golden as a `probability_density` section: no mask, and none of the five
+ * mask-rule terms, because only a phase slice carries them.
+ */
+function densitySlice(): MutableSlice {
+  const payload = freshSlice()
+  payload.slice_observable = 'probability_density'
+  payload.value_unit = 'bohr^-3'
+  payload.valid_mask = null
+  payload.phase_mask_relative_amplitude = null
+  payload.phase_mask_amplitude_scale = null
+  payload.phase_mask_amplitude_threshold = null
+  payload.phase_mask_numeric_floor = null
+  payload.phase_masked_fraction = null
+  return payload
+}
+
+describe('statusFromSlice', () => {
+  it('reports the plane, the field, the grid and every term of the mask rule', () => {
+    const status = statusFromSlice(asSlice(freshSlice()))
+
+    expect(status).toMatchObject({
+      loading: false,
+      plane: 'xy',
+      sliceObservable: 'phase',
+      sliceResolution: 65,
+      sliceValueUnit: 'radian',
+      maskedValueSentinel: 0,
+      phaseMaskRelativeAmplitude: 1e-6,
+      phaseMaskAmplitudeScale: 1,
+      phaseMaskAmplitudeThreshold: 1e-6,
+      phaseMaskedFraction: 0,
+    })
+    expect(status.phaseMaskNumericFloor).toBeCloseTo(8.017616203627489e-15, 20)
+    expect(status.sliceSpacingBohr).toBeCloseTo(0.22850905073819594, 15)
+    expect(status.extentBohr).toBeCloseTo(7.31228962362227, 12)
+    // The eigenstate arm: the state itself, not a superposition.
+    expect(status.metadata?.state.n).toBe(1)
+    expect(status.superposition).toBeUndefined()
+    expect(status.timeAu).toBeUndefined()
+    expect(status.warnings).toEqual([])
+  })
+
+  it('reports the largest defined |value| on the plane', () => {
+    // Nothing in the payload carries this, and a renderer that normalises
+    // colour needs it: the golden's phases are all 0.0, so the number has to
+    // come from the samples rather than from a reported field.
+    const payload = freshSlice()
+    const values = payload.values as number[]
+    values[0] = -3
+    values[10] = 2
+
+    expect(statusFromSlice(asSlice(payload)).sliceMaxAbsValue).toBeCloseTo(3, 12)
+  })
+
+  /**
+   * The recomputation is the authority, and this is the case that says so: a
+   * slice with no mask has nothing masked, so its fraction is ZERO. Reading
+   * the raw `phase_masked_fraction` here would report `undefined` -- "we do
+   * not know" -- about a slice whose masked fraction is known exactly.
+   */
+  it('reports zero masked for a slice that carries no mask at all', () => {
+    const status = statusFromSlice(asSlice(densitySlice()))
+
+    expect(status.phaseMaskedFraction).toBe(0)
+    expect(status.sliceObservable).toBe('probability_density')
+    expect(status.sliceValueUnit).toBe('bohr^-3')
+    // The four thresholds belong to the mask rule; a slice with no mask
+    // applied none, and reporting numbers it did not use would be a fiction.
+    expect(status.phaseMaskRelativeAmplitude).toBeUndefined()
+    expect(status.phaseMaskAmplitudeScale).toBeUndefined()
+    expect(status.phaseMaskAmplitudeThreshold).toBeUndefined()
+    expect(status.phaseMaskNumericFloor).toBeUndefined()
+  })
+
+  it('counts the mask rather than trusting the fraction the payload reports', () => {
+    const payload = freshSlice()
+    ;(payload.valid_mask as boolean[])[7] = false
+    payload.phase_masked_fraction = 1 / 65 ** 2
+
+    expect(statusFromSlice(asSlice(payload)).phaseMaskedFraction).toBeCloseTo(1 / 4225, 15)
+  })
+
+  it('refuses a payload whose reported fraction disagrees with its own mask', () => {
+    // A number that disagrees with the data it summarises is worse than none,
+    // because it is the number someone will quote.
+    const payload = freshSlice()
+    ;(payload.valid_mask as boolean[])[7] = false
+
+    let thrown: unknown
+    try {
+      statusFromSlice(asSlice(payload))
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(SliceContractError)
+    expect((thrown as SliceContractError).field).toBe('phase_masked_fraction')
+  })
+
+  it('reads metadata that omits its warnings as carrying none', () => {
+    // `warnings` is optional on the wire -- the server omits an empty list --
+    // and required on the type the UI reads. Absent means none, which is a
+    // fact about the payload rather than a gap to leave undefined.
+    const payload = freshSlice()
+    const metadata = { ...(payload.metadata as Record<string, unknown>) }
+    delete metadata.warnings
+    payload.metadata = metadata
+
+    const status = statusFromSlice(asSlice(payload))
+
+    expect(status.warnings).toEqual([])
+    expect(status.metadata?.warnings).toEqual([])
+  })
+
+  it('reports a superposition slice through the superposition arm, with its time', () => {
+    const payload = freshSlice()
+    payload.metadata = superpositionMetadata
+
+    const status = statusFromSlice(asSlice(payload))
+
+    expect(status.superposition).toEqual(superpositionMetadata)
+    expect(status.timeAu).toBe(2.5)
+    expect(status.metadata).toBeUndefined()
+    expect(status.warnings).toEqual(['surface warning'])
   })
 })

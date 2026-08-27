@@ -1,21 +1,30 @@
 import { Bounds, OrbitControls, useBounds } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing'
-import { type ReactNode, useEffect, useLayoutEffect } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
 import * as THREE from 'three'
 
 import type {
   BasisKind,
   OrbitalParameters,
+  PrincipalPlane,
   RepresentationKind,
   SceneStatus,
+  SliceObservable,
 } from '../api/types'
 import { Atmosphere } from '../scene/Atmosphere'
-import { cameraDirectionFor, type CameraViewState } from '../scene/camera'
+import {
+  cameraDirectionFor,
+  cameraDirectionForPlane,
+  cameraUpForPlane,
+  type CameraViewState,
+} from '../scene/camera'
 import { CurrentStreamlines } from '../scene/CurrentStreamlines'
 import { ElectronCloud } from '../scene/ElectronCloud'
 import { fogRangeFor } from '../scene/fog'
 import { OrbitalSurface } from '../scene/OrbitalSurface'
+import { SceneReady } from '../scene/SceneReady'
+import { SliceField } from '../scene/SliceField'
 import { useSceneStore, type SceneMode } from '../state/useSceneStore'
 import {
   sceneExtentBohr,
@@ -41,6 +50,83 @@ const FOG_COLOR = '#050a13'
 const MINIMUM_ORBIT_DISTANCE = 10
 
 /**
+ * Which way is up when nothing on screen argues for anything else.
+ *
+ * Written down because it has to be RESTORED, not merely defaulted: the camera
+ * object outlives every asset, so an `up` a slice set and nobody cleared is a
+ * permanent tilt on every scene drawn afterwards.
+ */
+const DEFAULT_CAMERA_UP: [number, number, number] = [0, 1, 0]
+
+/**
+ * How long drei's `Bounds` takes to ease the camera into a new scene's frame.
+ *
+ * Long enough to read as a move rather than a cut, which is the whole point:
+ * without it the viewer cannot tell a re-framing from a different scene.
+ */
+const FIT_SECONDS = 0.8
+
+/**
+ * The same fit with the animation taken out.
+ *
+ * Zero does NOT mean "do not fit". `Bounds` advances the fit by
+ * `delta / maxDuration` each frame and lands it the moment that reaches 1, so
+ * zero lands it on the first frame that runs -- same end pose, no curve.
+ */
+const INSTANT_FIT_SECONDS = 0
+
+/** The platform setting that means "stop animating things at me". */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+/**
+ * The live media query for that setting, or null where there is nobody to ask.
+ *
+ * Reached through `globalThis` and tested with `typeof`, rather than read off a
+ * bare `window`: outside a browser -- an SSR render, or a spec under vitest's
+ * default `node` environment -- `window` is not an undefined value but an
+ * undeclared identifier, and touching it is a ReferenceError that takes down
+ * every module that imported this one. No platform to ask is not an error; it
+ * is a viewer who has expressed no preference.
+ */
+function reducedMotionQuery(): MediaQueryList | null {
+  if (typeof globalThis.matchMedia !== 'function') return null
+  return globalThis.matchMedia(REDUCED_MOTION_QUERY)
+}
+
+/**
+ * Whether the viewer has asked their platform to reduce motion -- LIVE.
+ *
+ * This is an accessibility setting first: a camera that swoops into every new
+ * scene is exactly the kind of unrequested motion people turn this on to stop.
+ * It is honoured as a subscription rather than a startup reading because it is
+ * changed from the operating system's own controls, and a scene that sampled it
+ * once would go on swooping until the page was reloaded.
+ *
+ * It also happens to be what makes the settled camera pose repeatable, which is
+ * what the visual suite needs -- see the bootstrap note in e2e/slice.spec.ts.
+ * That is a consequence and not the justification: the behaviour is the same
+ * whether or not anybody is taking screenshots, which is the only version of it
+ * worth trusting.
+ */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() => reducedMotionQuery()?.matches === true)
+
+  useEffect(() => {
+    const query = reducedMotionQuery()
+    if (query === null) return undefined
+    const onChange = (event: MediaQueryListEvent): void => setReduced(event.matches)
+    query.addEventListener('change', onChange)
+    // Re-read rather than trust what the first render captured: the setting can
+    // change between that render and this subscription, and nothing would ever
+    // correct it -- from here on the listener reports CHANGES, not the state.
+    setReduced(query.matches)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+
+  return reduced
+}
+
+/**
  * Exactly the store fields a scene request reads, and nothing else.
  *
  * Spelled out rather than taken as the whole store type so that the list of
@@ -60,8 +146,10 @@ export interface SceneInputSource {
   superpositionTerms: string
   superpositionBasis: BasisKind
   superpositionZ: number
-  superpositionAMu: number
+  aMu: number
   timeAu: number
+  plane: PrincipalPlane
+  sliceObservable: SliceObservable
 }
 
 /**
@@ -93,8 +181,15 @@ export function sceneAssetInputs(state: SceneInputSource): SceneAssetInputs {
     seedCount: state.seedCount,
     superpositionTerms: state.superpositionTerms,
     superpositionBasis: state.superpositionBasis,
-    aMu: state.superpositionAMu,
+    aMu: state.aMu,
     timeAu: state.timeAu,
+    // The pair whose absence is SILENT. routes.py declares a default for each,
+    // so a request that omits them is answered with a perfectly valid section
+    // of a plane nobody asked for, carrying a field nobody asked for, while
+    // the panel goes on displaying the choice the user made. Every other
+    // missing parameter produces a 422 somebody can see.
+    plane: state.plane,
+    sliceObservable: state.sliceObservable,
   }
 }
 
@@ -118,6 +213,26 @@ export function cameraViewOf(asset: SceneAsset | null): CameraViewState | undefi
 }
 
 /**
+ * The principal plane this asset is a section of, or undefined when it is not
+ * a section at all.
+ *
+ * Read off the PAYLOAD rather than off the store, for `cameraViewOf`'s reason:
+ * the store holds what was last asked for, and while a request is in flight
+ * that is a different plane from the one on screen. Aiming at the store's
+ * answer would face the camera at a plane that has not arrived.
+ */
+export function slicePlaneOf(asset: SceneAsset | null): PrincipalPlane | undefined {
+  if (asset === null) return undefined
+  switch (asset.kind) {
+    case 'slice':
+    case 'superposition_slice':
+      return asset.data.plane
+    default:
+      return undefined
+  }
+}
+
+/**
  * Put the camera on this state's canonical view direction, keeping the
  * distance the user has zoomed to.
  *
@@ -125,9 +240,23 @@ export function cameraViewOf(asset: SceneAsset | null): CameraViewState | undefi
  * tests that pin which orbitals deserve which viewpoint -- rather than from an
  * inline copy of the same `if` chain that could drift from it.
  */
-export function aimCamera(camera: THREE.Camera, view: CameraViewState | undefined): void {
+export function aimCamera(
+  camera: THREE.Camera,
+  view: CameraViewState | undefined,
+  plane?: PrincipalPlane,
+): void {
   const distance = Math.max(camera.position.length(), MINIMUM_ORBIT_DISTANCE)
-  const direction = new THREE.Vector3(...cameraDirectionFor(view))
+  const direction = new THREE.Vector3(
+    ...(plane === undefined ? cameraDirectionFor(view) : cameraDirectionForPlane(plane)),
+  )
+  // ALWAYS set, in both arms. A slice needs the frame's own v axis as up --
+  // partly so screen +Y is v and the picture is the grid the server sampled
+  // rather than a rotation of it, and partly because the xz plane's normal is
+  // -y, so looking down it with the default up hands lookAt two parallel
+  // vectors and no basis to build from. Anything else needs that tilt GONE:
+  // the camera outlives the asset, and an up set once and never cleared is a
+  // tilt on every scene afterwards.
+  camera.up.set(...(plane === undefined ? DEFAULT_CAMERA_UP : cameraUpForPlane(plane)))
   camera.position.copy(direction.normalize().multiplyScalar(distance))
   camera.lookAt(0, 0, 0)
 }
@@ -144,10 +273,12 @@ export function aimCamera(camera: THREE.Camera, view: CameraViewState | undefine
  */
 export function FitOnAssetChange({
   view,
+  plane,
   fitKey,
   children,
 }: {
   view: CameraViewState | undefined
+  plane: PrincipalPlane | undefined
   fitKey: string | null
   children: ReactNode
 }) {
@@ -158,12 +289,13 @@ export function FitOnAssetChange({
     // Null until the first asset of this scene has arrived: there is nothing to
     // frame before that.
     if (fitKey === null) return undefined
-    aimCamera(camera, view)
+    aimCamera(camera, view, plane)
     const frame = window.requestAnimationFrame(() => bounds.refresh().clip().fit())
     return () => window.cancelAnimationFrame(frame)
     // The view is compared field by field: it is a fresh object on every
-    // render, and depending on the object would re-fit on every frame.
-  }, [bounds, camera, fitKey, view?.basis, view?.l, view?.m])
+    // render, and depending on the object would re-fit on every frame. `plane`
+    // is a plain string and already compares by value.
+  }, [bounds, camera, fitKey, plane, view?.basis, view?.l, view?.m])
 
   return children
 }
@@ -226,6 +358,13 @@ export function SceneContent({
     case 'isosurface':
     case 'superposition_isosurface':
       return <OrbitalSurface data={asset.data} opacity={opacity} />
+    case 'slice':
+    case 'superposition_slice':
+      // One renderer for both, for the same reason the two current fields
+      // share one below: the payloads differ only in metadata, and a second
+      // component could drift from this one's orientation or colour space
+      // with nothing failing.
+      return <SliceField data={asset.data} />
     default:
       // Both current fields are the same observable with the same geometry, so
       // they share one renderer rather than two that could drift apart.
@@ -245,25 +384,45 @@ export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
   const state = useSceneStore()
   const { asset, fitKey } = useSceneAsset(sceneAssetInputs(state), onStatus)
   const extent = sceneExtentBohr(asset)
+  const reducedMotion = usePrefersReducedMotion()
 
   return (
     <>
       <RendererSettings exposure={state.exposure} fogStrength={state.fogStrength} extent={extent} />
       <Atmosphere showGrid={state.showGrid} extent={extent} />
-      <Bounds fit clip observe margin={1.35} maxDuration={0.8}>
-        <FitOnAssetChange view={cameraViewOf(asset)} fitKey={fitKey}>
+      {/* The two animations this scene runs on its own, both of which a viewer
+          can ask it not to. The fit eases the camera into a new scene's frame;
+          the damping keeps the controls coasting after a drag ends. Neither
+          carries any information the still picture does not, which is why both
+          collapse rather than degrade. */}
+      <Bounds
+        fit
+        clip
+        observe
+        margin={1.35}
+        maxDuration={reducedMotion ? INSTANT_FIT_SECONDS : FIT_SECONDS}
+      >
+        <FitOnAssetChange
+          view={cameraViewOf(asset)}
+          plane={slicePlaneOf(asset)}
+          fitKey={fitKey}
+        >
           <SceneContent asset={asset} opacity={state.opacity} pointSize={state.pointSize} />
         </FitOnAssetChange>
       </Bounds>
       <OrbitControls
         makeDefault
-        enableDamping
+        enableDamping={!reducedMotion}
         dampingFactor={0.07}
         minDistance={2}
         maxDistance={90}
         autoRotate={state.autoRotate}
         autoRotateSpeed={0.34}
       />
+      {/* Unconditional, with no environment gate: the scene's own statement
+          that it has stopped moving, and the only thing the visual CI is
+          allowed to wait on. */}
+      <SceneReady fitKey={fitKey} />
     </>
   )
 }
