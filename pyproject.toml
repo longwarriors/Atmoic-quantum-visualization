@@ -31,6 +31,9 @@ classifiers = [
 ]
 dependencies = [
   "fastapi>=0.134",
+  # quviz.docs.scan runs python-markdown's own HTML extractor; it is a runtime
+  # import of the package, not a docs-build tool.
+  "markdown>=3.10",
   "numpy>=2.2",
   "orjson>=3.10",
   "pydantic>=2.11",
