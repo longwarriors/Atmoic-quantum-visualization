@@ -1,0 +1,151 @@
+import type { OrbitalParameters, RepresentationKind } from '../api/types'
+import type { SceneMode } from '../state/useSceneStore'
+
+/**
+ * Everything the canvas sends to the server EXCEPT the animation clock.
+ *
+ * The split is the whole point. Changing one of these asks for a different
+ * physical object, so whatever is on screen has become untrue and must go.
+ * Changing the time asks for a later moment of the SAME object, and the frame
+ * already on screen stays true enough to look at until the next one arrives.
+ */
+export interface SceneIdentityInputs {
+  mode: SceneMode
+  superpositionTerms: string
+  orbital: OrbitalParameters
+  representation: RepresentationKind
+  samples: number
+  seed: number
+  resolution: number
+  probabilityMass: number
+  seedCount: number
+}
+
+export interface FetchDecision {
+  /** Issue a request for the time that came with these inputs. */
+  startFetch: boolean
+  /** Drop the rendered assets: they no longer describe the requested state. */
+  clearScene: boolean
+  /** Cancel the request in flight; its answer is about a state nobody asked for. */
+  abortPrevious: boolean
+}
+
+export interface ResponseDecision {
+  /** A time that arrived while the request was in flight, or null. */
+  refetchTime: number | null
+}
+
+export interface FetchCoordinator {
+  onInputsChanged(inputs: { identityKey: string; timeAu: number }): FetchDecision
+  onResponse(forTime: number): ResponseDecision
+  onError(forTime: number): ResponseDecision
+  reset(): void
+}
+
+/**
+ * A stable string over the scene's identity, with the clock deliberately left
+ * out: `sceneIdentityKey(x) === sceneIdentityKey(y)` means x and y are two
+ * moments of one object.
+ *
+ * Fields are separated rather than concatenated, and the one free-form field
+ * (the superposition terms) goes last, so no value can spell out another
+ * field's and collide with it.
+ */
+export function sceneIdentityKey(inputs: SceneIdentityInputs): string {
+  const { orbital } = inputs
+  return [
+    `mode=${inputs.mode}`,
+    `representation=${inputs.representation}`,
+    `n=${orbital.n}`,
+    `l=${orbital.l}`,
+    `m=${orbital.m}`,
+    `z=${orbital.z}`,
+    `basis=${orbital.basis}`,
+    `samples=${inputs.samples}`,
+    `seed=${inputs.seed}`,
+    `resolution=${inputs.resolution}`,
+    `mass=${inputs.probabilityMass}`,
+    `seedCount=${inputs.seedCount}`,
+    `terms=${inputs.superpositionTerms}`,
+  ].join('|')
+}
+
+/** Atomic-unit step between playback frames. */
+const TIME_STEP_AU = 0.6
+/** Frames in one playback lap; 66 * 0.6 = 39.6 a.u. exactly. */
+const TIME_FRAMES = 66
+
+/**
+ * The next playback time, as a frame index rather than an accumulated sum.
+ *
+ * Adding 0.6 to a float and taking it modulo 40 does two damaging things: 40 is
+ * not a whole number of steps, so the loop walks 200 distinct times before it
+ * repeats, and the sum drifts off the grid (1.2 + 0.6 is 1.7999999999999998).
+ * Every distinct time is a cache-missing request for a frame nobody will see
+ * again. Counting frames instead means a lap revisits bit-identical values, so
+ * playback asks for the same 66 frames forever.
+ */
+export function nextTimeAu(time: number): number {
+  const frame = Math.round(time / TIME_STEP_AU)
+  const next = (((frame + 1) % TIME_FRAMES) + TIME_FRAMES) % TIME_FRAMES
+  return Number((next * TIME_STEP_AU).toFixed(3))
+}
+
+/**
+ * Latest-wins request scheduling for the canvas.
+ *
+ * It answers two questions the fetch effect used to answer wrongly. "Has the
+ * scene become untrue?" -- only when its identity changed, so a time step no
+ * longer blanks the viewport. And "what do we do with a time step that lands
+ * mid-request?" -- remember it and run it when the answer comes back, rather
+ * than aborting the request that is already most of the way there. Aborting was
+ * what made playback render nothing at all once a round trip outlasted the
+ * tick interval: every tick killed the request the previous tick had started.
+ *
+ * Only the newest queued time is kept. Playback is a clock, not a queue of
+ * work: an intermediate frame that is already stale by the time the network
+ * frees up is not worth showing.
+ */
+export function createFetchCoordinator(): FetchCoordinator {
+  let identityKey: string | null = null
+  let inFlight = false
+  let queuedTimeAu: number | null = null
+
+  const release = (forTime: number): ResponseDecision => {
+    inFlight = false
+    const queued = queuedTimeAu
+    queuedTimeAu = null
+    if (queued === null || queued === forTime) {
+      return { refetchTime: null }
+    }
+    inFlight = true
+    return { refetchTime: queued }
+  }
+
+  return {
+    onInputsChanged({ identityKey: key, timeAu }) {
+      if (key !== identityKey) {
+        identityKey = key
+        queuedTimeAu = null
+        inFlight = true
+        return { startFetch: true, clearScene: true, abortPrevious: true }
+      }
+      if (inFlight) {
+        queuedTimeAu = timeAu
+        return { startFetch: false, clearScene: false, abortPrevious: false }
+      }
+      inFlight = true
+      return { startFetch: true, clearScene: false, abortPrevious: false }
+    },
+    onResponse: release,
+    // An error has to free the slot too, or one failed request stops playback
+    // for good: every later tick would queue behind a request that will never
+    // answer.
+    onError: release,
+    reset() {
+      identityKey = null
+      inFlight = false
+      queuedTimeAu = null
+    },
+  }
+}

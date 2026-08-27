@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchCatalog, fetchSuperpositionCatalog } from '../api/client'
 import type { OrbitalPreset, RepresentationKind, SuperpositionPreset } from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
+import { nextTimeAu } from './sceneRequest'
 
 function RangeRow({
   label,
@@ -65,15 +66,24 @@ export function ControlPanel() {
     return () => controller.abort()
   }, [])
 
-  // Stepping time re-requests the asset, so the interval is slow enough that
-  // requests do not pile up behind each other.
+  const { playing, mode } = store
+  // Stepping time re-requests the asset. A round trip slower than the interval
+  // does not pile requests up: the canvas keeps only the newest pending time.
+  //
+  // The tick reads the clock from the store rather than from this render's
+  // closure, so the only things that can restart the interval are the two that
+  // decide whether it runs at all. Depending on `store` (a fresh object on
+  // every write) and on `store.timeAu` tore the timer down and rebuilt it on
+  // every unrelated store write -- time stopped advancing for as long as the
+  // user held any slider, and each tick restarted the interval it ran in.
   useEffect(() => {
-    if (!store.playing || store.mode !== 'superposition') return undefined
+    if (!playing || mode !== 'superposition') return undefined
     const timer = window.setInterval(() => {
-      store.setTimeAu(Number(((store.timeAu + 0.6) % 40).toFixed(3)))
+      const state = useSceneStore.getState()
+      state.setTimeAu(nextTimeAu(state.timeAu))
     }, 420)
     return () => window.clearInterval(timer)
-  }, [store, store.playing, store.mode, store.timeAu])
+  }, [playing, mode])
 
   const setRepresentation = (value: RepresentationKind) => store.setRepresentation(value)
 
