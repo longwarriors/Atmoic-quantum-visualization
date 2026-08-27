@@ -1,12 +1,81 @@
-import { Atom, Clock, Cloud, Layers3, Pause, Play, RotateCcw, Waves } from 'lucide-react'
+import {
+  Atom,
+  Clock,
+  Cloud,
+  Layers3,
+  Pause,
+  Play,
+  RotateCcw,
+  Waves,
+  type LucideIcon,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
+import {
+  capabilityFor,
+  planSceneRequest,
+  type ParameterBound,
+  type ParameterId,
+  type SceneRequestInputs,
+} from '../api/capability'
 import { fetchCatalog, fetchSuperpositionCatalog } from '../api/client'
 import type { OrbitalPreset, RepresentationKind, SuperpositionPreset } from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
 import { nextTimeAu } from './sceneRequest'
 
-function RangeRow({
+/**
+ * A slider bound to a request parameter.
+ *
+ * `min`, `max` and `step` are NOT arguments: they come from the
+ * `ParameterBound` the capability matrix declares for this cell, so a slider
+ * cannot offer a value the route rejects and cannot withhold one it accepts.
+ * The panel used to spell its own numbers here (`max={160}` for a route that
+ * takes 256, `max={40}` for a clock that runs to 1000) and each of those was a
+ * second, quieter statement about what the server can do.
+ */
+function ParameterRow({
+  parameter,
+  label,
+  bound,
+  value,
+  suffix,
+  onChange,
+}: {
+  parameter: ParameterId
+  label: string
+  bound: ParameterBound
+  value: number
+  suffix?: string
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="range-row">
+      <span className="control-label">{label}</span>
+      <input
+        type="range"
+        data-parameter={parameter}
+        min={bound.min}
+        max={bound.max}
+        step={bound.step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <span className="control-value">{value}{suffix ?? ''}</span>
+    </label>
+  )
+}
+
+/**
+ * A slider over a purely local rendering choice -- opacity, exposure, fog.
+ *
+ * Deliberately a different component from `ParameterRow`: nothing here is sent
+ * to a route, so there is no bound in the capability matrix to read and no
+ * `data-parameter` for a test to confuse with one. Keeping the two kinds
+ * visually alike but structurally distinct is what stops a display knob from
+ * quietly acquiring the authority of a request parameter.
+ */
+function DisplayRow({
+  control,
   label,
   value,
   min,
@@ -15,6 +84,7 @@ function RangeRow({
   suffix,
   onChange,
 }: {
+  control: string
   label: string
   value: number
   min: number
@@ -28,6 +98,7 @@ function RangeRow({
       <span className="control-label">{label}</span>
       <input
         type="range"
+        data-display={control}
         min={min}
         max={max}
         step={step}
@@ -38,6 +109,60 @@ function RangeRow({
     </label>
   )
 }
+
+/**
+ * The three representations, with the sentence each one is *for*.
+ *
+ * `purpose` is the title of an AVAILABLE button only. A refused button's title
+ * is the matrix's own `reason`, verbatim -- not a paraphrase written here,
+ * which is how "Isosurfaces are validated for n <= 4" came to be shown for a
+ * state refused because l > 3.
+ */
+const REPRESENTATIONS: {
+  id: RepresentationKind
+  label: string
+  icon: LucideIcon
+  purpose: string
+}[] = [
+  {
+    id: 'point_cloud',
+    label: 'Electron cloud',
+    icon: Cloud,
+    purpose: 'Positions sampled from |ψ|² d³r; every marker has equal visual weight',
+  },
+  {
+    id: 'isosurface',
+    label: 'Density surface',
+    icon: Layers3,
+    purpose: 'A |ψ|² level set enclosing the requested probability mass',
+  },
+  {
+    id: 'streamlines',
+    label: 'Probability flow',
+    icon: Waves,
+    purpose: 'Streamlines of j/ρ (probability flow, not electron trajectories)',
+  },
+]
+
+/**
+ * How each request parameter is labelled and where its value lives.
+ *
+ * The ORDER is this list's; the MEMBERSHIP is the capability matrix's. A row
+ * renders exactly when the cell declares a bound for it, so a route that stops
+ * taking `seed_count` removes the Seeds slider by itself.
+ */
+const PARAMETER_ROWS: {
+  id: ParameterId
+  label: string
+  suffix?: string
+}[] = [
+  { id: 'samples', label: 'Samples' },
+  { id: 'seed', label: 'Seed' },
+  { id: 'resolution', label: 'Grid' },
+  { id: 'probabilityMass', label: 'Mass' },
+  { id: 'seedCount', label: 'Seeds' },
+  { id: 'timeAu', label: 'Time', suffix: ' a.u.' },
+]
 
 export function ControlPanel() {
   const store = useSceneStore()
@@ -50,12 +175,7 @@ export function ControlPanel() {
     () => Array.from({ length: 2 * store.orbital.l + 1 }, (_, index) => index - store.orbital.l),
     [store.orbital.l],
   )
-  const minimumResolution = Math.max(49, 16 * store.orbital.n + 17)
   const [mixtures, setMixtures] = useState<SuperpositionPreset[]>([])
-  const surfaceAvailable = store.orbital.n <= 4
-  // A real stationary orbital carries identically zero current, so offering
-  // the flow view there would promise a picture that cannot exist.
-  const currentAvailable = store.orbital.basis === 'complex' && store.orbital.m !== 0
 
   useEffect(() => {
     const controller = new AbortController()
@@ -66,7 +186,56 @@ export function ControlPanel() {
     return () => controller.abort()
   }, [])
 
-  const { playing, mode } = store
+  const { mode, orbital, playing } = store
+
+  // Exactly the inputs `useSceneAsset` plans from, so the panel and the fetch
+  // layer cannot describe two different requests.
+  const requestInputs: SceneRequestInputs = {
+    mode,
+    orbital,
+    representation: store.representation,
+    samples: store.samples,
+    seed: store.seed,
+    resolution: store.resolution,
+    probabilityMass: store.probabilityMass,
+    seedCount: store.seedCount,
+    superpositionTerms: store.superpositionTerms,
+    superpositionBasis: store.superpositionBasis,
+    aMu: store.superpositionAMu,
+    timeAu: store.timeAu,
+  }
+
+  const current = capabilityFor(requestInputs)
+  const bounds = current.status === 'available' ? current.parameters : {}
+  /** What the request will actually carry, or a refusal that carries nothing. */
+  const plan = planSceneRequest(requestInputs)
+
+  const parameterValue: Record<ParameterId, number> = {
+    samples: store.samples,
+    seed: store.seed,
+    resolution: store.resolution,
+    probabilityMass: store.probabilityMass,
+    seedCount: store.seedCount,
+    timeAu: store.timeAu,
+  }
+  const parameterSetter: Record<ParameterId, (value: number) => void> = {
+    samples: store.setSamples,
+    seed: store.setSeed,
+    resolution: store.setResolution,
+    probabilityMass: store.setProbabilityMass,
+    seedCount: store.setSeedCount,
+    timeAu: store.setTimeAu,
+  }
+
+  /**
+   * A clock exists for this cell iff the route takes a time. Derived rather
+   * than tested as `mode === 'superposition'`, so a stationary route that grew
+   * a time parameter would get playback without an edit here -- and, more to
+   * the point, so playback can never be offered for a request that would send
+   * the same query on every tick.
+   */
+  const hasClock = bounds.timeAu !== undefined
+
   // Stepping time re-requests the asset. A round trip slower than the interval
   // does not pile requests up: the canvas keeps only the newest pending time.
   //
@@ -77,15 +246,13 @@ export function ControlPanel() {
   // every unrelated store write -- time stopped advancing for as long as the
   // user held any slider, and each tick restarted the interval it ran in.
   useEffect(() => {
-    if (!playing || mode !== 'superposition') return undefined
+    if (!playing || !hasClock) return undefined
     const timer = window.setInterval(() => {
       const state = useSceneStore.getState()
       state.setTimeAu(nextTimeAu(state.timeAu))
     }, 420)
     return () => window.clearInterval(timer)
-  }, [playing, mode])
-
-  const setRepresentation = (value: RepresentationKind) => store.setRepresentation(value)
+  }, [playing, hasClock])
 
   return (
     <aside className="panel controls-panel">
@@ -206,79 +373,96 @@ export function ControlPanel() {
                 </button>
               ))}
             </div>
-            <RangeRow
-              label="Time"
-              value={store.timeAu}
-              min={0}
-              max={40}
-              step={0.2}
-              suffix=" a.u."
-              onChange={store.setTimeAu}
-            />
-            <button
-              type="button"
-              className="toggle-row"
-              onClick={() => store.setPlaying(!store.playing)}
-            >
-              {store.playing ? <Pause size={15} /> : <Play size={15} />}
-              <span>Evolve in time</span>
-              <span className={store.playing ? 'switch on' : 'switch'} />
-            </button>
+            {plan.status === 'available' ? (
+              /*
+               * The three fields the superposition request states explicitly so
+               * the server cannot default them. Read from the PLAN, not from
+               * the store, so this read-out cannot name a basis or a reduced
+               * mass different from the one the query carries. Read-only by
+               * decision: a_mu ships at 1.0 with no control at all, because a
+               * slider for it would invite changing the particle without
+               * changing anything else that says which particle it is.
+               */
+              <dl className="readout" data-readonly-group="superposition">
+                <div>
+                  <dt>basis</dt>
+                  <dd data-readonly="basis">{String(plan.params.basis)}</dd>
+                </div>
+                <div>
+                  <dt>Z</dt>
+                  <dd data-readonly="z">{String(plan.params.z)}</dd>
+                </div>
+                <div>
+                  <dt>a<sub>μ</sub></dt>
+                  <dd data-readonly="a_mu">{String(plan.params.a_mu)}</dd>
+                </div>
+              </dl>
+            ) : null}
           </>
+        ) : null}
+
+        {hasClock ? (
+          <button
+            type="button"
+            className="toggle-row"
+            data-control="playback"
+            onClick={() => store.setPlaying(!store.playing)}
+          >
+            {store.playing ? <Pause size={15} /> : <Play size={15} />}
+            <span>Evolve in time</span>
+            <span className={store.playing ? 'switch on' : 'switch'} />
+          </button>
         ) : null}
       </section>
 
       <section className="control-section">
         <div className="section-title"><Layers3 size={15} /> Representation</div>
         <div className="representation-switch">
-          <button
-            type="button"
-            className={store.representation === 'point_cloud' ? 'active' : ''}
-            onClick={() => setRepresentation('point_cloud')}
-          >
-            <Cloud size={17} /> Electron cloud
-          </button>
-          <button
-            type="button"
-            className={store.representation === 'isosurface' ? 'active' : ''}
-            disabled={!surfaceAvailable}
-            title={surfaceAvailable ? 'Render a validated density isosurface' : 'Isosurfaces are validated for n ≤ 4'}
-            onClick={() => setRepresentation('isosurface')}
-          >
-            <Layers3 size={17} /> Density surface
-          </button>
-          <button
-            type="button"
-            className={store.representation === 'streamlines' ? 'active' : ''}
-            disabled={!currentAvailable}
-            title={
-              currentAvailable
-                ? 'Probability-flow streamlines (not electron trajectories)'
-                : 'Stationary current is zero unless the basis is complex and m ≠ 0'
-            }
-            onClick={() => setRepresentation('streamlines')}
-          >
-            <Waves size={17} /> Probability flow
-          </button>
+          {REPRESENTATIONS.map(({ id, label, icon: Icon, purpose }) => {
+            const capability = capabilityFor({ mode, orbital, representation: id })
+            const available = capability.status === 'available'
+            return (
+              <button
+                type="button"
+                key={id}
+                data-representation={id}
+                className={store.representation === id ? 'active' : ''}
+                disabled={!available}
+                title={available ? purpose : capability.reason}
+                onClick={() => store.setRepresentation(id)}
+              >
+                <Icon size={17} /> {label}
+              </button>
+            )
+          })}
         </div>
 
-        {store.representation === 'point_cloud' ? (
-          <>
-            <RangeRow label="Samples" value={store.samples} min={4000} max={80000} step={2000} onChange={store.setSamples} />
-            <RangeRow label="Point size" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
-          </>
-        ) : store.representation === 'streamlines' ? (
-          <RangeRow label="Seeds" value={store.seedCount} min={8} max={160} step={8} onChange={store.setSeedCount} />
-        ) : (
-          <>
-            <RangeRow label="Grid" value={store.resolution} min={minimumResolution} max={81} step={8} onChange={store.setResolution} />
-            <RangeRow label="Mass" value={Math.round(store.probabilityMass * 100)} min={50} max={99} step={1} suffix="%" onChange={(value) => store.setProbabilityMass(value / 100)} />
-          </>
-        )}
-        <RangeRow label="Opacity" value={Math.round(store.opacity * 100)} min={25} max={100} step={1} suffix="%" onChange={(value) => store.setOpacity(value / 100)} />
-        <RangeRow label="Exposure" value={Math.round(store.exposure * 100)} min={50} max={140} step={2} suffix="%" onChange={(value) => store.setExposure(value / 100)} />
-        <RangeRow label="Fog" value={Math.round(store.fogStrength * 100)} min={0} max={70} step={2} suffix="%" onChange={(value) => store.setFogStrength(value / 100)} />
-        <RangeRow label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={50} step={1} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
+        {PARAMETER_ROWS.map(({ id, label, suffix }) => {
+          const bound = bounds[id]
+          if (bound === undefined) return null
+          return (
+            <ParameterRow
+              key={id}
+              parameter={id}
+              label={label}
+              bound={bound}
+              suffix={suffix}
+              value={parameterValue[id]}
+              onChange={parameterSetter[id]}
+            />
+          )
+        })}
+
+        {/*
+          Below this line nothing reaches a route: these set how the asset is
+          drawn, not which asset is asked for, so they carry no capability
+          bound and are always offered.
+        */}
+        <DisplayRow control="pointSize" label="Point size" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
+        <DisplayRow control="opacity" label="Opacity" value={Math.round(store.opacity * 100)} min={25} max={100} step={1} suffix="%" onChange={(value) => store.setOpacity(value / 100)} />
+        <DisplayRow control="exposure" label="Exposure" value={Math.round(store.exposure * 100)} min={50} max={140} step={2} suffix="%" onChange={(value) => store.setExposure(value / 100)} />
+        <DisplayRow control="fog" label="Fog" value={Math.round(store.fogStrength * 100)} min={0} max={70} step={2} suffix="%" onChange={(value) => store.setFogStrength(value / 100)} />
+        <DisplayRow control="bloom" label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={50} step={1} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
       </section>
 
       <section className="control-section compact">

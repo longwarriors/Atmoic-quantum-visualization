@@ -65,12 +65,28 @@ export interface IsosurfacePayload extends SurfaceGeometry {
   extent_bohr: number
 }
 
-export interface CurrentFieldPayload {
-  metadata: OrbitalMetadata
+/**
+ * Geometry fields shared by the stationary and the time-dependent current
+ * fields, the counterpart of `SurfaceGeometry` for streamlines.
+ *
+ * `lines[i]` is one streamline as a list of `[x, y, z]` vertices evenly
+ * spaced in arc length; `speed[i]` carries |j|/rho at each of those vertices,
+ * so `speed[i].length === lines[i].length`. `max_speed` is the maximum over
+ * every vertex, which is the only number a renderer needs to normalise
+ * colour. A component typed on this accepts `CurrentFieldPayload` and
+ * `SuperpositionCurrentPayload` alike; both carry these three fields with
+ * identical shapes (`list[list[list[float]]]`, `list[list[float]]`, `float`
+ * in `quviz.scene.models`).
+ */
+export interface StreamlineGeometry {
   lines: number[][][]
   speed: number[][]
-  seed_count: number
   max_speed: number
+}
+
+export interface CurrentFieldPayload extends StreamlineGeometry {
+  metadata: OrbitalMetadata
+  seed_count: number
   arc_step_bohr: number
   seed_density_floor: number
   extent_bohr: number
@@ -188,6 +204,28 @@ export interface SceneStatus {
   finiteGridReportingTolerance?: number
   finiteGridMassStatus?: FiniteGridMassStatus
   timeAu?: number
+  /**
+   * A refetch is in flight while a previously fetched frame is still on
+   * screen. Distinct from `loading`, which means there is nothing to show:
+   * while `refreshing` is true every number in this status describes the
+   * *old* frame, and the UI must say so rather than presenting stale
+   * diagnostics as current.
+   */
+  refreshing?: boolean
+  /**
+   * The time, in atomic units, of the frame actually rendered -- which lags
+   * `timeAu` (the requested time) whenever a refetch is in flight or the
+   * latest request failed. Reporting only `timeAu` labels a stale frame with
+   * a time it does not show.
+   */
+  renderedTimeAu?: number
+  /**
+   * Why the requested representation produced nothing, when that is a
+   * standing limitation rather than a transient error: `kind` names the
+   * representation, `reason` is shown to the user. A disabled control with a
+   * stated reason, never a silently hidden one.
+   */
+  unavailable?: { kind: string; reason: string }
   superposition?: SuperpositionMetadata
   metadata?: OrbitalMetadata
   warnings?: string[]
