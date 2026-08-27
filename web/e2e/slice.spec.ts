@@ -126,7 +126,10 @@
  * The two `.not.toHaveScreenshot` assertions (the mechanism control, and the
  * half-period check in the t = 8.4 test) reference baselines the POSITIVE tests
  * produce, so they are red in run 1 for the same "no baseline" reason and green
- * from run 2 on.
+ * from run 2 on. They do NOT share the positive tests' per-pixel threshold --
+ * the half-period one carries SENSITIVE_COMPARISON, because the first real-mode
+ * run against committed baselines found it reporting a match over a lobe that
+ * had visibly swung.
  *
  * `npm run test:visual:update` is not part of this procedure. It writes every
  * baseline from whatever was just rendered, which is how a bug becomes the
@@ -217,6 +220,13 @@ test.describe.configure({ timeout: 120_000 })
  * exists, 0.1 / 0.001 (about 700 pixels of this canvas) is a starting point and
  * nothing more. Do not widen either number to make a red test pass; a rendering
  * that moves by more than this is the thing the suite is for.
+ *
+ * THIS IS THE ACCEPT BUDGET, and only that. `threshold` here is tuned to absorb
+ * a software rasteriser's noise, which is the right instrument for "this frame
+ * must still look like the baseline" and the wrong one for "these two frames
+ * must differ" -- a faint physical displacement hides under a perceptual bar
+ * set for noise. The reject side therefore carries its own sensitivity; see
+ * SENSITIVE_COMPARISON below, which changes nothing here.
  */
 const COMPARISON = {
   threshold: 0.1,
@@ -228,6 +238,57 @@ const COMPARISON = {
    * enough for a canvas this size under SwiftShader.
    */
   timeout: 30_000,
+} as const
+
+/**
+ * The same budget with the PER-PIXEL bar lowered, for a `.not` assertion.
+ *
+ * An accept budget and a reject budget are not the same instrument, and using
+ * one for both is what let a real defect through. `threshold` is a perceptual
+ * tolerance: it exists to absorb a software rasteriser's own noise, and it does
+ * that by declaring two pixels equal unless they differ by more than
+ * `35215 * threshold^2` in pixelmatch's YIQ metric. That is exactly the wrong
+ * instrument to point at a claim of the form "these two pictures MUST differ",
+ * because a difference that is real but faint -- a deep-blue lobe moving across
+ * a dark ground -- falls under the bar pixel by pixel and the assertion reports
+ * a match.
+ *
+ * MEASURED, on the two committed baselines, through Playwright's own comparator
+ * (`getComparator('image/png')`, i.e. pixelmatch with antialiased pixels
+ * excluded, which is what its call site leaves at the default). The frame is
+ * 656 x 1416, so `maxDiffPixelRatio` 0.001 is a budget of 928.9 pixels and an
+ * assertion fires only above it:
+ *
+ *   threshold   surviving px   x budget
+ *   0.2                   22       0.02
+ *   0.1 (accept)         800       0.86   <- the guard could not fire
+ *   0.05                3073       3.31
+ *   0.03                4504       4.85
+ *   0.02 (reject)       5994       6.45   <- chosen
+ *   0.01                8402       9.05
+ *   0                  24443      26.31
+ *
+ * ...against a noise floor measured the same way, on the same scene rendered
+ * twice in two separate browser sessions: 19 pixels at threshold 0.1, 23 at
+ * 0.02, and 26 at threshold 0 -- i.e. every pixel that is not bit-identical,
+ * all of them in the animating star field. The floor never reaches 0.03 of the
+ * budget at any threshold, so there is no value here at which noise alone could
+ * satisfy a reject guard, and 0.02 sits 260x above it.
+ *
+ * 0.02 rather than something tighter ON PURPOSE. Lowering the threshold counts
+ * MORE pixels, which makes a `.not` assertion EASIER to satisfy and therefore
+ * WEAKER. The honest choice for a reject guard is the loosest threshold at
+ * which the physics is still visible with room to spare, not the tightest one
+ * available -- which is also why the transposed mechanism control below keeps
+ * the tolerant budget rather than this one: it clears at threshold 0.1 with
+ * 21212 pixels, 30x its budget, and moving it here would only weaken it.
+ *
+ * Nothing about the ACCEPT side changes: `maxDiffPixelRatio`, the timeout and
+ * the mask are the same values, and no budget anywhere is widened.
+ */
+const SENSITIVE_COMPARISON = {
+  ...COMPARISON,
+  threshold: 0.02,
 } as const
 
 /**
@@ -255,6 +316,12 @@ const canvasOf = (page: Page): Locator => page.locator('canvas')
 const overlays = (page: Page): Locator[] => [page.locator('.viewport-copy'), page.locator('.legend')]
 
 const screenshotOptions = (page: Page) => ({ ...COMPARISON, mask: overlays(page) })
+
+/** The same options with the reject side's per-pixel bar. Same mask, same budget. */
+const sensitiveScreenshotOptions = (page: Page) => ({
+  ...SENSITIVE_COMPARISON,
+  mask: overlays(page),
+})
 
 /**
  * The value the Inspector prints for one contract term.
@@ -665,7 +732,18 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   // both; this is the assertion that says the displacement is visible. The
   // degenerate test above is the same assertion with the sign reversed, which
   // is what makes either of them mean anything.
-  await expect(canvasOf(page)).not.toHaveScreenshot('1s2pz-t0-xz.png', screenshotOptions(page))
+  //
+  // On the SENSITIVE budget, and this is the assertion that earned it. The
+  // displacement here is a deep-blue lobe crossing a dark ground, so almost all
+  // of it lands under a per-pixel bar set to absorb rasteriser noise: measured
+  // on the two committed baselines, threshold 0.1 leaves 800 differing pixels
+  // against a budget of 928.9 and this line reported a MATCH -- the guard could
+  // not fire even though the lobe had visibly swung. See SENSITIVE_COMPARISON
+  // for the whole threshold table and the noise floor it was chosen against.
+  await expect(canvasOf(page)).not.toHaveScreenshot(
+    '1s2pz-t0-xz.png',
+    sensitiveScreenshotOptions(page),
+  )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
 
@@ -708,7 +786,13 @@ test('the comparison can see a transposed slice: the apparatus is not vacuous', 
 
   // The nodal line is vertical here and horizontal in the baseline. Compared
   // against the SAME budget the positive tests use, so this is a statement
-  // about those tests and not about a stricter comparison invented for it.
+  // about those tests and not about a stricter comparison invented for it --
+  // and it keeps that budget deliberately, rather than taking the half-period
+  // guard's sensitive one. Measured on this build, normal against transposed:
+  // 21212 differing pixels at threshold 0.1, 30x its 702.6 budget, and still
+  // 16x at threshold 0.2. A lower threshold counts MORE pixels and so makes a
+  // `.not` easier to satisfy; on the reject side the tolerant budget is the
+  // stronger claim, and this assertion can afford it.
   await expect(canvasOf(page)).not.toHaveScreenshot('2pz-real-xz.png', screenshotOptions(page))
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
