@@ -35,7 +35,8 @@
 
 ## 数值求解
 
-- ✅ 网格坐标、`dx`、积分权重和边界条件来自同一 Grid 对象 — `tests/test_grid.py`；
+- ✅ 网格坐标、`dx` 和边界条件来自同一 Grid 对象 — `tests/test_grid.py`；`DirichletGrid1D` 的 `coordinates`、`dx` 与 `laplacian()` 共用同一间距（`dx` 计入两个被省略的边界节点），`PeriodicGrid1D` 的坐标是半开区间，测试对二者各断言一次；
+- 🕒 积分权重和内积**尚未**由 Grid 提供：`quviz.solvers.grid` 当前只有坐标、`dx` 和 Dirichlet Laplacian，没有求积权重，也没有内积，`tests/test_grid.py` 因此也没有相应断言；完整的数值契约（权重、内积、范数与能量的一致定义）随[路线图](../project/roadmap.md) M2 的 1D TISE/TDSE 求解器一并落地；
 - 🕒 报告盒长和网格收敛；
 - 🕒 Coulomb 原点不能用任意深势阱硬截断；
 - 🕒 简并子空间不能只按“第几个本征向量”命名；

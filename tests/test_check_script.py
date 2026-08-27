@@ -924,6 +924,10 @@ _ON_KEY = True
 #: bundle -- which no test imports -- still compiles.
 WEB_JOB_COMMANDS = ("npm run test", "npm run build")
 
+#: The one install the ``web`` job may run: the lockfile, exactly, with no
+#: fallback branch that resolves a fresh tree when the lockfile is missing.
+WEB_INSTALL_COMMAND = "npm ci --no-audit --no-fund"
+
 
 def _workflow() -> dict[object, object]:
     parsed = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
@@ -1001,13 +1005,17 @@ def test_ci_web_job_runs_every_step_inside_web() -> None:
 
 
 def test_ci_web_job_sets_up_node_and_installs_with_npm_ci() -> None:
-    """A Node toolchain, and a lockfile-faithful install.
+    """A Node toolchain, and a lockfile-faithful install with no way around it.
 
     ``npm ci`` installs exactly ``package-lock.json``; ``npm install`` is free
     to resolve something else, which would let CI test a dependency tree no
-    checkout has. The step keeps ``npm install`` as the no-lockfile fallback,
-    so what is pinned here is that ``npm ci`` is the path taken when the
-    lockfile exists.
+    checkout has. The step used to read ``if [ -f package-lock.json ]; then npm
+    ci ...; else npm install ...; fi``, which makes a *missing* lockfile a
+    silent fresh resolution rather than a failure -- the one case where the
+    difference between the two commands matters, handled by taking the branch
+    that cannot be reproduced. So what is pinned here is stronger than "``npm
+    ci`` appears somewhere": the install step must be exactly ``npm ci``, and
+    the word ``npm install`` must not appear in the job at all.
     """
 
     steps = _web_steps()
@@ -1019,10 +1027,16 @@ def test_ci_web_job_sets_up_node_and_installs_with_npm_ci() -> None:
     assert any(u.startswith("actions/checkout@") for u in uses), (
         f"ci.yml's `web` job never checks the repository out. Steps used: {uses}"
     )
-    scripts = "\n".join(str(step.get("run", "")) for step in steps)
-    assert "npm ci" in scripts, (
-        "ci.yml's `web` job never runs `npm ci`; an `npm install` on its own can resolve a "
-        f"dependency tree package-lock.json does not describe. Steps run:\n{scripts}"
+    runs = [" ".join(str(step.get("run", "")).split()) for step in steps]
+    assert WEB_INSTALL_COMMAND in runs, (
+        f"ci.yml's `web` job never runs `{WEB_INSTALL_COMMAND}` as a step of its own; an "
+        "`npm install`, or an `npm ci` guarded by a fallback to one, can resolve a dependency "
+        f"tree package-lock.json does not describe. Steps run: {runs}"
+    )
+    scripts = "\n".join(runs)
+    assert "npm install" not in scripts, (
+        "ci.yml's `web` job still mentions `npm install`; a missing package-lock.json must fail "
+        f"the job, not be resolved fresh. Steps run:\n{scripts}"
     )
 
 

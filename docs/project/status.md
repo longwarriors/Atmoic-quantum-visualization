@@ -147,6 +147,30 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 | 1s+2s，49³，cube half-extent 19.8448875 bohr | grid mass 从 $t=0$ 的 0.951133397 到半周期的 0.990280394；cube 外质量上界 $2.35944\times10^{-5}$，真实 cube 质量变化上界 $9.51747\times10^{-10}$，grid phase variation 0.039146997，alias variation 下界 0.019573498，报告阈值 0.002，分类 `phase_dependent_quadrature_error` |
 | 1s+2p，49³，cube half-extent 18.6711075 bohr | grid mass 从 $t=0$ 的 0.978543619 到半周期的 0.978543619；反宇称令真实 cube 质量变化上界为 0，grid phase variation $5.01335\times10^{-16}$，报告阈值 0.002，分类 `time_invariant_quadrature_error` |
 
+### 工程如实性：本轮改动
+
+本轮不改科学契约，只修正工程侧此前的失实或不完整表述：
+
+- `quality-gates.md` 关于 Grid 的条目改为如实分列——坐标/`dx`/边界条件确由同一 Grid 对象提供并受 `tests/test_grid.py` 覆盖，但求积权重与内积**尚未**存在于 `quviz.solvers.grid`，此前把二者写进已完成项是失实，现标为 🕒 并说明随 M2 求解器一并落地；
+- CI 的 `python-docs` job 新增 `python-version: ["3.12", "3.13"]` 矩阵（`fail-fast: false`），并由新增的 `tests/test_ci_workflows.py` 把矩阵与 `pyproject.toml` 的 `Programming Language :: Python :: 3.x` classifiers、`requires-python` 逐一比对，二者不再允许互相漂移；
+- `python-docs`、`link-check`（`changed-links`）与 `web` 三个 job 的依赖安装改为无条件 `uv sync --locked --all-groups` / `npm ci --no-audit --no-fund`，删除锁文件缺失时静默改用 `uv sync` / `npm install` 的旧回退分支——该分支恰好会在锁文件缺失或过期时把安装伪装成绿；`tests/test_check_script.py` 新增/加强的断言钉住这一行必须逐字如此、且 `npm install` 不得再出现在 `web` job 里；
+- `docs/getting-started/installation.md` 的 Node 版本要求从笼统的 "20+" 改写为与 `web/package.json` 的 `engines` 字段完全一致的 `^22.13.0 || >=24.0.0`，并注明 Node 20/21 会被 `engines` 拒绝；新增 `tests/test_declared_versions.py` 用参数化用例钉住这行文档字符串，防止再次退化为一个不可比对的裸主版本号；
+- `docs/reference/api.md` 补齐此前完全未文档化的 4 个 API 路由（`GET /api/orbitals/current-field`、`GET /api/superposition/catalog`、`GET /api/superposition/isosurface`、`GET /api/superposition/current-field`）的参数范围、422 条件与返回字段；`docs/reference/physics-api.md` 新增 `quviz.physics.continuity`、`quviz.physics.finite_box`、`quviz.scene.builders` 三个此前有实现却未接入 mkdocstrings 的模块的引用条目；
+- `src/quviz/solvers/grid.py` 的模块 docstring 同步修正——不再声称提供 quadrature，与 `quality-gates.md` 的如实条目一致（`tests/test_declared_versions.py` 中模拟中文文档行的夹具字符串保留全角分号，逐行以 `noqa: RUF001` 标注为有意数据）。
+
+本树实测（2026-08-27，Windows 11、CPython 3.12.10，同一最终工作树上的完整门禁）：
+
+| 检查 | 结果 |
+|---|---|
+| `pwsh -NoProfile -File scripts/check.ps1` | exit 0，全链跑满 |
+| ruff / mypy（strict） | All checks passed；103 files already formatted；31 个源码文件无问题 |
+| `pytest --cov=quviz` | 899 passed，0 failed，0 skipped，77 warnings；总覆盖率 92.36%（门槛 85%）——较上轮 +27（`tests/test_ci_workflows.py` 21 项、`tests/test_declared_versions.py` 6 项） |
+| `mkdocs build --strict` | 通过；仅有上游 mkdocs-material 的 MkDocs 2.0 提示 |
+| `npm run test`（`web/`） | 8 个 spec 文件、264 tests passed，0 skipped，0 todo；报告列出的 4 个门禁模块与 `coverage-scope.json` 完全一致，四项覆盖率均为 100% |
+| `npm run build` | `index-*.js` 1,207.54 kB（gzip 330.35 kB），CSS gzip 3.60 kB |
+
+另经隔离环境实测：CI 等价调用（`uv sync --locked --all-groups` 后 `--group docs pytest`）在 CPython 3.13 下 878 passed（当时树尚无本轮新增的 21 项 CI 钉子测试），锁文件在 3.13 下可原样解析，故 3.13 入矩阵有实证支撑。同轮发现并记录一处待办：`quviz.docs.scan` 运行时导入 `markdown`，但该包只作为 `docs` 依赖组的传递依赖存在，未在 `dependencies`/`dev` 中声明——不带 `--group docs` 的 `uv run pytest` 会在收集期失败；修复需改 `pyproject.toml` 并重新生成 `uv.lock`，留待后续独立小 PR。
+
 ### PR-8 待办
 
 - $\psi$/相位 SLICE representation；

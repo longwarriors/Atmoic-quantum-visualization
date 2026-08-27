@@ -10,20 +10,31 @@ on:
 jobs:
   python-docs:
     runs-on: ubuntu-latest
+    # One build per Python version pyproject.toml claims to support. The set is
+    # not free to drift from that claim: tests/test_ci_workflows.py reads the
+    # `Programming Language :: Python :: 3.x` classifiers and the
+    # `requires-python` bounds and requires this matrix to equal them exactly,
+    # so a version declared here and nowhere else -- or supported in the
+    # metadata and built nowhere -- is a red test rather than a promise nobody
+    # keeps. fail-fast is off so a failure on one version still reports the
+    # other; nothing is skipped either way.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
+      # Unconditionally locked. This step used to fall back to a plain
+      # `uv sync` when uv.lock was absent, which answers the one situation
+      # --locked exists to catch by resolving a dependency tree no checkout has
+      # and reporting green. A missing or stale lockfile must fail the job.
       - name: Sync
-        run: |
-          if [ -f uv.lock ]; then
-            uv sync --locked --all-groups
-          else
-            uv sync --all-groups
-          fi
+        run: uv sync --locked --all-groups
       - name: Lint and type-check
         run: |
           uv run ruff check .
@@ -104,12 +115,7 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - name: Sync
-        run: |
-          if [ -f uv.lock ]; then
-            uv sync --locked --all-groups
-          else
-            uv sync --all-groups
-          fi
+        run: uv sync --locked --all-groups
       - name: Probe links added since the base revision (or every cited link)
         env:
           BASE: ${{ steps.base.outputs.ref }}
@@ -131,12 +137,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+      # `npm ci`, never `npm install`: the lockfile is the dependency tree
+      # under test, and the fallback this step used to carry made a missing
+      # package-lock.json a fresh resolution instead of a failure.
       - name: Install frontend dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund
-          else
-            npm install --no-audit --no-fund
-          fi
+        run: npm ci --no-audit --no-fund
       - run: npm run test
       - run: npm run build
