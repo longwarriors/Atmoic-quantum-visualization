@@ -159,8 +159,12 @@ const SUPERPOSITION_SLICE_ENDPOINT = '/api/superposition/slice'
 
 /** routes.py: `probability_mass: float = Query(0.90, ge=0.50, le=0.99)`, both routes. */
 const PROBABILITY_MASS_BOUND: ParameterBound = { min: 0.5, max: 0.99, step: 0.01 }
-/** routes.py: `time: float = Query(0.0, ge=-1_000.0, le=1_000.0)`, both superposition routes. */
-const TIME_BOUND: ParameterBound = { min: -1000, max: 1000, step: 0.6 }
+/**
+ * routes.py: `time: float = Query(0.0, ge=-1_000.0, le=1_000.0)`, both
+ * superposition routes. The step shares the `min`-based range grid with the
+ * initial t = 0, the t = 8.4 visual anchor and every 0.6 a.u. playback frame.
+ */
+const TIME_BOUND: ParameterBound = { min: -1000, max: 1000, step: 0.2 }
 /** routes.py: `resolution: int = Query(65, ge=49, le=81)`, both isosurface routes. */
 const RESOLUTION_MAX = 81
 const RESOLUTION_MIN = 49
@@ -224,20 +228,20 @@ function eigenstateIsosurface(orbital: OrbitalParameters): Capability {
     return {
       status: 'unsupported',
       reason:
-        `${ISOSURFACE_ENDPOINT} accepts n <= 4 -- above that the level set is not ` +
-        `validated -- and this state has n = ${orbital.n}.`,
+        `${ISOSURFACE_ENDPOINT} 仅接受 n ≤ 4；更高 n 的 level set 尚未验证。` +
+        `当前态 n = ${orbital.n}。`,
     }
   }
   if (orbital.l > 3) {
     return {
       status: 'unsupported',
-      reason: `${ISOSURFACE_ENDPOINT} accepts l <= 3, and this state has l = ${orbital.l}.`,
+      reason: `${ISOSURFACE_ENDPOINT} 仅接受 l ≤ 3；当前态 l = ${orbital.l}。`,
     }
   }
   if (Math.abs(orbital.m) > 3) {
     return {
       status: 'unsupported',
-      reason: `${ISOSURFACE_ENDPOINT} accepts |m| <= 3, and this state has m = ${orbital.m}.`,
+      reason: `${ISOSURFACE_ENDPOINT} 仅接受 |m| ≤ 3；当前态 m = ${orbital.m}。`,
     }
   }
   return {
@@ -262,17 +266,16 @@ function eigenstateStreamlines(orbital: OrbitalParameters): Capability {
     return {
       status: 'unsupported',
       reason:
-        'A real stationary orbital carries identically zero probability current, so its ' +
-        'streamlines would be an empty picture rather than a physical statement. Switch the ' +
-        'basis to complex.',
+        '实基定态 orbital 的 probability current 恒为 0，streamlines 只会得到空图。' +
+        '请切换到 complex basis。',
     }
   }
   if (orbital.m === 0) {
     return {
       status: 'unsupported',
       reason:
-        'An m = 0 stationary orbital has no azimuthal phase gradient, so its probability ' +
-        'current vanishes identically. Choose m != 0.',
+        'm = 0 的定态 orbital 没有方位 phase gradient，因此 probability current 恒为 0。' +
+        '请选择 m ≠ 0。',
     }
   }
   // Then the route's own range: n le=6, l le=5, m ge=-5 le=5. The old UI
@@ -281,19 +284,19 @@ function eigenstateStreamlines(orbital: OrbitalParameters): Capability {
   if (orbital.n > 6) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} accepts n <= 6, and this state has n = ${orbital.n}.`,
+      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 n ≤ 6；当前态 n = ${orbital.n}。`,
     }
   }
   if (orbital.l > 5) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} accepts l <= 5, and this state has l = ${orbital.l}.`,
+      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 l ≤ 5；当前态 l = ${orbital.l}。`,
     }
   }
   if (Math.abs(orbital.m) > 5) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} accepts |m| <= 5, and this state has m = ${orbital.m}.`,
+      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 |m| ≤ 5；当前态 m = ${orbital.m}。`,
     }
   }
   return {
@@ -383,9 +386,8 @@ function superpositionCapability(representation: RepresentationKind): Capability
       return {
         status: 'not_implemented',
         reason:
-          `No route samples a time-dependent state as a point cloud: ${POINT_CLOUD_ENDPOINT} ` +
-          'takes one stationary (n, l, m) and cannot express |Psi(t)|^2. Nothing about the ' +
-          'physics forbids it -- it has not been built.',
+          `尚无 route 将含时态采样为 point cloud：${POINT_CLOUD_ENDPOINT} ` +
+          '只接收一个定态 (n, l, m)，无法表示 |Ψ(t)|²。这不是 physics 限制，而是尚未实现。',
       }
     case 'isosurface':
       return {

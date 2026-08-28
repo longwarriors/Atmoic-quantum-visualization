@@ -186,9 +186,10 @@ function requireNumber(source: RawRecord, field: string): number {
     fail(field, `must be a number, got ${describeValue(value)}`)
   }
   if (!Number.isFinite(value)) {
-    // Starlette's default encoder writes the bare `NaN` / `Infinity` tokens,
-    // which are not JSON; a permissive parser turns them into these values
-    // rather than into an error, so the check has to happen here.
+    // The pinned server rejects non-finite values before or during response
+    // rendering, but this validator is also a boundary for cached fixtures,
+    // custom transports and direct object callers. Do not make its safety
+    // depend on one response class remaining strict.
     fail(field, `must be finite -- JSON carries no NaN or Infinity -- got ${String(value)}`)
   }
   return value

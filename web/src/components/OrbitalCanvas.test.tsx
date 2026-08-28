@@ -14,9 +14,9 @@
  * correct.
  *
  * The `<Canvas>` element itself is deliberately outside what is exercised here:
- * it is the one part that genuinely requires a GPU. Everything under it lives
- * in `SceneRoot`, which `@react-three/test-renderer` can mount with no real
- * renderer -- so the shell is thin enough that testing its parts IS testing it.
+ * it is the one part that genuinely requires a GPU. `SceneRoot` mounts the same
+ * coordinated in-canvas view through `@react-three/test-renderer`, while the
+ * shell tests below inspect the Canvas props and arrived-asset effects decision.
  *
  * Harness facts from the T0 spike this file depends on: specs cannot use JSX
  * (vitest.config.ts declares no React plugin, so esbuild compiles with the
@@ -29,7 +29,7 @@
  */
 import type { BoundsProps, OrbitControlsProps } from '@react-three/drei'
 import ReactThreeTestRenderer, { act } from '@react-three/test-renderer'
-import { createElement, type ReactElement } from 'react'
+import { act as reactAct, createElement, type ReactElement } from 'react'
 import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -65,6 +65,7 @@ import {
   SceneRoot,
   sceneAssetInputs,
   slicePlaneOf,
+  usesPresentationEffects,
 } from './OrbitalCanvas'
 import type { SceneAsset } from './useSceneAsset'
 
@@ -85,6 +86,7 @@ import type { SceneAsset } from './useSceneAsset'
  */
 const canvasProps = vi.hoisted(() => ({
   current: null as Record<string, unknown> | null,
+  history: [] as Record<string, unknown>[],
 }))
 
 vi.mock('@react-three/fiber', async (importOriginal) => {
@@ -93,6 +95,7 @@ vi.mock('@react-three/fiber', async (importOriginal) => {
     ...actual,
     Canvas: (props: Record<string, unknown>) => {
       canvasProps.current = props
+      canvasProps.history.push(props)
       return null
     },
   }
@@ -164,6 +167,7 @@ afterEach(() => {
   restoreActEnvironment()
   useSceneStore.setState(initialStore, true)
   canvasProps.current = null
+  canvasProps.history = []
   boundsProps.current = null
   controlsProps.current = null
   readyContainer?.remove()
@@ -386,15 +390,19 @@ const superpositionSlice = (plane: PrincipalPlane = 'xy'): SuperpositionSlicePay
 
 let requestedUrls: string[] = []
 
+function jsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response
+}
+
 function answerWith(body: unknown): void {
   requestedUrls = []
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     requestedUrls.push(String(input))
-    return Promise.resolve({
-      ok: true,
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    } as unknown as Response)
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
@@ -1017,7 +1025,7 @@ describe('SceneRoot', () => {
     // 422 from a route that was always going to refuse it.
     expect(requestedUrls).toEqual([])
     expect(statuses.at(-1)?.unavailable?.kind).toBe('point_cloud')
-    expect(statuses.at(-1)?.unavailable?.reason).toContain('point-cloud')
+    expect(statuses.at(-1)?.unavailable?.reason).toContain('point cloud')
     expect(typesUnder(renderer)).not.toContain('LineSegments')
 
     await renderer.unmount()
@@ -1201,7 +1209,19 @@ describe('OrbitalCanvas', () => {
     return { props: props as Record<string, unknown>, unmount: () => tree.unmount() }
   }
 
+  const childrenOf = (props: Record<string, unknown>): ReactElement[] => {
+    const children = Array.isArray(props.children) ? props.children : [props.children]
+    return children.filter((child): child is ReactElement => child !== null)
+  }
+
+  const assetOf = (props: Record<string, unknown>): SceneAsset | null => {
+    const scene = (Array.isArray(props.children) ? props.children[0] : props.children) as ReactElement
+    return (scene.props as { asset: SceneAsset | null }).asset
+  }
+
   it('asks for the renderer the scene needs, and says so explicitly', async () => {
+    useSceneStore.setState({ representation: 'isosurface' })
+    answerWith(isosurface())
     const { props, unmount } = await mountShell()
 
     expect(props.shadows).toBe(true)
@@ -1222,6 +1242,8 @@ describe('OrbitalCanvas', () => {
   })
 
   it('puts the renderer in sRGB with filmic tone mapping the moment it exists', async () => {
+    useSceneStore.setState({ representation: 'isosurface' })
+    answerWith(isosurface())
     const { props, unmount } = await mountShell()
     const gl = { outputColorSpace: '', toneMapping: -1, toneMappingExposure: -1 }
 
@@ -1237,14 +1259,82 @@ describe('OrbitalCanvas', () => {
   })
 
   it('hands the canvas the scene and the post chain, with bloom from the store', async () => {
-    useSceneStore.setState({ bloom: 0.42 })
+    useSceneStore.setState({
+      mode: 'superposition',
+      bloom: 0.42,
+      representation: 'streamlines',
+    })
+    answerWith(superpositionCurrent())
     const { props, unmount } = await mountShell()
 
-    const children = props.children as ReactElement[]
+    const children = childrenOf(props)
     expect(children).toHaveLength(2)
     const composer = children[1]
     const effects = (composer.props as { children: ReactElement[] }).children
     expect((effects[0].props as { intensity: number }).intensity).toBe(0.42)
+
+    await unmount()
+  })
+
+  it.each([
+    ['point_cloud', { kind: 'point_cloud', data: pointCloud() }],
+    ['isosurface', { kind: 'isosurface', data: isosurface() }],
+    [
+      'superposition_isosurface',
+      { kind: 'superposition_isosurface', data: superpositionIsosurface() },
+    ],
+  ] as const)('keeps an arrived %s phase palette out of presentation effects', (_kind, asset) => {
+    // The decision takes the discriminated response itself. A requested store
+    // value is intentionally not an input: it can describe the next frame
+    // while this one is still on screen.
+    expect(usesPresentationEffects(asset)).toBe(false)
+  })
+
+  it('keeps the post chain aligned with the arrived frame during a delayed kind switch', async () => {
+    useSceneStore.setState({ mode: 'superposition', representation: 'streamlines' })
+    requestedUrls = []
+    let requestCount = 0
+    let resolveIsosurface: ((response: Response) => void) | undefined
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      requestedUrls.push(String(input))
+      requestCount += 1
+      if (requestCount === 1) return Promise.resolve(jsonResponse(superpositionCurrent()))
+      return new Promise<Response>((resolve) => {
+        resolveIsosurface = resolve
+      })
+    })
+
+    const { props: firstFrame, unmount } = await mountShell()
+    expect(assetOf(firstFrame)?.kind).toBe('superposition_streamlines')
+    expect(childrenOf(firstFrame)).toHaveLength(2)
+
+    const transitionStart = canvasProps.history.length
+    await reactAct(async () => {
+      useSceneStore.setState({ representation: 'isosurface' })
+    })
+
+    // React first commits the new request while the old response is still the
+    // truthful frame. That commit must retain the old frame's composer. The
+    // fetch effect then clears the viewport, at which point neither an object
+    // nor a composer remains while the delayed response is pending.
+    const transitionRenders = canvasProps.history.slice(transitionStart)
+    const oldFrameCommit = transitionRenders.find(
+      (props) => assetOf(props)?.kind === 'superposition_streamlines',
+    )
+    expect(oldFrameCommit).toBeDefined()
+    expect(childrenOf(oldFrameCommit as Record<string, unknown>)).toHaveLength(2)
+    expect(assetOf(canvasProps.current as Record<string, unknown>)).toBeNull()
+    expect(childrenOf(canvasProps.current as Record<string, unknown>)).toHaveLength(1)
+    expect(resolveIsosurface).toBeDefined()
+
+    await reactAct(async () => {
+      resolveIsosurface?.(jsonResponse(superpositionIsosurface()))
+      await Promise.resolve()
+    })
+
+    const scientificFrame = canvasProps.current as Record<string, unknown>
+    expect(assetOf(scientificFrame)?.kind).toBe('superposition_isosurface')
+    expect(childrenOf(scientificFrame)).toHaveLength(1)
 
     await unmount()
   })

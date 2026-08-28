@@ -7,6 +7,7 @@ import { Inspector } from './components/Inspector'
 import { Legend } from './components/Legend'
 import { LoadingOverlay } from './components/LoadingOverlay'
 import { OrbitalCanvas } from './components/OrbitalCanvas'
+import { representationLabel } from './components/sceneStatus'
 
 /** A clock reading, always with its unit and always to the same precision. */
 const timeText = (timeAu: number): string => `t=${timeAu.toFixed(1)} a.u.`
@@ -24,16 +25,16 @@ const timeText = (timeAu: number): string => `t=${timeAu.toFixed(1)} a.u.`
  */
 function statusLine(status: SceneStatus): { kind: string; text: string } {
   if (status.error !== undefined) {
-    return { kind: 'error', text: `scene error · ${status.error}` }
+    return { kind: 'error', text: `场景错误 · ${status.error}` }
   }
   if (status.unavailable !== undefined) {
     return {
       kind: 'unavailable',
-      text: `${status.unavailable.kind} unavailable · ${status.unavailable.reason}`,
+      text: `${representationLabel(status.unavailable.kind)}暂不可用 · ${status.unavailable.reason}`,
     }
   }
   if (status.loading) {
-    return { kind: 'loading', text: 'computing' }
+    return { kind: 'loading', text: '正在计算' }
   }
   if (status.refreshing === true) {
     // Both times, always. Reporting only the requested one labels the frame on
@@ -43,13 +44,13 @@ function statusLine(status: SceneStatus): { kind: string; text: string } {
     // than printing a number we do not have.
     const showing =
       status.renderedTimeAu !== undefined
-        ? `showing ${timeText(status.renderedTimeAu)}`
-        : 'showing the previous frame'
+        ? `正在显示 ${timeText(status.renderedTimeAu)}`
+        : '正在显示上一帧'
     const computing =
-      status.timeAu !== undefined ? `computing ${timeText(status.timeAu)}` : 'computing the next'
+      status.timeAu !== undefined ? `正在计算 ${timeText(status.timeAu)}` : '正在计算下一帧'
     return { kind: 'refreshing', text: `${showing} · ${computing}` }
   }
-  return { kind: 'ready', text: 'scientific asset ready' }
+  return { kind: 'ready', text: '科学资产已就绪' }
 }
 
 /**
@@ -81,9 +82,9 @@ export default function App() {
         <ControlPanel />
         <section className="viewport-card">
           <div className="viewport-copy">
-            <span className="eyebrow">LIVE QUANTUM FIELD</span>
-            <h1>Hydrogenic state explorer</h1>
-            <p>Drag to orbit · scroll to zoom · phase is color, not charge</p>
+            <span className="eyebrow">实时量子场</span>
+            <h1>氢样量子态</h1>
+            <p>拖动旋转 · 滚轮缩放 · 色彩表示 arg ψ，不表示电荷</p>
           </div>
           <OrbitalCanvas onStatus={handleStatus} />
           <Legend status={status} />

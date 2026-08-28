@@ -9,6 +9,8 @@
  *   - and `--update-snapshots` makes every screenshot comparison pass by
  *     WRITING the pixels it was supposed to compare against, which is the
  *     tautology this whole suite exists to avoid. It exits 0 too.
+ *   - a required title or screenshot/WebGL assertion can disappear while
+ *     unrelated tests in the same file still pass.
  *
  * So `npm run test:visual` runs `scripts/assert-visual-run.mjs` over the JSON
  * report afterwards, exactly as `npm test` runs `scripts/assert-no-skips.mjs`
@@ -22,10 +24,17 @@
  * without that last one every assertion below could be satisfied by a function
  * that returns a problem for every input.
  */
-import { auditVisualRun, listVisualSpecFiles } from '../scripts/assert-visual-run.mjs'
+import {
+  REQUIRED_VISUAL_TESTS,
+  auditVisualRun,
+  auditVisualSources,
+  auditVisualSpecInventory,
+  auditVisualSpecSource,
+  listVisualSpecFiles,
+} from '../scripts/assert-visual-run.mjs'
 import type { PlaywrightJsonReport } from '../scripts/assert-visual-run.mjs'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -58,9 +67,21 @@ const SLICE_SPEC = 'e2e/slice.spec.ts'
  */
 const REPORTED_WEBGL = 'webgl.spec.ts'
 const REPORTED_SLICE = 'slice.spec.ts'
+const REQUIRED_SPECS = Object.keys(REQUIRED_VISUAL_TESTS).sort()
+
+function requiredSpecForReportedPath(file: string): string {
+  const normalized = file.replaceAll('\\', '/').replace(/^\.\//, '')
+  const match = REQUIRED_SPECS.find(
+    (spec) => normalized === spec || normalized === spec.replace(/^e2e\//, ''),
+  )
+  if (match === undefined) {
+    throw new Error(`passingReport: ${file} is not a required visual spec`)
+  }
+  return match
+}
 
 /**
- * A report of one passing test per given spec file, in the shape Playwright's
+ * A report of every required test per given spec file, in the shape Playwright's
  * `json` reporter writes: a file-level suite, a `describe`-level suite nested
  * inside it, and specs carrying `tests[].results[]`. Defaults to every
  * committed e2e spec; tests that need an ABSENT spec pass a shorter list.
@@ -68,6 +89,10 @@ const REPORTED_SLICE = 'slice.spec.ts'
  */
 function passingReport(...files: string[]): PlaywrightJsonReport {
   const reported = files.length > 0 ? files : [REPORTED_WEBGL, REPORTED_SLICE]
+  const expectedCount = reported.reduce(
+    (count, file) => count + REQUIRED_VISUAL_TESTS[requiredSpecForReportedPath(file)]!.length,
+    0,
+  )
   return {
     config: { updateSnapshots: 'none' },
     errors: [],
@@ -79,24 +104,481 @@ function passingReport(...files: string[]): PlaywrightJsonReport {
         {
           title: `${file.split('/').pop() ?? file} baseline`,
           file,
-          specs: [
-            {
-              title: 'renders through SwiftShader',
-              ok: true,
-              file,
-              tests: [{ status: 'expected', results: [{ status: 'passed' }] }],
-            },
-          ],
+          specs: REQUIRED_VISUAL_TESTS[requiredSpecForReportedPath(file)]!.map((title) => ({
+            title,
+            ok: true,
+            file,
+            tests: [{ status: 'expected', results: [{ status: 'passed' }] }],
+          })),
         },
       ],
     })),
-    stats: { expected: reported.length, unexpected: 0, flaky: 0, skipped: 0 },
+    stats: { expected: expectedCount, unexpected: 0, flaky: 0, skipped: 0 },
   }
 }
+
+function reportSpecs(report: PlaywrightJsonReport, reportedFile: string) {
+  return report.suites!.find((suite) => suite.file === reportedFile)!.suites![0]!.specs!
+}
+
+const REQUIRED_TEST_CASES = Object.entries(REQUIRED_VISUAL_TESTS).flatMap(([spec, titles]) =>
+  titles.map((title) => [spec, title] as const),
+)
+
+function visualSpecSource(spec: string): string {
+  return readFileSync(join(WEB_ROOT, ...spec.split('/')), 'utf-8')
+}
+
+function mutateInsideTest(source: string, title: string, needle: string, replacement: string): string {
+  const start = source.indexOf(`test('${title}'`)
+  if (start < 0) {
+    throw new Error(`test fixture has no title: ${title}`)
+  }
+  const next = source.indexOf('\ntest(', start + 1)
+  const end = next < 0 ? source.length : next
+  const body = source.slice(start, end)
+  const mutated = body.replace(needle, replacement)
+  if (mutated === body) {
+    throw new Error(`test fixture "${title}" has no mutation target: ${needle}`)
+  }
+  return `${source.slice(0, start)}${mutated}${source.slice(end)}`
+}
+
+function mutateSource(source: string, needle: string, replacement: string): string {
+  const mutated = source.replace(needle, replacement)
+  if (mutated === source) {
+    throw new Error(`source fixture has no mutation target: ${needle}`)
+  }
+  return mutated
+}
+
+const SLICE_SOURCE_MUTATIONS = [
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![0]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'the 2p_z positive screenshot',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![1]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'the 2p(+1) phase positive screenshot',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![2]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'both stationary-density positive screenshots',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![3]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'the t=0 positive screenshot',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'the t=8.4 positive screenshot',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!,
+    'halfPeriodRejectionOptions(page)',
+    'notAuditedOptions(page) /* halfPeriodRejectionOptions(page) */',
+    'the half-period negated screenshot control',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![5]!,
+    'transposeRejectionOptions(page)',
+    'notAuditedOptions(page)',
+    'the transposition negated screenshot control',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!,
+    'screenshotOptions(page)',
+    'notAuditedOptions(page)',
+    'the geometry-control positive screenshot',
+  ],
+  [
+    REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!,
+    'geometryRejectionOptions(page)',
+    'notAuditedOptions(page)',
+    'the geometry negated screenshot control',
+  ],
+] as const
+
+const WEBGL_SOURCE_MUTATIONS = [
+  ['report.supported', 'report.wasSupported', 'the WebGL2 availability assertion'],
+  ['report.unmasked', 'report.wasUnmasked', 'the unmasked-renderer assertion'],
+  ['report.renderer', 'report.otherRenderer', 'the SwiftShader renderer assertion'],
+] as const
+
+const GEOMETRY_NEGATED_ASSERTION = `await expect(canvasOf(page)).not.toHaveScreenshot(
+    'degenerate-stationary-xz.png',
+    geometryRejectionOptions(page),
+  )`
+
+const REQUIRED_TEST_CONTROL_FLOW_MUTATIONS = [
+  ['an unconditional return', 'return;', 'return'],
+  ['a conditional return', 'if (true) return;', 'if'],
+  ['a throw', "throw new Error('stop');", 'throw'],
+  ['a switch', 'switch (true) { case true: return; }', 'switch'],
+  ['a try', 'try { return; } finally {}', 'try'],
+  ['a for loop', 'for (;;) { return; }', 'for'],
+  ['a while loop', 'while (true) { return; }', 'while'],
+  ['a do loop', 'do { return; } while (false);', 'do'],
+  ['a for-in loop', 'for (const key in {}) { return; }', 'for-in'],
+  ['a for-of loop', 'for (const item of []) { return; }', 'for-of'],
+] as const
+
+const SLICE_CONFIGURATION_VALUE_MUTATIONS = [
+  [
+    'the positive per-pixel threshold',
+    'threshold: 0.02',
+    'threshold: 0.2 /* threshold: 0.02 */',
+    'COMPARISON.threshold must be the numeric literal 0.02',
+  ],
+  [
+    'the positive changed-pixel ratio',
+    'maxDiffPixelRatio: 0.001',
+    'maxDiffPixelRatio: 1 /* maxDiffPixelRatio: 0.001 */',
+    'COMPARISON.maxDiffPixelRatio must be the numeric literal 0.001',
+  ],
+  [
+    'the comparison timeout',
+    'timeout: 30_000,',
+    'timeout: 3_000 /* timeout: 30_000 */,',
+    'COMPARISON.timeout must be the numeric literal 30000',
+  ],
+  [
+    'the half-period rejection threshold',
+    'rejectionComparison(0.05)',
+    'rejectionComparison(0.01 /* rejectionComparison(0.05) */)',
+    'HALF_PERIOD_REJECTION must be rejectionComparison(0.05)',
+  ],
+  [
+    'the transpose rejection threshold',
+    'const TRANSPOSE_REJECTION = rejectionComparison(0.1)',
+    'const TRANSPOSE_REJECTION = rejectionComparison(0.01) /* rejectionComparison(0.1) */',
+    'TRANSPOSE_REJECTION must be rejectionComparison(0.1)',
+  ],
+  [
+    'the geometry rejection threshold',
+    'const GEOMETRY_REJECTION = rejectionComparison(0.1)',
+    'const GEOMETRY_REJECTION = rejectionComparison(0.01) /* rejectionComparison(0.1) */',
+    'GEOMETRY_REJECTION must be rejectionComparison(0.1)',
+  ],
+  [
+    'the geometry mutation scale',
+    'const GEOMETRY_SCALE = 1.02',
+    "const GEOMETRY_SCALE = 1 /* 'const GEOMETRY_SCALE = 1.02' */",
+    'GEOMETRY_SCALE must be the numeric literal 1.02',
+  ],
+] as const
+
+const SLICE_CONFIGURATION_RELATION_MUTATIONS = [
+  [
+    'the rejection threshold guard',
+    'if (threshold < COMPARISON.threshold) {',
+    'if (threshold > COMPARISON.threshold) { /* threshold < COMPARISON.threshold */',
+    'rejectionComparison must guard threshold < COMPARISON.threshold',
+  ],
+  [
+    'the rejection option constructor',
+    'return { ...COMPARISON, threshold } as const',
+    'return { ...COMPARISON } as const /* return { ...COMPARISON, threshold } */',
+    'rejectionComparison must guard threshold < COMPARISON.threshold',
+  ],
+  [
+    'the positive options spread',
+    '({ ...COMPARISON, mask: overlays(page) })',
+    '({ ...HALF_PERIOD_REJECTION, mask: overlays(page) /* ...COMPARISON */ })',
+    'screenshotOptions must return { ...COMPARISON, mask: overlays(page) } exactly',
+  ],
+  [
+    'the half-period options spread',
+    '...HALF_PERIOD_REJECTION,\n  mask: overlays(page),',
+    '...COMPARISON,\n  mask: overlays(page), /* ...HALF_PERIOD_REJECTION */',
+    'halfPeriodRejectionOptions must return { ...HALF_PERIOD_REJECTION, mask: overlays(page) }',
+  ],
+  [
+    'the transpose options spread',
+    '...TRANSPOSE_REJECTION,\n  mask: overlays(page),',
+    '...COMPARISON,\n  mask: overlays(page), /* ...TRANSPOSE_REJECTION */',
+    'transposeRejectionOptions must return { ...TRANSPOSE_REJECTION, mask: overlays(page) }',
+  ],
+  [
+    'the geometry options spread',
+    '...GEOMETRY_REJECTION,\n  mask: overlays(page),',
+    '...COMPARISON,\n  mask: overlays(page), /* ...GEOMETRY_REJECTION */',
+    'geometryRejectionOptions must return { ...GEOMETRY_REJECTION, mask: overlays(page) }',
+  ],
+] as const
 
 describe('assert-visual-run: the passing shape', () => {
   it('reports no problem for a report in which every expected spec passed', () => {
     expect(auditVisualRun(passingReport(), [SLICE_SPEC, WEBGL_SPEC])).toEqual([])
+  })
+})
+
+describe('assert-visual-run: the required test-title manifest', () => {
+  it.each(REQUIRED_TEST_CASES)('fails when %s loses required test "%s"', (spec, title) => {
+    const report = passingReport()
+    const reportedFile = spec.replace(/^e2e\//, '')
+    const specs = reportSpecs(report, reportedFile)
+    specs.splice(
+      specs.findIndex((candidate) => candidate.title === title),
+      1,
+    )
+    // Keep a report entry for a one-test file. This proves an unrelated green
+    // test cannot make the FILE-presence check hide the missing title.
+    if (specs.length === 0) {
+      specs.push({
+        title: 'an unrelated extra visual test',
+        ok: true,
+        file: reportedFile,
+        tests: [{ status: 'expected', results: [{ status: 'passed' }] }],
+      })
+    }
+
+    const problems = auditVisualRun(report, REQUIRED_SPECS).join('\n')
+    expect(problems).toContain(spec)
+    expect(problems).toContain(`"${title}"`)
+    expect(problems).toContain('ran 0 time(s)')
+  })
+
+  it('does not let an extra passing test substitute for a missing required one', () => {
+    const report = passingReport()
+    const specs = reportSpecs(report, REPORTED_SLICE)
+    const missing = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![0]!
+    specs.splice(
+      specs.findIndex((candidate) => candidate.title === missing),
+      1,
+    )
+    specs.push({
+      title: 'more pixels are pretty',
+      ok: true,
+      file: REPORTED_SLICE,
+      tests: [{ status: 'expected', results: [{ status: 'passed' }] }],
+    })
+
+    const problems = auditVisualRun(report, REQUIRED_SPECS).join('\n')
+    expect(problems).toContain(`"${missing}"`)
+    expect(problems).not.toContain('more pixels are pretty')
+  })
+
+  it('fails when the same required title appears in two report entries', () => {
+    const report = passingReport()
+    const specs = reportSpecs(report, REPORTED_SLICE)
+    specs.push({ ...specs[0]!, tests: [{ status: 'expected', results: [{ status: 'passed' }] }] })
+
+    const problems = auditVisualRun(report, REQUIRED_SPECS).join('\n')
+    expect(problems).toContain(`"${REQUIRED_VISUAL_TESTS[SLICE_SPEC]![0]}"`)
+    expect(problems).toContain('ran 2 time(s) in 2 report entry/entries')
+  })
+
+  it('fails when one required title has two project executions', () => {
+    const report = passingReport()
+    const required = reportSpecs(report, REPORTED_WEBGL)[0]!
+    required.tests!.push({ status: 'expected', results: [{ status: 'passed' }] })
+
+    expect(auditVisualRun(report, REQUIRED_SPECS).join('\n')).toContain(
+      'ran 2 time(s) in 1 report entry/entries',
+    )
+  })
+
+  it('does not accept the right title from the wrong spec file', () => {
+    const report = passingReport()
+    const sliceSpecs = reportSpecs(report, REPORTED_SLICE)
+    const missing = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!
+    const [moved] = sliceSpecs.splice(
+      sliceSpecs.findIndex((candidate) => candidate.title === missing),
+      1,
+    )
+    reportSpecs(report, REPORTED_WEBGL).push({ ...moved!, file: REPORTED_WEBGL })
+
+    const problems = auditVisualRun(report, REQUIRED_SPECS).join('\n')
+    expect(problems).toContain(`${SLICE_SPEC} > "${missing}"`)
+    expect(problems).toContain('ran 0 time(s)')
+  })
+})
+
+describe('assert-visual-run: the slice comparison configuration contract', () => {
+  it.each(SLICE_CONFIGURATION_VALUE_MUTATIONS)(
+    'rejects a changed %s even when a comment preserves the old text',
+    (_label, needle, replacement, expectedProblem) => {
+      const mutated = mutateSource(visualSpecSource(SLICE_SPEC), needle, replacement)
+      expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(expectedProblem)
+    },
+  )
+
+  it.each(SLICE_CONFIGURATION_RELATION_MUTATIONS)(
+    'rejects a broken %s construction relation',
+    (_label, needle, replacement, expectedProblem) => {
+      const mutated = mutateSource(visualSpecSource(SLICE_SPEC), needle, replacement)
+      expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(expectedProblem)
+    },
+  )
+
+  it('does not let a string literal replace the real changed-pixel ratio', () => {
+    const changed = mutateSource(
+      visualSpecSource(SLICE_SPEC),
+      'maxDiffPixelRatio: 0.001',
+      'maxDiffPixelRatio: 1',
+    )
+    const mutated = `${changed}\nconst comparisonDecoy = 'maxDiffPixelRatio: 0.001'\n`
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(
+      'COMPARISON.maxDiffPixelRatio must be the numeric literal 0.001',
+    )
+  })
+
+  it('rejects an extra comparison option that can override the pinned budget', () => {
+    const mutated = mutateSource(
+      visualSpecSource(SLICE_SPEC),
+      'maxDiffPixelRatio: 0.001,',
+      'maxDiffPixelRatio: 0.001,\n  maxDiffPixels: 1_000_000,',
+    )
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(
+      'COMPARISON must contain exactly threshold, maxDiffPixelRatio and timeout',
+    )
+  })
+})
+
+describe('assert-visual-run: assertions omitted from Playwright JSON', () => {
+  it('accepts the committed slice and WebGL source', () => {
+    expect(auditVisualSpecSource(SLICE_SPEC, visualSpecSource(SLICE_SPEC))).toEqual([])
+    expect(auditVisualSpecSource(WEBGL_SPEC, visualSpecSource(WEBGL_SPEC))).toEqual([])
+    expect(auditVisualSources(WEB_ROOT)).toEqual([])
+  })
+
+  it.each(SLICE_SOURCE_MUTATIONS)(
+    'fails when "%s" loses %s',
+    (title, needle, replacement, expectedLabel) => {
+      const mutated = mutateInsideTest(visualSpecSource(SLICE_SPEC), title, needle, replacement)
+      const problems = auditVisualSpecSource(SLICE_SPEC, mutated)
+      expect(problems).toEqual([
+        expect.stringContaining(expectedLabel) as unknown as string,
+      ])
+    },
+  )
+
+  it.each(WEBGL_SOURCE_MUTATIONS)(
+    'fails when the WebGL assertion subject %s is removed',
+    (needle, replacement, expectedLabel) => {
+      const title = REQUIRED_VISUAL_TESTS[WEBGL_SPEC]![0]!
+      const mutated = mutateInsideTest(visualSpecSource(WEBGL_SPEC), title, needle, replacement)
+      const problems = auditVisualSpecSource(WEBGL_SPEC, mutated)
+      expect(problems).toEqual([
+        expect.stringContaining(expectedLabel) as unknown as string,
+      ])
+    },
+  )
+
+  it('does not mistake assertion text in a comment for an executable control', () => {
+    const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(SLICE_SPEC),
+      title,
+      'halfPeriodRejectionOptions(page)',
+      'notAuditedOptions(page) /* halfPeriodRejectionOptions(page) */',
+    )
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(
+      'half-period negated screenshot control',
+    )
+  })
+
+  it('rejects a required assertion below a dead conditional', () => {
+    const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(SLICE_SPEC),
+      title,
+      GEOMETRY_NEGATED_ASSERTION,
+      `if (false) ${GEOMETRY_NEGATED_ASSERTION}`,
+    )
+    const problems = auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')
+    expect(problems).toContain('top-level if statement')
+    expect(problems).toContain('geometry negated screenshot control')
+  })
+
+  it.each(REQUIRED_TEST_CONTROL_FLOW_MUTATIONS)(
+    'rejects %s before an otherwise direct required assertion',
+    (_label, statement, expectedKind) => {
+      const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!
+      const mutated = mutateInsideTest(
+        visualSpecSource(SLICE_SPEC),
+        title,
+        GEOMETRY_NEGATED_ASSERTION,
+        `${statement}\n  ${GEOMETRY_NEGATED_ASSERTION}`,
+      )
+      expect(auditVisualSpecSource(SLICE_SPEC, mutated)).toEqual([
+        expect.stringContaining(`top-level ${expectedKind} statement`) as unknown as string,
+      ])
+    },
+  )
+
+  it('allows return and branching inside a nested helper callback', () => {
+    const title = REQUIRED_VISUAL_TESTS[WEBGL_SPEC]![0]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(WEBGL_SPEC),
+      title,
+      "await page.goto('/')",
+      "await page.goto('/')\n  const nestedHelper = () => { if (true) return; throw new Error('nested') }",
+    )
+    expect(auditVisualSpecSource(WEBGL_SPEC, mutated)).toEqual([])
+  })
+
+  it('rejects a required assertion nested in an uncalled function', () => {
+    const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(SLICE_SPEC),
+      title,
+      GEOMETRY_NEGATED_ASSERTION,
+      `const neverCalled = async () => {\n    ${GEOMETRY_NEGATED_ASSERTION}\n  }`,
+    )
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated)).toEqual([
+      expect.stringContaining('geometry negated screenshot control') as unknown as string,
+    ])
+  })
+
+  it('rejects a required assertion nested in an unawaited callback', () => {
+    const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(SLICE_SPEC),
+      title,
+      GEOMETRY_NEGATED_ASSERTION,
+      `void (async () => {\n    ${GEOMETRY_NEGATED_ASSERTION}\n  })()`,
+    )
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated)).toEqual([
+      expect.stringContaining('geometry negated screenshot control') as unknown as string,
+    ])
+  })
+
+  it('rejects a top-level screenshot assertion that is not awaited', () => {
+    const title = REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(SLICE_SPEC),
+      title,
+      GEOMETRY_NEGATED_ASSERTION,
+      GEOMETRY_NEGATED_ASSERTION.replace(/^await /, ''),
+    )
+    expect(auditVisualSpecSource(SLICE_SPEC, mutated)).toEqual([
+      expect.stringContaining('geometry negated screenshot control') as unknown as string,
+    ])
+  })
+
+  it('requires the WebGL assertions to be direct and awaited too', () => {
+    const title = REQUIRED_VISUAL_TESTS[WEBGL_SPEC]![0]!
+    const mutated = mutateInsideTest(
+      visualSpecSource(WEBGL_SPEC),
+      title,
+      'await expect(\n    report.supported,',
+      'expect(\n    report.supported,',
+    )
+    expect(auditVisualSpecSource(WEBGL_SPEC, mutated)).toEqual([
+      expect.stringContaining('WebGL2 availability assertion') as unknown as string,
+    ])
   })
 })
 
@@ -307,10 +789,33 @@ describe('assert-visual-run: the exit code the chain reads', () => {
 })
 
 describe('assert-visual-run: the expected spec list', () => {
-  // The gate is handed the specs that must have run, and it reads them off
-  // disk rather than from a literal, so adding a second e2e spec cannot leave
-  // the gate silently checking only the first one.
+  // Discovery is compared with the closed manifest rather than used AS the
+  // expectation. Otherwise deleting a file would delete its requirement too.
   it('lists the committed e2e spec files', () => {
-    expect(listVisualSpecFiles(WEB_ROOT)).toEqual([SLICE_SPEC, WEBGL_SPEC])
+    const discovered = listVisualSpecFiles(WEB_ROOT)
+    expect(discovered).toEqual([SLICE_SPEC, WEBGL_SPEC])
+    expect(discovered).toEqual(REQUIRED_SPECS)
+    expect(auditVisualSpecInventory(discovered)).toEqual([])
+  })
+
+  it('fails when a manifest spec is absent from disk', () => {
+    expect(auditVisualSpecInventory([WEBGL_SPEC]).join('\n')).toContain(
+      `${SLICE_SPEC}: found 0 time(s)`,
+    )
+  })
+
+  it('fails an unmanifested extra spec instead of silently treating it as coverage', () => {
+    expect(auditVisualSpecInventory([...REQUIRED_SPECS, 'e2e/extra.spec.ts']).join('\n')).toContain(
+      'e2e/extra.spec.ts: unmanifested visual spec',
+    )
+  })
+
+  it('does not accept the right basename from a nested path', () => {
+    const problems = auditVisualSpecInventory([
+      WEBGL_SPEC,
+      'e2e/other/slice.spec.ts',
+    ]).join('\n')
+    expect(problems).toContain(`${SLICE_SPEC}: found 0 time(s)`)
+    expect(problems).toContain('e2e/other/slice.spec.ts: unmanifested visual spec')
   })
 })

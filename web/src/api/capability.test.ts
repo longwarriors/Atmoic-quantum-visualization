@@ -121,7 +121,7 @@ describe('capabilityFor: eigenstate x streamlines', () => {
     })
     expect(capability.status).toBe('unsupported')
     if (capability.status === 'available') throw new Error('unreachable')
-    expect(capability.reason).toContain('n <= 6')
+    expect(capability.reason).toContain('n ≤ 6')
     expect(capability.reason).toContain('/api/orbitals/current-field')
   })
 
@@ -132,7 +132,7 @@ describe('capabilityFor: eigenstate x streamlines', () => {
       representation: 'streamlines',
     })
     if (highL.status === 'available') throw new Error('unreachable')
-    expect(highL.reason).toContain('l <= 5')
+    expect(highL.reason).toContain('l ≤ 5')
 
     const highM = capabilityFor({
       mode: 'eigenstate',
@@ -140,7 +140,7 @@ describe('capabilityFor: eigenstate x streamlines', () => {
       representation: 'streamlines',
     })
     if (highM.status === 'available') throw new Error('unreachable')
-    expect(highM.reason).toContain('|m| <= 5')
+    expect(highM.reason).toContain('|m| ≤ 5')
   })
 
   it('refuses a real basis and m = 0 on physics, not on a server bound', () => {
@@ -151,7 +151,7 @@ describe('capabilityFor: eigenstate x streamlines', () => {
     })
     expect(real.status).toBe('unsupported')
     if (real.status === 'available') throw new Error('unreachable')
-    expect(real.reason).toContain('zero probability current')
+    expect(real.reason).toContain('probability current 恒为 0')
 
     const zeroM = capabilityFor({
       mode: 'eigenstate',
@@ -210,7 +210,7 @@ describe('capabilityFor: eigenstate x isosurface', () => {
     })
     expect(capability.status).toBe('unsupported')
     if (capability.status === 'available') throw new Error('unreachable')
-    expect(capability.reason).toContain('n <= 4')
+    expect(capability.reason).toContain('n ≤ 4')
   })
 
   it('refuses l > 3 and |m| > 3 even if some caller hands it n <= 4', () => {
@@ -220,7 +220,7 @@ describe('capabilityFor: eigenstate x isosurface', () => {
       representation: 'isosurface',
     })
     if (highL.status === 'available') throw new Error('unreachable')
-    expect(highL.reason).toContain('l <= 3')
+    expect(highL.reason).toContain('l ≤ 3')
 
     const highM = capabilityFor({
       mode: 'eigenstate',
@@ -228,7 +228,7 @@ describe('capabilityFor: eigenstate x isosurface', () => {
       representation: 'isosurface',
     })
     if (highM.status === 'available') throw new Error('unreachable')
-    expect(highM.reason).toContain('|m| <= 3')
+    expect(highM.reason).toContain('|m| ≤ 3')
   })
 })
 
@@ -275,7 +275,7 @@ describe('capabilityFor: superposition x isosurface', () => {
       }),
     )
     expect(capability.endpoint).toBe('/api/superposition/isosurface')
-    expect(capability.parameters.timeAu).toEqual({ min: -1000, max: 1000, step: 0.6 })
+    expect(capability.parameters.timeAu).toEqual({ min: -1000, max: 1000, step: 0.2 })
     expect(capability.latency).toBe('slow')
   })
 })
@@ -424,6 +424,16 @@ describe('planSceneRequest: every value it sends is inside the declared bound', 
     expect(plan.params.time).toBe(1000)
   })
 
+  it('preserves clock values that lie on the slider grid', () => {
+    for (const timeAu of [0, 8.4]) {
+      const plan = planSceneRequest(
+        inputs({ mode: 'superposition', representation: 'slice', timeAu }),
+      )
+      if (plan.status !== 'available') throw new Error('unreachable')
+      expect(plan.params.time).toBe(timeAu)
+    }
+  })
+
   it('leaves a superposition grid the eigenstate floor would have raised', () => {
     const plan = planSceneRequest(
       inputs({
@@ -524,7 +534,7 @@ describe('capabilityFor: superposition x slice', () => {
       capabilityFor({ mode: 'superposition', orbital: orbital(), representation: 'slice' }),
     )
     expect(capability.endpoint).toBe('/api/superposition/slice')
-    expect(capability.parameters.timeAu).toEqual({ min: -1000, max: 1000, step: 0.6 })
+    expect(capability.parameters.timeAu).toEqual({ min: -1000, max: 1000, step: 0.2 })
     expect(capability.parameters.aMu).toEqual({ min: 0.005, max: 20, step: 0.005 })
     expect(capability.planes).toEqual(['xy', 'xz', 'yz'])
     expect(capability.observables).toEqual([

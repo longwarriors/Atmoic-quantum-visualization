@@ -18,11 +18,11 @@
  */
 import ReactThreeTestRenderer from '@react-three/test-renderer'
 import { createElement } from 'react'
-import type * as THREE from 'three'
+import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SurfaceGeometry } from '../api/types'
-import { phaseToRgb } from './color'
+import { phaseToLinearRgb, phaseToRgb } from './color'
 import { OrbitalSurface } from './OrbitalSurface'
 
 /* ------------------------------------------------------------- act scope */
@@ -114,8 +114,10 @@ describe('OrbitalSurface', () => {
 
     expect(group.type).toBe('Group')
     expect(mesh.type).toBe('Mesh')
-    expect(mesh.castShadow).toBe(true)
-    expect(mesh.receiveShadow).toBe(true)
+    // A phase surface neither receives a decorative lighting term nor casts a
+    // second, unlabeled silhouette onto the grid.
+    expect(mesh.castShadow).toBe(false)
+    expect(mesh.receiveShadow).toBe(false)
 
     await renderer.unmount()
   })
@@ -126,9 +128,9 @@ describe('OrbitalSurface', () => {
 
     expect(attributeOf(geometry, 'position').count).toBe(data.vertices.length)
     expect(attributeOf(geometry, 'normal').count).toBe(data.normals.length)
-    // Indexed, not expanded: 4 triangles addressing 4 shared vertices. An
-    // un-indexed build would report 12 positions and lose the shared normals
-    // that make the surface read as smooth.
+    // Indexed, not expanded: 4 triangles addressing 4 shared vertices. Keep
+    // the API's normals with those vertices even though the deliberately unlit
+    // data-colour material does not consume them.
     expect(geometry.getIndex()?.count).toBe(data.faces.length * 3)
 
     const position = attributeOf(geometry, 'position')
@@ -147,7 +149,7 @@ describe('OrbitalSurface', () => {
 
     expect(color.count).toBe(data.phase.length)
     data.phase.forEach((phase, index) => {
-      const [r, g, b] = phaseToRgb(phase)
+      const [r, g, b] = phaseToLinearRgb(phase)
       expect(color.getX(index)).toBeCloseTo(r, 6)
       expect(color.getY(index)).toBeCloseTo(g, 6)
       expect(color.getZ(index)).toBeCloseTo(b, 6)
@@ -155,6 +157,22 @@ describe('OrbitalSurface', () => {
     // Phase is the whole point of the colour: two different phases must not
     // land on the same colour.
     expect(color.getX(0)).not.toBeCloseTo(color.getX(2), 3)
+    // The legend values are sRGB bytes. Writing those bytes directly into a
+    // vertex attribute makes Three encode them a second time on output.
+    expect(color.getY(0)).not.toBeCloseTo(phaseToRgb(0)[1], 3)
+
+    await renderer.unmount()
+  })
+
+  it('uses an unlit material immune to lights, normals, shadows, fog and tone mapping', async () => {
+    const { renderer, mesh } = await render(surface())
+    const material = mesh.material as THREE.MeshBasicMaterial
+
+    expect(material.type).toBe('MeshBasicMaterial')
+    expect(material.vertexColors).toBe(true)
+    expect(material.fog).toBe(false)
+    expect(material.toneMapped).toBe(false)
+    expect(material.side).toBe(THREE.FrontSide)
 
     await renderer.unmount()
   })
@@ -173,7 +191,7 @@ describe('OrbitalSurface', () => {
     const opaque = await render(surface(), 1)
     const opaqueMaterial = opaque.mesh.material as THREE.Material
     expect(opaqueMaterial.transparent).toBe(false)
-    expect((opaqueMaterial as THREE.MeshPhysicalMaterial).depthWrite).toBe(true)
+    expect((opaqueMaterial as THREE.MeshBasicMaterial).depthWrite).toBe(true)
     await opaque.renderer.unmount()
 
     const glassy = await render(surface(), 0.5)
@@ -182,7 +200,7 @@ describe('OrbitalSurface', () => {
     expect(glassyMaterial.opacity).toBe(0.5)
     // A translucent lobe that wrote depth would occlude the lobe behind it and
     // hide half the orbital.
-    expect((glassyMaterial as THREE.MeshPhysicalMaterial).depthWrite).toBe(false)
+    expect((glassyMaterial as THREE.MeshBasicMaterial).depthWrite).toBe(false)
     await glassy.renderer.unmount()
   })
 

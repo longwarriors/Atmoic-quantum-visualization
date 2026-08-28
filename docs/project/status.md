@@ -2,7 +2,7 @@
 
 !!! success “Phase 0 可演示基线”
 
-    截至 2026-08-27，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI（接线已在，**基线尚未提交**，见下）。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+    截至 2026-08-28，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
@@ -18,7 +18,7 @@
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（32 个 spec 文件、772 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；PR-8A 起覆盖范围为 `src/**` 下全部 `.ts`/`.tsx`，共 29 个门禁模块（`src/api/types.ts` 与 `src/api/schema.gen.ts` 是仅有的两个排除项，且“仅含类型”由守卫解析强制）；PR-8C 起 `web/e2e/` 的 Playwright 截图套件与 `ci.yml` 的 `web-visual` job 已接线并被 `tests/test_check_script.py` 钉住；2pz、3dz² 浏览器视觉复核通过 | 截图**基线尚未提交**（只能由 Linux/SwiftShader 产生，且首次运行按设计失败、需人工看图后入树），因此视觉正确性目前仍靠人工复核加平台无关的 vitest 断言；已知相机竞态会让同一场景稳定在不同视角，是基线 bootstrap 的前置缺陷；主 bundle 1,237 kB（gzip 339 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（32 个 spec 文件、870 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；PR-8A 起覆盖范围为 `src/**` 下全部 `.ts`/`.tsx`，共 29 个门禁模块（`src/api/types.ts` 与 `src/api/schema.gen.ts` 是仅有的两个排除项，且“仅含类型”由守卫解析强制）；PR-8C 起 `web/e2e/` 的 Playwright 截图套件与 `ci.yml` 的 `web-visual` job 已接线并被 `tests/test_check_script.py` 钉住，五张 Linux/SwiftShader PNG 基线已入树；2pz、3dz² 浏览器视觉复核通过；WebUI 已完成中文主述、领域记法保留的平面化重构，桌面 canvas 与 panel 内容高度解耦 | 截图门禁只代表固定的 Linux/Chromium/SwiftShader 软件栅格环境，不代表真实 GPU 与多浏览器矩阵；Windows 开发机按设计不能更新或执行该门禁；主 bundle 1,239.75 kB（gzip 341.17 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -115,7 +115,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 ## 剩余限制
 
-1. 截图回归的接线已在 CI（PR-8C），但**一张基线都还没有**，所以今天它还不能发现任何视觉回归；在基线 bootstrap 之前，视觉正确性仍靠人工浏览器 QA 加平台无关的 vitest 断言。交互回归也仍停在组件层，没有端到端用例；
+1. 五张截图基线与 CI 接线都已存在，但只覆盖固定的 Linux/Chromium/SwiftShader 环境与切片主路径；真实 GPU、多浏览器以及切片之外的端到端交互仍未覆盖；
 2. 拆分 Three.js/后处理 bundle，并测量帧时、显存与大资产传输；
 3. 将等值面验证扩展到更高 $n$ 前，先设计随节点数增长的收敛策略；
 4. 原计划在进入解析含时叠加前先实现切片和节点面 representation，实际顺序没有遵守：概率流先交付，M1 叠加态先于切片完成，$\psi$/相位切片与相位遮罩到 PR-8B 才落地；真正的**节面 representation**（节点几何本身）仍未实现——切片报告的是低振幅 / 相位未定义遮罩，不是节面；
@@ -209,7 +209,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 - **采样轴不用 `np.linspace`**：`linspace(-E, E, R)` 以 `start + step*i` 生成再修补端点，在一般 extent 下两半**并非逐位互为相反数**，切片的对称性断言与节点位置于是由舍入决定。轴改为 $\texttt{spacing}\times(\texttt{arange}(R)-\texttt{half})$（$\texttt{half}=(R-1)//2$，$\texttt{spacing}=2E/(R-1)$），IEEE 取负精确、小整数 `arange` 精确，故在任意 extent 下逐位反对称；`tests/test_planes.py` 留了一条把公式换回 `linspace` 就变红的负控制。`resolution` 必须为奇数同出一源：偶数轴不采样原点，而每条对称性/节点/遮罩陈述都是关于**过原点的平面**说的。
 - **相位遮罩参照状态，不参照平面**：一张恰好具有节面对称性的平面上，算出来的振幅不是零而是数值残渣——实基 $2p_z$ 在 `xy` 平面上的 $\max\lvert\psi\rvert$ 实测为 $4.4874712\times10^{-18}$。若以切片自身最大值定阈值，阈值会重新标定到这点残渣上，交回一整面毫无意义的相位。阈值因此是 $\texttt{relative}\times L_{\mathrm{ref}}^{-3/2}$（$L_{\mathrm{ref}}=n^2a_\mu/Z$，叠加态取 $\max_k$），$\texttt{relative}=10^{-6}$，另设数值地板 $64\varepsilon\max_{\text{plane}}\lvert\psi\rvert$，二者取大后**严格**大于才算有效。六个分项（relative、amplitude scale、threshold、numeric floor、平面最大模、masked fraction）全部随 payload 报告，读者能看出是哪一项在决定边界。同一张 $2p_z$ 的 `xy` 相位切片实测 threshold $1.25\times10^{-7}$、floor $6.3770801\times10^{-32}$、`phase_masked_fraction = 1.0`（由 threshold 决定）。
 - **遮罩的措辞是契约的一部分**：被遮罩的样本只表示该平面上 $\lvert\psi\rvert\leq$ threshold，这个集合既包含节面也包含指数尾部，它标记的是低振幅 / 相位未定义区域，**不是节点证书**。上面那个 `1.0` 恰好确实落在 $2p_z$ 的节面上，但同一个 `1.0` 也可以由一张完全落在指数尾部的切片产生，所以遮罩本身不是那个结论的证据；这句话同时写进 `scene-contract.md`、payload docstring 与 metadata warning。
-- **extent 是导出并报告的，不是参数**；masked 样本携带有限哨兵 `0.0`，因此忽略遮罩的客户端画出确定占位值，payload 也能通过严格 JSON 解析器——这与既有的 NaN 门禁同源：app 服务的是 Starlette 默认 JSON 编码器，它会照写 `NaN` / `Infinity` 这两个裸 token。
+- **extent 是导出并报告的，不是参数**；masked 样本携带有限哨兵 `0.0`，因此忽略遮罩的客户端画出确定占位值，payload 也能通过严格 JSON 解析器——这与既有的非有限数门禁同源：模型在字段仍可归因时拒绝 `NaN` / `±Infinity`；锁定版本的 Starlette `JSONResponse` 也以 `allow_nan=False` 拒绝它们，而不是把裸 token 写上线路。
 - **resolution 下限与等值面的 $n\le4$ 上限不是同一回事**：等值面的限制是关于 marching cubes 的，切片不抽取任何网格，只在 $R^2$ 个点上求值并报告数字，所以高 $n$ 花的是采样数而不是有效性。下限 $\max(65,16n+17)$ 随 $n$ 线性增长（$n-\ell$ 个径向腹点、extent 按 $n^2$ 增长），路由把 $n$ 开到 12。实测：$n=6$ 传 `resolution=65` 返回 422 且报错点名 `resolution must be at least 113 for n=6`，传 113 返回 200；传偶数 66 返回 422 `resolution must be odd so the origin lies on the grid`；64 与 515 则由签名层的 `Query` 边界拒绝。
 - **`a_mu` 的不对称是刻意的**：`/api/orbitals/slice` 是唯一暴露 `a_mu` 的本征态路由，因为切片是约化质量长度唯一直接可读的地方——它同时改变导出的 extent 与遮罩参照的振幅尺度，两者都逐字出现在 payload 里。
 - **黄金 fixture**：`tests/fixtures/slice_golden.json`（81,998 B）是 1s 在 `xy` 平面、`observable=phase`、`resolution=65` 的整份序列化 `SlicePayload`，由 `scripts/write_slice_golden.py` 以 canonical dump（`sort_keys=True`、`indent=2`、`allow_nan=False`）写出、`tests/test_slice_contract.py` 重建后逐字节比对，因此客户端收到的数字一旦变化就必须以一份有人读的 diff 出现，而不是整套测试跟着重新推导、于是一致同意。
@@ -245,30 +245,37 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 - **视觉门禁是新的一类**：`web/e2e/` 下的 Playwright 套件由 `npm run test:visual` 运行（`playwright test` 之后 `web/scripts/assert-visual-run.mjs`），CI 里是 `ci.yml` 新增的 `web-visual` job（`ubuntu-latest`、`working-directory: web`、`npm ci --no-audit --no-fund`、`npx --no-install playwright install --with-deps chromium`、`npm run test:visual`，失败时上传 `web/playwright-report` 与 `web/test-results` 保留 7 天）。它**不在** `check.ps1` / `make check` 内，而且不是“暂未加入”：`web/playwright.config.ts` 在非 Linux 上于模块加载时抛错，所以这条门禁在开发机上不允许运行。理由不是洁癖——真正的危险是本机全红之后有人敲 `--update-snapshots`，用这台机器的像素覆盖掉 CI 基线，此后套件本地绿、CI 红且不再描述任何回归。守卫写成抛错而不是 `skip`，因为 `skip` 之下 `--update-snapshots` 照样能写。
 - **`web-visual` job 本身被钉住**，理由与 PR-6 钉住 `web` job 时相同：删掉一个 job 比击败它里面任何一条断言都便宜，而在此之前没有任何东西读它。`tests/test_check_script.py` 新增 6 项，按 YAML 结构钉住 job 的存在、runner、工作目录、两条安装命令的逐字拼写、gate 步骤及其必须排在浏览器安装之后、与 `web` job 同一个 Node 版本，以及“除失败上传外任何步骤都不得带 `if:`，上传的 `if:` 必须恰好是 `failure()`“。四种改法逐一实测变红：删掉整个 job（6 项全红）、给 gate 步骤加 `if: success()`、把上传的 `if:` 改成 `always()`、把浏览器安装的 `--no-install` 去掉。`--no-install` 是这条里唯一新增的理由：浏览器二进制按 Playwright 版本绑定，没有它时 npx 会去 registry 取一个 lockfile 没有钉的 Playwright，于是拿一个从未参与渲染的 Chromium 去比对基线。
 - **零 skip 扫描扩到 `web/e2e/`**：那些 spec 不在 `test.include` 里，vitest 从不收集，`allowOnly: false` 与 `assert-no-skips.mjs` 都看不见它们（后者的期望清单由 `src/` 推导，从未期望过的文件不会被“漏掉”）。扫描前先用 TypeScript 解析器把注释涂白：那些 spec 的正文要解释“为什么这里断言而不是 skip”并因此写出了那个调用，实测直接扫原文会在 `webgl.spec.ts:13` 命中一段散文。字符串字面量**不**涂白，所以 `runner['sk' + 'ip']` 这类拼写仍然可见；注释范围取自真解析器而不是正则，因为正则字面量里可以有 `//`。负控制实测：往 `web/e2e/` 放一个带真 `skip` 的临时 spec 立刻变红并点名行号（随即删除）；把 `E2E_ROOT` 指向一个没有 spec 的目录时，“扫描确实够到了那棵树”这条断言变红——它存在正是因为空清单会让整个扫描静默地无事可做。
-- **基线尚未存在，这是设计而不是欠债**：`updateSnapshots: 'none'` 让缺失基线成为失败，而不是被静默写入的答案键（Playwright 默认的 `'missing'` 会把新断言的第一次运行变成它自己的答案键，包括 bug）。因此第一次 CI 运行按设计必然失败，人从 `test-results/<test>/<name>-actual.png` 逐张看过之后才提交 `web/e2e/__screenshots__/`。**并且预计第二次运行今天也会失败**：`slice.spec.ts` 的作者实测同一条 2p$_z$ 路径在一个浏览器里跑六次得到六个**不同**的稳定视角（每次自身完全稳定，彼此可见地不同），根因是 `aimCamera` 的命令式放置与 drei `Bounds` 的 fit、`OrbitControls` 的阻尼相竞。那是 `OrbitalCanvas.tsx` / `SceneReady.tsx` 的缺陷，不是可以用阈值抹平的抖动——这是套件在还没有基线时就先找到了一个真问题。（该预测在本轮稍后作废：这两个动画已按 `prefers-reduced-motion` 折叠，见下面的 PR-8 待办。）
+- **基线在 PR-8C 当时尚未存在，随后已经完成 bootstrap**：`updateSnapshots: 'none'` 让缺失基线成为失败，而不是被静默写入的答案键（Playwright 默认的 `'missing'` 会把新断言的第一次运行变成它自己的答案键，包括 bug）。第一次 CI 运行因此按设计失败，人工检查 `test-results/<test>/<name>-actual.png` 后，五张 Linux/SwiftShader PNG 已提交到 `web/e2e/__screenshots__/slice.spec.ts/`。bootstrap 期间发现的相机竞态并未被 `prefers-reduced-motion` 消除；真正的修复是在 `aimCamera` 前调用 `bounds.refresh()`，清空 drei `Bounds` 仍会晚着陆的 fit goal。后续运行仍必须在相同 CI 环境对基线验证，不能在开发机上重写答案键。
 - **fixture 而不是服务器**：`web/e2e/fixtures.ts` 把六份切片 payload 与两份 catalog 逐字节取自 `tests/fixtures/visual/`（`scripts/write_visual_fixtures.py` 写、`tests/test_visual_fixtures.py` 重建并比对，27 项），所以一次像素 diff 只能是关于渲染的，不会变成关于服务器今天返回了什么的争论。**比对方式按 fixture 分成两类，这是实测逼出来的**：两份 catalog 全是 `routes.py` 里的字面量，不经任何算术，逐字节比对；六份切片按结构比对——键集、类型、列表长度、字符串、整数与 `valid_mask` 的每一位都必须精确相等，只有浮点样本允许 `1e-12` 的相对偏差。理由是 fixture 在 Windows（UCRT）生成而 CI 在 Linux（glibc）重建，`arccos`/`atan2`/`cos`/`exp` 这条链两边的末位舍入不同，十进制表示因此不同：CI run 33085530468 就是这样在六份切片上全红，每份只差 4225 个样本中的一个，而 payload 本身没有任何变化（同一原因此前把 `test_slice_science.py` 的 S2 界放宽到 4 ulp）。放弃的只有“换一个平台重建后逐位相同”这一条——送进浏览器的仍然是 committed 的那份字节；允许量则比任何截图能显示的最小变化低十个数量级，并由两侧的负控制钉住：单个样本改动 `1e-9` 仍然变红，而一份把每个样本走三个 ulp、并把节线上 64 个 `cos(arccos(z/r))` 残差整个换掉的“Linux 重建”仍然变绿。
-- **每条截图声明都另有一条与平台无关的断言**，图片只多出“GPU 真的把它画出来了”这一句：行主序与 texel 字节偏移在 `sliceTexture.test.ts`（23 项），色标与遮罩着色在 `sliceColor.test.ts`（19 项），右手标架与哨兵读作 `null` 在 `sliceContract.test.ts`（47 项），四项纹理决定与三张平面的朝向在 `SliceField.test.tsx`（8 项），视点在 `camera.test.ts`（10 项）。反过来读同样成立：一张绿的截图不能替代其中任何一条。
+- **每条截图声明都另有一条与平台无关的断言**，图片只多出“固定的 SwiftShader WebGL 管线确实把它光栅化成了这些像素”这一句：行主序与 texel 字节偏移在 `sliceTexture.test.ts`（23 项），色标与遮罩着色在 `sliceColor.test.ts`（19 项），右手标架与哨兵读作 `null` 在 `sliceContract.test.ts`（47 项），四项纹理决定与三张平面的朝向在 `SliceField.test.tsx`（8 项），视点在 `camera.test.ts`（10 项）。反过来读同样成立：一张绿的截图不能替代其中任何一条，也不能证明真实 GPU 或其他浏览器的行为。
 
-本树实测（2026-08-27，Windows 11、Node 22、CPython 3.12.10，同一工作树）：
+本树实测（2026-08-28，Windows 11、Node 24、CPython 3.12.10，同一工作树）：
 
 | 门禁 | 结果 |
 |---|---|
-| `npm run test` | 32 个 spec 文件、777 项全部通过，0 skipped、0 todo；报告列出 29 个门禁模块，与 `coverage-scope.json` 完全一致，29 个全部达标（只有两处不是 100%：`Inspector.tsx` 分支 99.4%、`useSceneStore.ts` 分支 97.77%，门槛都是 85%） |
+| `npm run test` | 32 个 spec 文件、870 项全部通过，0 skipped、0 todo；报告列出 29 个门禁模块，与 `coverage-scope.json` 完全一致，29 个全部达标 |
 | `npm run typecheck` | `tsc -b --pretty false` exit 0 |
-| `npm run build` | 通过；`index-*.js` 1,237.08 kB（gzip 338.92 kB）；仍有 chunk > 500 kB 警告 |
-| `uv run pytest -q --no-cov` | 1044 passed，0 skipped |
+| `npm run build` | 通过；`index-*.js` 1,239.75 kB（gzip 341.17 kB）；仍有 chunk > 500 kB 警告 |
+| `uv run pytest`（含覆盖率） | 1066 passed，0 skipped；总覆盖率 92.69%，门槛 85% |
 | `uv run mypy`（strict） | 33 个源码文件无问题 |
 | `uv run ruff check .` / `ruff format --check .` | 通过；116 个文件已格式化 |
 | `uv run --group docs mkdocs build --strict` | 通过 |
 | `npx vitest run src/guards.test.ts` | 134 项 |
-| `npx vitest run src/visualGate.test.ts` | 26 项 |
+| `npx vitest run src/visualGate.test.ts` | 89 项 |
 | `uv run pytest tests/test_check_script.py` | 41 项（含 `web-visual` 新增 6 项） |
-| `npm run test:visual` | **本机无法运行**（配置在非 Linux 抛错），且尚无基线；见上 |
+| `npm run test:visual` | 五张 Linux/SwiftShader 基线已提交；**本机无法运行**（配置在非 Linux 抛错），当前工作树仍须由同一 SHA 的 `web-visual` CI job 验证 |
 
 ### PR-8 待办
 
 - 相位节点遮罩之外的节面 representation（当前只有低振幅遮罩，没有节面几何）；
-- 视觉基线的首次 bootstrap：相机竞态的**前置条件已解除**——`OrbitalCanvas.tsx` 现在读 `(prefers-reduced-motion: reduce)`，命中时把 `Bounds` 的 fit 折叠成 `maxDuration={0}`、并关掉 `OrbitControls` 的阻尼。这首先是无障碍行为本身（同一条代码路径对每个这么设置的观看者都生效，与有没有人在截图无关），而 `playwright.config.ts` 给每个 context 都设了 `reducedMotion: 'reduce'`，于是视觉套件跑的正是这条路径：既没有缓动曲线可被中途采样，也没有仍在积分的阻尼，fit 在一帧内落位，落位姿态只有一个而不是一族。**这是推断而不是实测**——该套件在非 Linux 上不允许运行，第一份证据只能来自 CI bootstrap 本身。剩下的仍是“第一次 CI 运行失败 → 人看图 → 提交 PNG → 第二次必须通过”这条流程，基线尚未提交；
-- `web/e2e/slice.spec.ts` 的比较预算（`threshold`、`maxDiffPixelRatio`）目前是猜的，必须在 CI 镜像上对着已提交基线跑三次、取实测最大比例再定。
+- 五张已提交基线仍只覆盖 Linux/Chromium/SwiftShader；需要在同一 SHA 上重复运行并补真实 GPU / 浏览器矩阵，才能把软件光栅结果推广到更宽的平台声明；
+- `web/e2e/slice.spec.ts` 的正向比较使用 `threshold: 0.02` 与 `maxDiffPixelRatio: 0.001`，半周期、转置和 2% 平面尺寸错误的负对照分别用更宽松的 `0.05` / `0.1` / `0.1` 仍必须失败；预算仍需由 CI 重复运行的数据持续校准，不能通过更新快照掩盖漂移。
+
+### 对抗审计收口：2026-08-28
+
+- 时间轴步长从 `0.6` 修正为 `0.2`，使测试与视觉基线使用的 $t=8.4$ 成为原生 `<input type="range">` 网格上的合法值；单元测试和浏览器用例都断言 `stepMismatch === false`，不再靠测试时注入 `step="any"` 绕过生产约束。
+- 点云和等值面的相位调色板明确以 sRGB 定义，送入 GPU 前统一解码到 Linear-sRGB；等值面改为未照明材质且不接收/投射阴影，两种表示都关闭 fog、tone mapping，并绕过全帧 Bloom/Vignette。点云 shader 移除 fog / tone-mapping chunks，保留输出色彩空间转换。相位图例 CSS 的六段色轮与两个端点色由测试逐字节对照 `phaseToRgb`，不再使用近似品牌色。
+- Scene Contract 在模型边界拒绝 frame 向量、extent 与 spacing 中的 NaN / $\pm\infty$；文档与脚本同步按锁定版 Starlette 的 `allow_nan=False` 描述线路行为。
+- 视觉门禁收紧正向像素阈值并加入阈值关系守卫，又用 2% 平面尺寸变异覆盖 `includeAA=false` 下的轮廓/几何检出；报告审计现在钉住 8 个必需测试标题，TypeScript AST 审计钉住 10 条截图与 3 条 WebGL 断言，删掉负控不能再靠同文件里的其他绿测试蒙混。当前 Windows 工作树已通过平台无关门禁，但 PNG 比对只由 Linux/SwiftShader CI 作证。
 
 后续科学能力顺序见[开发路线图](roadmap.md)。

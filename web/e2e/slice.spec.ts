@@ -33,18 +33,22 @@
  * server that answered differently today.
  *
  * ---------------------------------------------------------------------------
- * HOW THE BASELINES GET HERE. Read this before the first CI run.
+ * HOW THE BASELINES GET HERE. Read this before changing or adding one.
  *
- * There are no PNGs in `e2e/__screenshots__/` yet, and they cannot be produced
- * on the machine this file was written on: playwright.config.ts throws at load
- * off Linux, because the baselines are SwiftShader's pixels and any other stack
- * renders different ones. Committing PNGs drawn anywhere else would make the
- * suite permanently red in CI and permanently meaningless everywhere else, so
- * none were invented. The bootstrap is two CI runs:
+ * Five Linux/SwiftShader PNGs are committed in `e2e/__screenshots__/`. Every
+ * file is 656 x 676 = 443456 pixels, so the 0.001 ratio budget is 443.456
+ * pixels. The fixed desktop shell is part of that contract: canvas height no
+ * longer follows the intrinsic height of the controls or Inspector, so adding
+ * a diagnostic cannot silently change the camera aspect ratio and every pixel.
  *
- *   1. The first run FAILS, by design. `updateSnapshots: 'none'` makes a
+ * playwright.config.ts refuses to load off Linux because any other graphics
+ * stack renders different pixels. Committing a PNG drawn elsewhere would make
+ * the suite permanently red in CI and permanently meaningless everywhere
+ * else. A new baseline therefore enters through two CI runs:
+ *
+ *   1. Its first run FAILS, by design. `updateSnapshots: 'none'` makes a
  *      missing baseline an error rather than a silently written answer key, so
- *      every assertion below reports "A snapshot doesn't exist at ...". The
+ *      the new assertion reports "A snapshot doesn't exist at ...". The
  *      run's failure artifact carries what it actually rendered, as
  *      `test-results/<test>/<name>-actual.png`.
  *   2. A human looks at those images -- that is the whole point of step 1;
@@ -123,13 +127,14 @@
  * produced are NOT the baselines: that run predates both this fix and the
  * slice's fog fix (src/scene/SliceField.tsx), and every one of them is wrong.
  *
- * The two `.not.toHaveScreenshot` assertions (the mechanism control, and the
- * half-period check in the t = 8.4 test) reference baselines the POSITIVE tests
- * produce, so they are red in run 1 for the same "no baseline" reason and green
- * from run 2 on. They do NOT share the positive tests' per-pixel threshold --
- * the half-period one carries SENSITIVE_COMPARISON, because the first real-mode
- * run against committed baselines found it reporting a match over a lobe that
- * had visibly swung.
+ * The three `.not.toHaveScreenshot` assertions (half-period, transposition and
+ * geometry controls) never own or generate a baseline: each references one of
+ * the five positive baselines above. Their per-pixel bars are at least as
+ * tolerant as the positive tests' bar, deliberately: for a negated screenshot
+ * assertion, a LOWER threshold makes the assertion easier to satisfy and
+ * therefore weaker. Each reject budget below keeps a measured or geometric
+ * margin while making its mechanism control harder to pass than a positive
+ * baseline.
  *
  * `npm run test:visual:update` is not part of this procedure. It writes every
  * baseline from whatever was just rendered, which is how a bug becomes the
@@ -152,30 +157,18 @@
  * here would be choosing between a race and a tax on every green run.
  *
  * **The clock is set through the panel, not waited on.** The instant under test
- * is t = 8.4 a.u., and the time slider cannot express it. `TIME_BOUND`
- * (src/api/capability.ts) transcribes the route's own range as min = -1000 and
- * gives the widget a 0.6 a.u. increment, so the slider's grid is -1000 + 0.6n
- * -- ... 8.0, 8.6 ... -- and 8.4 is not on it. Measured against the built app:
- * `fill('8.4')` is refused as "Malformed value", and every DOM-level assignment
- * (the `value` property, the prototype setter, `valueAsNumber`) is snapped to
- * 8.6 before React's change handler ever sees it. The grid does not contain 0
- * either -- on a fresh load the store says t = 0 while the thumb sits at 0.2.
- *
- * capability.ts states what that number is FOR in as many words: "a fractional
- * step (a mass, a clock) is a display increment only and never snaps the
- * value", and `clampParameter` honours that -- the request layer clamps the
- * time into [-1000, 1000] and never rounds it. It is the browser's own range
- * sanitisation that disagrees. So `advanceToHalfPeriod` clears the display
- * increment for exactly one assignment, fills 8.4 through the input, and puts
- * the declared step straight back. Everything downstream is the app's: its
- * onChange, its store, its query, its texture. What is faked is one attribute
- * of one widget, for the duration of one event.
+ * is t = 8.4 a.u. `TIME_BOUND` (src/api/capability.ts) gives the range input a
+ * 0.2 a.u. increment from min = -1000, so both the initial t = 0 and t = 8.4
+ * are points on the browser's native step grid. `advanceToHalfPeriod` asserts
+ * that contract on the real DOM before it fills the input; no attribute or
+ * store bypass is permitted. Everything downstream is the app's own path:
+ * React's onChange, the store, the query and the returned texture.
  *
  * WHY NOT PLAYBACK, AND WHY NOT A FAKE CLOCK. Playback reaches 8.4 honestly --
  * it steps 0.6 a.u. every 420 ms from the store's initial 0, and the fourteenth
  * tick is exactly 8.4 -- but stopping it there is a race with a 420 ms window.
- * (Nor can the two be combined: the slider's grid and the tick ladder are
- * incommensurate, so no slider value plus any number of ticks lands on 8.4.)
+ * The 0.2 slider grid also contains every playback tick because 0.6 is three
+ * slider increments, so playback can never leave the thumb between steps.
  * `page.clock` made those fourteen ticks deterministic and is what this suite
  * used until its first CI run, where it cost every screenshot taken after it:
  * the clock fakes `requestAnimationFrame` too, `toHaveScreenshot`'s stability
@@ -198,38 +191,35 @@ import {
 } from './fixtures'
 
 /**
- * Every test drives a full scene setup and, twice, a half-period advance,
- * against a software rasteriser. Playwright's 30 s default is a budget for a
- * DOM test; a 656 x 1071 SwiftShader canvas plus five screenshot comparisons is
- * not that. Generous rather than tuned: a timeout is a safety net here, not a
- * performance assertion, and a tight one would turn a loaded CI box into a red
- * suite that says nothing about the pixels.
+ * Every test drives a full scene setup and, in the time-dependent cases, a
+ * half-period advance against a software rasteriser. Playwright's 30 s default
+ * is a budget for a DOM test; these canvases are 656 x 676, with repeated
+ * positive and negative comparisons.
+ * Generous rather than tuned: a timeout is a safety net here, not a performance
+ * assertion, and a tight one would turn a loaded CI box into a red suite that
+ * says nothing about the pixels.
  */
 test.describe.configure({ timeout: 120_000 })
 
 /**
- * The comparison budget, PROVISIONAL.
+ * The positive comparison budget, measured on the committed baselines.
  *
  * `threshold` is the per-pixel YIQ distance below which two pixels count as
  * equal; `maxDiffPixelRatio` is the share of the frame allowed to exceed it.
- * These two numbers are guesses until they are measured: the honest way to set
- * them is to run this suite three times on the CI image against committed
- * baselines, take the largest ratio any test reports, and set the budget just
- * above it -- tight enough that a one-lobe shift fails, loose enough that
- * SwiftShader's own frame-to-frame noise does not. Until that measurement
- * exists, 0.1 / 0.001 (about 700 pixels of this canvas) is a starting point and
- * nothing more. Do not widen either number to make a red test pass; a rendering
- * that moves by more than this is the thing the suite is for.
+ * The old content-sized shell produced different frame heights for eigenstates
+ * and superpositions; on its taller frame a 0.1 threshold once let the wrong
+ * half-period image fit under the spatial budget. On the fixed 656 x 676 frame,
+ * the same mutation leaves 6064 differing pixels at 0.02 (13.67x the 443.456
+ * pixel budget). Repeated same-scene captures pass the positive gate. That
+ * measured separation is why 0.02 remains the acceptance threshold, not a
+ * special setting reserved for `.not`.
  *
- * THIS IS THE ACCEPT BUDGET, and only that. `threshold` here is tuned to absorb
- * a software rasteriser's noise, which is the right instrument for "this frame
- * must still look like the baseline" and the wrong one for "these two frames
- * must differ" -- a faint physical displacement hides under a perceptual bar
- * set for noise. The reject side therefore carries its own sensitivity; see
- * SENSITIVE_COMPARISON below, which changes nothing here.
+ * Do not widen either value to make a red test pass. A same-scene render above
+ * this budget means the environment is no longer deterministic enough to
+ * certify the committed pixels; it is not licence to recreate the baselines.
  */
 const COMPARISON = {
-  threshold: 0.1,
+  threshold: 0.02,
   maxDiffPixelRatio: 0.001,
   /**
    * The screenshot itself is retried until two consecutive captures agree AND
@@ -241,55 +231,58 @@ const COMPARISON = {
 } as const
 
 /**
- * The same budget with the PER-PIXEL bar lowered, for a `.not` assertion.
+ * Build the budget for a negated screenshot assertion.
  *
- * An accept budget and a reject budget are not the same instrument, and using
- * one for both is what let a real defect through. `threshold` is a perceptual
- * tolerance: it exists to absorb a software rasteriser's own noise, and it does
- * that by declaring two pixels equal unless they differ by more than
- * `35215 * threshold^2` in pixelmatch's YIQ metric. That is exactly the wrong
- * instrument to point at a claim of the form "these two pictures MUST differ",
- * because a difference that is real but faint -- a deep-blue lobe moving across
- * a dark ground -- falls under the bar pixel by pixel and the assertion reports
- * a match.
+ * Threshold direction reverses under `.not`: lowering it counts MORE pixels as
+ * different, so a negated assertion becomes EASIER to satisfy. A mechanism
+ * control must therefore use the positive threshold or a HIGHER one. Keep the
+ * executable check as well as this comment; otherwise a future "more sensitive"
+ * edit can silently make the only proof that the comparator detects a defect
+ * weaker than the production comparisons it is meant to validate.
+ */
+function rejectionComparison<const Threshold extends number>(threshold: Threshold) {
+  if (threshold < COMPARISON.threshold) {
+    throw new Error(
+      `A negated screenshot threshold (${threshold}) cannot be below the positive ` +
+        `threshold (${COMPARISON.threshold}); that would make the negative control easier to pass.`,
+    )
+  }
+  return { ...COMPARISON, threshold } as const
+}
+
+/**
+ * The half-period mechanism control's deliberately harder comparison.
  *
  * MEASURED, on the two committed baselines, through Playwright's own comparator
  * (`getComparator('image/png')`, i.e. pixelmatch with antialiased pixels
  * excluded, which is what its call site leaves at the default). The frame is
- * 656 x 1416, so `maxDiffPixelRatio` 0.001 is a budget of 928.9 pixels and an
+ * 656 x 676, so `maxDiffPixelRatio` 0.001 is a budget of 443.456 pixels and an
  * assertion fires only above it:
  *
  *   threshold   surviving px   x budget
- *   0.2                   22       0.02
- *   0.1 (accept)         800       0.86   <- the guard could not fire
- *   0.05                3073       3.31
- *   0.03                4504       4.85
- *   0.02 (reject)       5994       6.45   <- chosen
- *   0.01                8402       9.05
- *   0                  24443      26.31
+ *   0.2                   17       0.04
+ *   0.1                  863       1.95
+ *   0.05 (reject)       3190       7.19   <- chosen: harder, with margin
+ *   0.03                4635      10.45
+ *   0.02 (accept)       6064      13.67   <- positive mutation sensitivity
+ *   0.01                8444      19.04
+ *   0                  24788      55.90
  *
- * ...against a noise floor measured the same way, on the same scene rendered
- * twice in two separate browser sessions: 19 pixels at threshold 0.1, 23 at
- * 0.02, and 26 at threshold 0 -- i.e. every pixel that is not bit-identical,
- * all of them in the animating star field. The floor never reaches 0.03 of the
- * budget at any threshold, so there is no value here at which noise alone could
- * satisfy a reject guard, and 0.02 sits 260x above it.
- *
- * 0.02 rather than something tighter ON PURPOSE. Lowering the threshold counts
- * MORE pixels, which makes a `.not` assertion EASIER to satisfy and therefore
- * WEAKER. The honest choice for a reject guard is the loosest threshold at
- * which the physics is still visible with room to spare, not the tightest one
- * available -- which is also why the transposed mechanism control below keeps
- * the tolerant budget rather than this one: it clears at threshold 0.1 with
- * 21212 pixels, 30x its budget, and moving it here would only weaken it.
- *
- * Nothing about the ACCEPT side changes: `maxDiffPixelRatio`, the timeout and
- * the mask are the same values, and no budget anywhere is widened.
+ * 0.05 is higher than the positive 0.02 and is therefore the stronger negated
+ * assertion, but the physical displacement still clears its unchanged ratio
+ * budget by 7.19x. The transposition control retains the still-harder 0.1 bar
+ * and the geometry control also uses 0.1: its two-percent
+ * scale error moves each edge of the roughly 444-pixel quad by more than four
+ * pixels, leaving a solid non-AA band after pixelmatch excludes the one-pixel
+ * antialiased fringe. All three share the positive test's timeout and pixel
+ * ratio, so none gets a second, looser spatial allowance.
  */
-const SENSITIVE_COMPARISON = {
-  ...COMPARISON,
-  threshold: 0.02,
-} as const
+const HALF_PERIOD_REJECTION = rejectionComparison(0.05)
+const TRANSPOSE_REJECTION = rejectionComparison(0.1)
+const GEOMETRY_REJECTION = rejectionComparison(0.1)
+
+/** A small but material geometry error: enough to move a fitted quad edge by >4 px. */
+const GEOMETRY_SCALE = 1.02
 
 /**
  * How long a wait on the app's own readiness signals may take.
@@ -317,11 +310,70 @@ const overlays = (page: Page): Locator[] => [page.locator('.viewport-copy'), pag
 
 const screenshotOptions = (page: Page) => ({ ...COMPARISON, mask: overlays(page) })
 
-/** The same options with the reject side's per-pixel bar. Same mask, same budget. */
-const sensitiveScreenshotOptions = (page: Page) => ({
-  ...SENSITIVE_COMPARISON,
+/** The half-period `.not` options: same mask/ratio, and a harder per-pixel bar. */
+const halfPeriodRejectionOptions = (page: Page) => ({
+  ...HALF_PERIOD_REJECTION,
   mask: overlays(page),
 })
+
+/** The transposition `.not` options retain the original, still harder bar. */
+const transposeRejectionOptions = (page: Page) => ({
+  ...TRANSPOSE_REJECTION,
+  mask: overlays(page),
+})
+
+/** The geometry `.not` options use the same tolerant bar and unchanged ratio budget. */
+const geometryRejectionOptions = (page: Page) => ({
+  ...GEOMETRY_REJECTION,
+  mask: overlays(page),
+})
+
+interface SliceGeometryFields {
+  extent_bohr: number
+  spacing_bohr: number
+  resolution: number
+}
+
+/**
+ * Enlarge a slice's physical quad without changing a single sample or colour.
+ *
+ * Extent and spacing move together so the payload remains internally valid:
+ * `spacing = 2 * extent / (resolution - 1)`. The transform rejects a malformed
+ * source explicitly rather than letting multiplication turn `undefined` into
+ * NaN and making the negative screenshot pass on an error screen.
+ */
+function enlargeSliceGeometry(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null) {
+    throw new Error(`enlargeSliceGeometry: expected a JSON object, got ${typeof payload}`)
+  }
+  const { extent_bohr: extent, spacing_bohr: spacing, resolution } =
+    payload as Partial<SliceGeometryFields>
+  if (
+    typeof extent !== 'number' ||
+    !Number.isFinite(extent) ||
+    extent <= 0 ||
+    typeof spacing !== 'number' ||
+    !Number.isFinite(spacing) ||
+    spacing <= 0 ||
+    typeof resolution !== 'number' ||
+    !Number.isInteger(resolution)
+  ) {
+    throw new Error(
+      'enlargeSliceGeometry: expected positive finite extent_bohr/spacing_bohr and an integer resolution',
+    )
+  }
+  const expectedSpacing = (2 * extent) / (resolution - 1)
+  if (Math.abs(spacing - expectedSpacing) > 1e-12 * expectedSpacing) {
+    throw new Error(
+      `enlargeSliceGeometry: spacing ${spacing} does not match extent ${extent} at resolution ${resolution}`,
+    )
+  }
+  return {
+    ...payload,
+    extent_bohr: extent * GEOMETRY_SCALE,
+    spacing_bohr: spacing * GEOMETRY_SCALE,
+  }
+}
 
 /**
  * The value the Inspector prints for one contract term.
@@ -360,17 +412,6 @@ async function openApp(
   await page.goto('/')
   await expect(page.locator('span[data-status]')).toHaveAttribute('data-status', 'error', SETTLE)
 
-  // Bloom off, through the slider itself. `Home` on a focused range input is
-  // the platform's own "go to minimum" gesture, which the store reads through
-  // React's change event exactly as a drag would -- unlike assigning `value`,
-  // which React's value tracker can swallow. Bloom is a luminance-thresholded
-  // blur of the rendered buffer: it turns every bright texel into a halo whose
-  // extent depends on float rounding, which is a per-pixel diff on every frame
-  // and measures nothing about the slice.
-  const bloom = page.locator('input[data-display="bloom"]')
-  await bloom.focus()
-  await page.keyboard.press('Home')
-  await expect(bloom).toHaveValue('0')
   return ledger
 }
 
@@ -398,9 +439,19 @@ async function settled(page: Page): Promise<void> {
   await expect(page.locator('span[data-status]')).toHaveAttribute('data-status', 'ready', SETTLE)
 }
 
-/** Switch the panel to the plane-section representation. */
-const showPlaneSection = (page: Page): Promise<void> =>
-  page.locator('button[data-representation="slice"]').click()
+/** Switch to a plane section and remove non-deterministic post-process bloom. */
+async function showPlaneSection(page: Page): Promise<void> {
+  await page.locator('button[data-representation="slice"]').click()
+
+  // Bloom exists only where the active renderer consumes it. `Home` on the
+  // focused range input is the platform's own minimum gesture, so React sees
+  // the same change as a drag instead of an assigned value its tracker may
+  // swallow. Disabling the halo keeps the visual gate about the slice itself.
+  const bloom = page.locator('input[data-display="bloom"]')
+  await bloom.focus()
+  await page.keyboard.press('Home')
+  await expect(bloom).toHaveValue('0')
+}
 
 const chooseObservable = (page: Page, observable: string): Promise<void> =>
   page.locator(`[data-choice="observable"] button[data-choice-value="${observable}"]`).click()
@@ -416,14 +467,11 @@ const choosePlane = (page: Page, plane: string): Promise<void> =>
 const HALF_PERIOD_AU = '8.4'
 
 /**
- * The time slider's declared increment, asserted rather than assumed.
- *
- * This is `TIME_BOUND.step` reaching the DOM. The helper below suspends it, so
- * it reads it back first: if the panel ever declares a step that DOES put 8.4
- * on the grid, the assertion fails, and the right response is to delete the
- * suspension rather than to keep overriding a constraint that no longer bites.
+ * The time slider's declared increment, asserted rather than assumed. This is
+ * `TIME_BOUND.step` reaching the DOM, and it must divide both the half-period
+ * target and every 0.6 a.u. playback tick from the initial value.
  */
-const DECLARED_TIME_STEP = '0.6'
+const DECLARED_TIME_STEP = '0.2'
 
 /** The panel's clock: `ParameterRow`'s range input for `timeAu`. */
 const timeSlider = (page: Page): Locator => page.locator('input[data-parameter="timeAu"]')
@@ -431,19 +479,6 @@ const timeSlider = (page: Page): Locator => page.locator('input[data-parameter="
 /**
  * Set the clock to t = 8.4 a.u. through the panel, and prove the frame on
  * screen is the new one before returning.
- *
- * Two things happen here and both are deliberate.
- *
- * The DISPLAY INCREMENT is suspended for one assignment. 8.4 is not on the
- * slider's -1000 + 0.6n grid, so the browser's range sanitisation rewrites it
- * to 8.6 -- see the note at the top of this file, and capability.ts, which says
- * the step is a display increment that must never snap a clock. With `step`
- * cleared the fill is an ordinary user edit: React's own onChange reads 8.4 off
- * the input, `setTimeAu` stores it, and the query carries `time=8.4`. The
- * declared step goes back immediately, so the control is left exactly as the
- * app renders it -- including the thumb re-snapping to 8.6 over a store that
- * says 8.4, which is the state playback itself produces and not an artefact of
- * this test.
  *
  * The ANSWER IS HELD (`openApp(..., { hold })`), which turns the transition
  * into something assertable. Without it the fixture is served from memory and
@@ -457,20 +492,26 @@ async function advanceToHalfPeriod(page: Page, ledger: RequestLedger): Promise<v
   const clock = timeSlider(page)
 
   await expect(clock).toHaveAttribute('step', DECLARED_TIME_STEP)
-  await clock.evaluate((input) => input.setAttribute('step', 'any'))
+  await expect(clock).toHaveValue('0')
+  expect(
+    await clock.evaluate((input) => (input as HTMLInputElement).validity.stepMismatch),
+  ).toBe(false)
   await clock.fill(HALF_PERIOD_AU)
-  await clock.evaluate((input, step) => input.setAttribute('step', step), DECLARED_TIME_STEP)
+  await expect(clock).toHaveValue(HALF_PERIOD_AU)
+  expect(
+    await clock.evaluate((input) => (input as HTMLInputElement).validity.stepMismatch),
+  ).toBe(false)
 
   // The old frame, still up, labelled with the instant it actually shows and
   // the one being computed. Both halves matter: a UI that relabelled the frame
   // on screen with the requested time would print "showing t=8.4" here over
   // pixels drawn at t=0.
   await expect(status).toHaveAttribute('data-status', 'refreshing', SETTLE)
-  await expect(status).toHaveText(/showing t=0\.0 a\.u\. · computing t=8\.4 a\.u\./, SETTLE)
+  await expect(status).toHaveText(/正在显示 t=0\.0 a\.u\. · 正在计算 t=8\.4 a\.u\./, SETTLE)
 
   ledger.releaseHeld()
   await expect(status).toHaveAttribute('data-status', 'ready', SETTLE)
-  await expect(contractValue(page, 'Time')).toHaveText('8.40 a.u.', SETTLE)
+  await expect(contractValue(page, 't')).toHaveText('8.40 a.u.', SETTLE)
 }
 
 /**
@@ -524,12 +565,12 @@ test('2p_z on xz: the nodal line lies across the plane, not down it', async ({ p
   // |value| on the plane -- 7.276e-2, i.e. the +-7.28e-2 pair of lobes the
   // fixture was chosen for. A diverging map centred anywhere but zero, or one
   // taking |value|, still prints these numbers; the baseline is what sees it.
-  await expect(contractValue(page, 'Plane')).toHaveText('xz')
-  await expect(contractValue(page, 'Value unit')).toHaveText('bohr^-3/2')
-  await expect(contractValue(page, 'Max |value|')).toHaveText('7.276e-2')
-  await expect(contractValue(page, 'Slice grid')).toHaveText('65 × 65 · Δ=0.583 bohr')
-  await expect(contractValue(page, 'Masked fraction')).toHaveText('0.000%')
-  await expect(page.locator('.legend-title')).toHaveText('Re ψ on the plane')
+  await expect(contractValue(page, '切片平面')).toHaveText('xz')
+  await expect(contractValue(page, '数值单位')).toHaveText('bohr^-3/2')
+  await expect(contractValue(page, 'max |value|')).toHaveText('7.276e-2')
+  await expect(contractValue(page, '2D 网格')).toHaveText('65 × 65 · Δ=0.583 bohr')
+  await expect(contractValue(page, 'mask 占比')).toHaveText('0.000%')
+  await expect(page.locator('.legend-title')).toHaveText('平面上的 Re ψ')
 
   expectProvenance(ledger, {
     served: [...CATALOGS, '2pz-real-xz'],
@@ -558,15 +599,15 @@ test('2p_z on xz: the nodal line lies across the plane, not down it', async ({ p
 test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL }) => {
   const ledger = await openApp(page, baseURL)
   await showPlaneSection(page)
-  await page.locator('.segmented.two button:has-text("Complex / Lz")').click()
+  await page.locator('.segmented.two button:has-text("复基 · Lz")').click()
   await page.locator('.quantum-grid label:has-text("m") select').selectOption('1')
   await choosePlane(page, 'xy')
   await chooseObservable(page, 'phase')
   await settled(page)
 
-  await expect(contractValue(page, 'Plane')).toHaveText('xy')
-  await expect(contractValue(page, 'Value unit')).toHaveText('radian')
-  await expect(page.locator('.legend-title')).toHaveText('Wavefunction phase')
+  await expect(contractValue(page, '切片平面')).toHaveText('xy')
+  await expect(contractValue(page, '数值单位')).toHaveText('radian')
+  await expect(page.locator('.legend-title')).toHaveText('波函数 phase')
 
   // The masked disc, as a number rather than as a hole someone squints at.
   // Exactly one of the 4225 samples is masked -- the origin, where r e^{i phi}
@@ -574,10 +615,10 @@ test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL })
   // claim the picture rests on: a client that ignored `valid_mask` would render
   // that sample as the sentinel 0.0, i.e. as phase 0, and would report a masked
   // fraction of zero here.
-  await expect(contractValue(page, 'Masked fraction')).toHaveText('0.024%')
-  await expect(contractValue(page, 'Masked fraction')).not.toHaveText('0.000%')
-  await expect(contractValue(page, 'Masked value sentinel')).toHaveText('0.000')
-  await expect(page.locator('.legend')).toContainText('0.0237% of this plane is masked')
+  await expect(contractValue(page, 'mask 占比')).toHaveText('0.024%')
+  await expect(contractValue(page, 'mask 占比')).not.toHaveText('0.000%')
+  await expect(contractValue(page, 'mask 哨兵值')).toHaveText('0.000')
+  await expect(page.locator('.legend')).toContainText('该平面有 0.0237% 被 mask')
 
   expectProvenance(ledger, {
     served: [...CATALOGS, '2p+1-phase-xy'],
@@ -620,7 +661,7 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
   const held = superpositionSliceQuestion({ terms, time: HALF_PERIOD_AU })
   const ledger = await openApp(page, baseURL, { hold: held })
   await showPlaneSection(page)
-  await page.locator('.representation-switch button:has-text("Superposition")').click()
+  await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
   await page.locator('.mixture-list button:has-text("2s + 2p_z")').click()
   await settled(page)
@@ -628,12 +669,12 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
   // The claim the control rests on, in the payload's own words: the terms share
   // an energy, so the density is stationary. Without this the test would be
   // asserting that two pictures match without saying why they must.
-  await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.125000 Ha · stationary density')
+  await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.125000 Ha · 定态 density')
   await expect(page.locator('.warning-card')).toContainText(
     'all terms share one energy, so this superposition is stationary',
   )
-  await expect(contractValue(page, 'Time')).toHaveText('0.00 a.u.')
-  await expect(contractValue(page, 'Plane')).toHaveText('xz')
+  await expect(contractValue(page, 't')).toHaveText('0.00 a.u.')
+  await expect(contractValue(page, '切片平面')).toHaveText('xz')
 
   // Provenance of THIS frame, before its baseline is compared. The t=8.4 half
   // of the test adds two more entries below; asserting only there would leave
@@ -655,8 +696,8 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
   // (t=8.4 was computed independently), so this is not a tautology about
   // caching: it is the assertion that time evolution changed nothing it should
   // not have.
-  await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.125000 Ha · stationary density')
-  await expect(contractValue(page, 'Time')).toHaveText('8.40 a.u.')
+  await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.125000 Ha · 定态 density')
+  await expect(contractValue(page, 't')).toHaveText('8.40 a.u.')
 
   expectProvenance(ledger, {
     served: [
@@ -679,20 +720,79 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
 
+test('the comparison rejects a two-percent plane-extent error beyond the AA fringe', async ({
+  page,
+  baseURL,
+}) => {
+  const terms = SUPERPOSITION_TERMS['2s-2pz']
+  const held = superpositionSliceQuestion({ terms, time: HALF_PERIOD_AU })
+  const ledger = await openApp(page, baseURL, {
+    hold: held,
+    transform: { 'degenerate-stationary-xz-t8.4': enlargeSliceGeometry },
+  })
+  await showPlaneSection(page)
+  await page.locator('.representation-switch button:has-text("叠加态")').click()
+  await settled(page)
+  await page.locator('.mixture-list button:has-text("2s + 2p_z")').click()
+  await settled(page)
+
+  // Establish the unmodified t=0 frame and its camera against the real positive
+  // baseline first. Time is deliberately absent from the scene's fitKey, so the
+  // t=8.4 response below replaces the quad without fitting the camera again.
+  await expect(contractValue(page, 't')).toHaveText('0.00 a.u.')
+  await expect(contractValue(page, '2D 网格')).toHaveText('65 × 65 · Δ=0.620 bohr')
+  expectProvenance(ledger, {
+    served: [...CATALOGS, '1s2pz-t0-xz', 'degenerate-stationary-xz-t0'],
+    declared: [EIGENSTATE_DENSITY_XZ],
+  })
+  await expect(canvasOf(page)).toHaveScreenshot(
+    'degenerate-stationary-xz.png',
+    screenshotOptions(page),
+  )
+
+  await advanceToHalfPeriod(page, ledger)
+  await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.125000 Ha · 定态 density')
+  // The transform changes only these two mutually constrained geometry fields;
+  // all density samples, texture bytes, axes and the camera are left alone.
+  await expect(contractValue(page, '2D 网格')).toHaveText('65 × 65 · Δ=0.633 bohr')
+  expectProvenance(ledger, {
+    served: [
+      ...CATALOGS,
+      '1s2pz-t0-xz',
+      'degenerate-stationary-xz-t0',
+      'degenerate-stationary-xz-t8.4',
+    ],
+    declared: [EIGENSTATE_DENSITY_XZ],
+  })
+
+  // Playwright's pixelmatch keeps includeAA=false internally, and its screenshot
+  // options do not expose an override. This assertion therefore does not claim
+  // that a one-pixel antialiased fringe is visible. The 2% scale error moves
+  // each edge of this roughly 444px quad by more than four pixels, leaving a
+  // multi-pixel solid band plus displaced interior contours after that fringe
+  // is excluded. The 0.1 threshold is five times the positive test's 0.02 and
+  // therefore harder under `.not`; the ratio budget remains exactly 0.001.
+  await expect(canvasOf(page)).not.toHaveScreenshot(
+    'degenerate-stationary-xz.png',
+    geometryRejectionOptions(page),
+  )
+  expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
+})
+
 test('1s + 2p_z at t=0: the dipole in its first lobe', async ({ page, baseURL }) => {
   const ledger = await openApp(page, baseURL)
   await showPlaneSection(page)
-  await page.locator('.representation-switch button:has-text("Superposition")').click()
+  await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
 
-  await expect(contractValue(page, 'Time')).toHaveText('0.00 a.u.')
-  await expect(contractValue(page, 'Plane')).toHaveText('xz')
-  await expect(contractValue(page, 'Value unit')).toHaveText('bohr^-3')
+  await expect(contractValue(page, 't')).toHaveText('0.00 a.u.')
+  await expect(contractValue(page, '切片平面')).toHaveText('xz')
+  await expect(contractValue(page, '数值单位')).toHaveText('bohr^-3')
   // The positive control's premise: these terms do NOT share an energy, so the
   // density is time-dependent. The degenerate test asserts the opposite string
   // on the same row.
   await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.312500 Ha')
-  await expect(page.locator('.legend-title')).toHaveText('Probability density')
+  await expect(page.locator('.legend-title')).toHaveText('概率密度 |ψ|²')
 
   expectProvenance(ledger, {
     served: [...CATALOGS, '1s2pz-t0-xz'],
@@ -713,9 +813,9 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   })
   const ledger = await openApp(page, baseURL, { hold: held })
   await showPlaneSection(page)
-  await page.locator('.representation-switch button:has-text("Superposition")').click()
+  await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
-  await expect(contractValue(page, 'Time')).toHaveText('0.00 a.u.')
+  await expect(contractValue(page, 't')).toHaveText('0.00 a.u.')
 
   await advanceToHalfPeriod(page, ledger)
   await expect(contractValue(page, '⟨H⟩')).toHaveText('-0.312500 Ha')
@@ -733,16 +833,13 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   // degenerate test above is the same assertion with the sign reversed, which
   // is what makes either of them mean anything.
   //
-  // On the SENSITIVE budget, and this is the assertion that earned it. The
-  // displacement here is a deep-blue lobe crossing a dark ground, so almost all
-  // of it lands under a per-pixel bar set to absorb rasteriser noise: measured
-  // on the two committed baselines, threshold 0.1 leaves 800 differing pixels
-  // against a budget of 928.9 and this line reported a MATCH -- the guard could
-  // not fire even though the lobe had visibly swung. See SENSITIVE_COMPARISON
-  // for the whole threshold table and the noise floor it was chosen against.
+  // The displacement here is a deep-blue lobe crossing a dark ground. At the
+  // 0.05 boundary leaves 3190 pixels, or 7.19x the fixed frame's 443.456-pixel
+  // budget. HALF_PERIOD_REJECTION uses that measured boundary. It is
+  // deliberately higher (harder under `.not`) than the positive tests' 0.02.
   await expect(canvasOf(page)).not.toHaveScreenshot(
     '1s2pz-t0-xz.png',
-    sensitiveScreenshotOptions(page),
+    halfPeriodRejectionOptions(page),
   )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
@@ -765,9 +862,9 @@ test('the comparison can see a transposed slice: the apparatus is not vacuous', 
   await chooseObservable(page, 'wavefunction_real')
   await settled(page)
 
-  await expect(contractValue(page, 'Max |value|')).toHaveText('7.276e-2')
-  await expect(contractValue(page, 'Slice grid')).toHaveText('65 × 65 · Δ=0.583 bohr')
-  await expect(contractValue(page, 'Masked fraction')).toHaveText('0.000%')
+  await expect(contractValue(page, 'max |value|')).toHaveText('7.276e-2')
+  await expect(contractValue(page, '2D 网格')).toHaveText('65 × 65 · Δ=0.583 bohr')
+  await expect(contractValue(page, 'mask 占比')).toHaveText('0.000%')
 
   expectProvenance(ledger, {
     served: [...CATALOGS, '2pz-real-xz'],
@@ -784,15 +881,17 @@ test('the comparison can see a transposed slice: the apparatus is not vacuous', 
     ],
   })
 
-  // The nodal line is vertical here and horizontal in the baseline. Compared
-  // against the SAME budget the positive tests use, so this is a statement
-  // about those tests and not about a stricter comparison invented for it --
-  // and it keeps that budget deliberately, rather than taking the half-period
-  // guard's sensitive one. Measured on this build, normal against transposed:
-  // 21212 differing pixels at threshold 0.1, 30x its 702.6 budget, and still
-  // 16x at threshold 0.2. A lower threshold counts MORE pixels and so makes a
-  // `.not` easier to satisfy; on the reject side the tolerant budget is the
-  // stronger claim, and this assertion can afford it.
-  await expect(canvasOf(page)).not.toHaveScreenshot('2pz-real-xz.png', screenshotOptions(page))
+  // The nodal line is vertical here and horizontal in the baseline. This keeps
+  // the original 0.1 bar, which is harder to clear under `.not` than either the
+  // positive 0.02 or half-period 0.05 bar. The committed 656 x 676 baseline
+  // has 443456 pixels and therefore a 443.456-pixel ratio budget. This control
+  // clears that budget at threshold 0.1 after antialiased edge pixels are
+  // excluded. A lower threshold counts MORE pixels and so makes a `.not`
+  // easier to satisfy; on the reject side the tolerant bar is the stronger
+  // claim, and this assertion can afford it.
+  await expect(canvasOf(page)).not.toHaveScreenshot(
+    '2pz-real-xz.png',
+    transposeRejectionOptions(page),
+  )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })

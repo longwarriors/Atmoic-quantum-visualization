@@ -60,11 +60,11 @@ describe('StatusBar says which frame the numbers describe', () => {
     })
     try {
       expect(line(tree).dataset.status).toBe('refreshing')
-      expect(line(tree).textContent).toContain('showing t=3.6 a.u.')
-      expect(line(tree).textContent).toContain('computing t=9.0 a.u.')
+      expect(line(tree).textContent).toContain('正在显示 t=3.6 a.u.')
+      expect(line(tree).textContent).toContain('正在计算 t=9.0 a.u.')
       // The unqualified ready text would present the OLD frame's diagnostics
       // as the current ones.
-      expect(line(tree).textContent).not.toContain('scientific asset ready')
+      expect(line(tree).textContent).not.toContain('科学资产已就绪')
     } finally {
       await tree.unmount()
     }
@@ -74,8 +74,8 @@ describe('StatusBar says which frame the numbers describe', () => {
     const tree = await statusBar({ loading: false, refreshing: true, timeAu: 9 })
     try {
       expect(line(tree).dataset.status).toBe('refreshing')
-      expect(line(tree).textContent).toContain('computing t=9.0 a.u.')
-      expect(line(tree).textContent).not.toContain('scientific asset ready')
+      expect(line(tree).textContent).toContain('正在计算 t=9.0 a.u.')
+      expect(line(tree).textContent).not.toContain('科学资产已就绪')
     } finally {
       await tree.unmount()
     }
@@ -85,8 +85,8 @@ describe('StatusBar says which frame the numbers describe', () => {
     const tree = await statusBar({ loading: false, refreshing: true, renderedTimeAu: 3.6 })
     try {
       expect(line(tree).dataset.status).toBe('refreshing')
-      expect(line(tree).textContent).toContain('showing t=3.6 a.u.')
-      expect(line(tree).textContent).toContain('computing the next')
+      expect(line(tree).textContent).toContain('正在显示 t=3.6 a.u.')
+      expect(line(tree).textContent).toContain('正在计算下一帧')
     } finally {
       await tree.unmount()
     }
@@ -100,10 +100,11 @@ describe('StatusBar says which frame the numbers describe', () => {
     })
     try {
       expect(line(tree).dataset.status).toBe('unavailable')
-      expect(line(tree).textContent).toContain('point_cloud')
+      expect(line(tree).textContent).toContain('电子云暂不可用')
+      expect(line(tree).textContent).not.toContain('point_cloud 暂不可用')
       expect(line(tree).textContent).toContain(reason)
-      expect(line(tree).textContent).not.toContain('scene error')
-      expect(line(tree).textContent).not.toContain('scientific asset ready')
+      expect(line(tree).textContent).not.toContain('场景错误')
+      expect(line(tree).textContent).not.toContain('科学资产已就绪')
     } finally {
       await tree.unmount()
     }
@@ -123,7 +124,7 @@ describe('StatusBar says which frame the numbers describe', () => {
     const tree = await statusBar({ loading: true })
     try {
       expect(line(tree).dataset.status).toBe('loading')
-      expect(line(tree).textContent).toContain('computing')
+      expect(line(tree).textContent).toContain('正在计算')
     } finally {
       await tree.unmount()
     }
@@ -133,7 +134,7 @@ describe('StatusBar says which frame the numbers describe', () => {
     const tree = await statusBar({ loading: false, renderedTimeAu: 12, pointCount: 28000 })
     try {
       expect(line(tree).dataset.status).toBe('ready')
-      expect(line(tree).textContent).toContain('scientific asset ready')
+      expect(line(tree).textContent).toContain('科学资产已就绪')
     } finally {
       await tree.unmount()
     }
@@ -145,6 +146,9 @@ describe('App wires the canvas status to the shell', () => {
     const tree = await shell({ loading: true })
     try {
       expect(tree.container.querySelector('.loading-overlay')).not.toBeNull()
+      expect(tree.container.querySelector('.viewport-copy')?.textContent).toContain('实时量子场')
+      expect(tree.container.querySelector('.viewport-copy')?.textContent).toContain('氢样量子态')
+      expect(tree.container.querySelector('.viewport-copy')?.textContent).toContain('arg ψ')
     } finally {
       await tree.unmount()
     }
@@ -160,8 +164,8 @@ describe('App wires the canvas status to the shell', () => {
     try {
       expect(tree.container.querySelector('.loading-overlay')).toBeNull()
       const text = tree.container.querySelector('[data-status]')?.textContent ?? ''
-      expect(text).toContain('showing t=3.6 a.u.')
-      expect(text).toContain('computing t=9.0 a.u.')
+      expect(text).toContain('正在显示 t=3.6 a.u.')
+      expect(text).toContain('正在计算 t=9.0 a.u.')
     } finally {
       await tree.unmount()
     }

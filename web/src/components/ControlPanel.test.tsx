@@ -124,6 +124,10 @@ function representationButton(tree: MountedTree, id: RepresentationKind): HTMLBu
   return button
 }
 
+function isUnavailable(button: HTMLButtonElement): boolean {
+  return button.getAttribute('aria-disabled') === 'true'
+}
+
 function parameterInput(tree: MountedTree, id: ParameterId): HTMLInputElement | null {
   return tree.container.querySelector<HTMLInputElement>(`input[data-parameter="${id}"]`)
 }
@@ -148,7 +152,7 @@ function choiceValues(tree: MountedTree, choice: 'plane' | 'observable'): string
 
 describe('ControlPanel representation buttons read the capability matrix', () => {
   it.each(CELLS)(
-    '%s / %s: disabled iff the matrix refuses, and the title carries its reason',
+    '%s / %s: aria-disabled iff the matrix refuses, and the title carries its reason',
     async (mode, representation, orbital) => {
       // The selected representation is deliberately the one under test, so the
       // cell is exercised as both "the button" and "the current scene".
@@ -157,7 +161,9 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
         const expected = capabilityFor({ mode, orbital, representation })
         const button = representationButton(tree, representation)
 
-        expect(button.disabled).toBe(expected.status !== 'available')
+        expect(isUnavailable(button)).toBe(expected.status !== 'available')
+        // A refused choice stays keyboard-focusable so its reason is reachable.
+        expect(button.disabled).toBe(false)
         if (expected.status === 'available') {
           expect(button.title.length).toBeGreaterThan(0)
         } else {
@@ -177,7 +183,7 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
         for (const representation of OFFERED) {
           const expected = capabilityFor({ mode, orbital, representation })
           const button = representationButton(tree, representation)
-          expect(button.disabled, representation).toBe(expected.status !== 'available')
+          expect(isUnavailable(button), representation).toBe(expected.status !== 'available')
           if (expected.status !== 'available') {
             expect(button.title, representation).toBe(expected.reason)
           }
@@ -192,11 +198,14 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
     const tree = await panel('superposition', 'isosurface')
     try {
       const button = representationButton(tree, 'point_cloud')
-      expect(button.disabled).toBe(true)
-      expect(button.title).toContain('has not been built')
+      expect(isUnavailable(button)).toBe(true)
+      expect(button.getAttribute('aria-label')).toContain('电子云暂不可用')
+      expect(button.title).toContain('尚未实现')
+      expect(button.title).toContain('/api/orbitals/point-cloud')
+      expect(button.title).toContain('|Ψ(t)|²')
       // "not implemented" is not "unsupported": the panel must not claim the
       // physics forbids a time-dependent point cloud.
-      expect(button.title).toContain('Nothing about the physics forbids it')
+      expect(button.title).toContain('这不是 physics 限制')
     } finally {
       await tree.unmount()
     }
@@ -214,7 +223,7 @@ describe('ControlPanel follows a matrix that moves underneath it', () => {
     const tree = await mount(createElement(ControlPanel))
     try {
       const button = representationButton(tree, 'point_cloud')
-      expect(button.disabled).toBe(true)
+      expect(isUnavailable(button)).toBe(true)
       expect(button.title).toBe(reason)
     } finally {
       await tree.unmount()
@@ -233,8 +242,8 @@ describe('ControlPanel follows a matrix that moves underneath it', () => {
 
     const tree = await panel('eigenstate', 'point_cloud', REAL_ORBITAL)
     try {
-      expect(representationButton(tree, 'streamlines').disabled).toBe(false)
-      expect(representationButton(tree, 'isosurface').disabled).toBe(false)
+      expect(isUnavailable(representationButton(tree, 'streamlines'))).toBe(false)
+      expect(isUnavailable(representationButton(tree, 'isosurface'))).toBe(false)
     } finally {
       await tree.unmount()
     }
@@ -250,7 +259,7 @@ describe('ControlPanel follows a matrix that moves underneath it', () => {
     const tree = await mount(createElement(ControlPanel))
     try {
       const button = representationButton(tree, 'isosurface')
-      expect(button.disabled).toBe(true)
+      expect(isUnavailable(button)).toBe(true)
       expect(button.title).toBe(reason)
     } finally {
       await tree.unmount()
@@ -721,8 +730,14 @@ describe('ControlPanel controls write to the store', () => {
       expect(useSceneStore.getState().resolution).toBe(73)
       await setValue(parameterInput(surface, 'probabilityMass'), 'mass', '0.75')
       expect(useSceneStore.getState().probabilityMass).toBe(0.75)
-      await setValue(parameterInput(surface, 'timeAu'), 'time', '6')
-      expect(useSceneStore.getState().timeAu).toBe(6)
+      const clock = parameterInput(surface, 'timeAu')
+      expect(clock?.step).toBe('0.2')
+      expect(clock?.value).toBe('0')
+      expect(clock?.validity.stepMismatch).toBe(false)
+      await setValue(clock, 'time', '8.4')
+      expect(clock?.value).toBe('8.4')
+      expect(clock?.validity.stepMismatch).toBe(false)
+      expect(useSceneStore.getState().timeAu).toBe(8.4)
     } finally {
       await surface.unmount()
     }
@@ -770,21 +785,121 @@ describe('ControlPanel controls write to the store', () => {
     }
   })
 
-  it('writes each rendering knob, none of which reaches a route', async () => {
-    const tree = await panel('eigenstate', 'point_cloud')
+  it.each<[
+    RepresentationKind,
+    string[],
+    string[],
+  ]>([
+    ['point_cloud', ['pointSize', 'opacity'], ['点尺寸', '透明度']],
+    ['isosurface', ['opacity'], ['透明度']],
+    ['slice', ['bloom'], ['Bloom']],
+    ['streamlines', ['opacity', 'fog', 'bloom'], ['透明度', '雾强度', 'Bloom']],
+  ])('%s exposes exactly the display controls its renderer consumes', async (
+    representation,
+    expectedControls,
+    expectedLabels,
+  ) => {
+    const tree = await panel('eigenstate', representation, FLOWING_ORBITAL)
+    try {
+      const section = tree.container.querySelector<HTMLElement>('.display-section')
+      if (section === null) throw new Error('no display section on screen')
+      const controls = Array.from(
+        section.querySelectorAll<HTMLInputElement>('input[data-display]'),
+      )
+
+      expect(controls.map((control) => control.dataset.display)).toEqual(expectedControls)
+      expect(section.textContent).toContain('显示')
+      for (const label of expectedLabels) expect(section.textContent).toContain(label)
+
+      // Tone mapping is not yet an audited renderer contract. It therefore
+      // stays internal for every representation instead of becoming a false
+      // affordance in this otherwise renderer-specific control group.
+      expect(section.querySelector('input[data-display="exposure"]')).toBeNull()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('writes each effective rendering knob to the local store only', async () => {
+    const cloud = await panel('eigenstate', 'point_cloud')
     try {
       const knob = (name: string): HTMLInputElement | null =>
-        tree.container.querySelector<HTMLInputElement>(`input[data-display="${name}"]`)
+        cloud.container.querySelector<HTMLInputElement>(`input[data-display="${name}"]`)
       await setValue(knob('pointSize'), 'point size', '4.2')
       expect(useSceneStore.getState().pointSize).toBe(4.2)
       await setValue(knob('opacity'), 'opacity', '60')
       expect(useSceneStore.getState().opacity).toBeCloseTo(0.6, 10)
-      await setValue(knob('exposure'), 'exposure', '120')
-      expect(useSceneStore.getState().exposure).toBeCloseTo(1.2, 10)
+    } finally {
+      await cloud.unmount()
+    }
+
+    const flow = await panel('eigenstate', 'streamlines', FLOWING_ORBITAL)
+    try {
+      const knob = (name: string): HTMLInputElement | null =>
+        flow.container.querySelector<HTMLInputElement>(`input[data-display="${name}"]`)
       await setValue(knob('fog'), 'fog', '40')
       expect(useSceneStore.getState().fogStrength).toBeCloseTo(0.4, 10)
       await setValue(knob('bloom'), 'bloom', '30')
       expect(useSceneStore.getState().bloom).toBeCloseTo(0.3, 10)
+    } finally {
+      await flow.unmount()
+    }
+  })
+
+  it('uses Chinese narrative labels while preserving scientific notation and terms', async () => {
+    const tree = await panel('superposition', 'slice')
+    try {
+      const text = tree.container.textContent ?? ''
+
+      for (const label of [
+        '态制备',
+        '轨道与表示设置',
+        '量子数',
+        '态构成',
+        '本征态',
+        '叠加态',
+        '表示法',
+        '电子云',
+        '等密度面',
+        '平面切片',
+        '概率流线',
+        '显示',
+      ]) {
+        expect(text).toContain(label)
+      }
+
+      // Symbols and domain vocabulary are notation, not duplicate translations.
+      for (const notation of ['ℓ', 'Z', 'aμ', '实基 · chemistry', '复基 · Lz']) {
+        expect(text).toContain(notation)
+      }
+      expect(
+        tree.container.querySelector<HTMLButtonElement>('button[title="解析含时 eigenstate 叠加"]'),
+      ).not.toBeNull()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('offers bloom only while the requested representation owns a presentation composer', async () => {
+    // A complex m=1 state keeps all four representation buttons available, so
+    // the test crosses both sides through the same user-facing switch.
+    const tree = await panel('eigenstate', 'point_cloud', FLOWING_ORBITAL)
+    const bloom = (): HTMLInputElement | null =>
+      tree.container.querySelector<HTMLInputElement>('input[data-display="bloom"]')
+    try {
+      // Point clouds and isosurfaces use their phase legend as a data key; the
+      // canvas omits Bloom/Vignette for both, so a mutable Bloom slider would
+      // be a control over nothing.
+      expect(bloom()).toBeNull()
+
+      await press(representationButton(tree, 'slice'), 'the slice button')
+      expect(bloom()).not.toBeNull()
+
+      await press(representationButton(tree, 'isosurface'), 'the isosurface button')
+      expect(bloom()).toBeNull()
+
+      await press(representationButton(tree, 'streamlines'), 'the streamlines button')
+      expect(bloom()).not.toBeNull()
     } finally {
       await tree.unmount()
     }
@@ -844,4 +959,3 @@ describe('ControlPanel controls write to the store', () => {
     }
   })
 })
-

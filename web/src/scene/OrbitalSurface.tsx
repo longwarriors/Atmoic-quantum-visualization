@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 
 import type { SurfaceGeometry } from '../api/types'
-import { phaseToRgb } from './color'
+import { phaseToLinearRgb } from './color'
 
 interface OrbitalSurfaceProps {
   /** Geometry only: the stationary and time-dependent payloads share these fields. */
@@ -17,7 +17,9 @@ export function OrbitalSurface({ data, opacity }: OrbitalSurfaceProps) {
     const indices = new Uint32Array(data.faces.flat())
     const colors = new Float32Array(data.phase.length * 3)
     data.phase.forEach((value, index) => {
-      const [r, g, b] = phaseToRgb(value)
+      // Buffer attributes live in Three's Linear-sRGB working space. The
+      // palette itself is sRGB because it is also printed as CSS bytes.
+      const [r, g, b] = phaseToLinearRgb(value)
       colors[index * 3] = r
       colors[index * 3 + 1] = g
       colors[index * 3 + 2] = b
@@ -37,15 +39,16 @@ export function OrbitalSurface({ data, opacity }: OrbitalSurfaceProps) {
 
   return (
     <group>
-      <mesh geometry={geometry} castShadow receiveShadow>
-        <meshPhysicalMaterial
+      <mesh geometry={geometry} castShadow={false} receiveShadow={false}>
+        <meshBasicMaterial
           vertexColors
+          // Phase colour is data keyed by the adjacent legend. MeshBasic is
+          // deliberately unlit: normals, coloured lights, view angle and
+          // received shadows must not change which phase a vertex denotes.
+          fog={false}
+          toneMapped={false}
           transparent={opacity < 0.999}
           opacity={opacity}
-          roughness={0.24}
-          metalness={0.02}
-          clearcoat={0.7}
-          clearcoatRoughness={0.24}
           side={THREE.FrontSide}
           depthWrite={opacity > 0.8}
         />

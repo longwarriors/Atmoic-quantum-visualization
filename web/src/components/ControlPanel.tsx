@@ -7,6 +7,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  SlidersHorizontal,
   Waves,
   type LucideIcon,
 } from 'lucide-react'
@@ -29,6 +30,7 @@ import type {
 } from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
 import { nextTimeAu } from './sceneRequest'
+import { REPRESENTATION_LABELS } from './sceneStatus'
 
 /**
  * A slider bound to a request parameter.
@@ -148,13 +150,14 @@ function ChoiceRow<T extends string>({
     // label-then-control line a slider draws, and only the control differs.
     <div className="range-row">
       <span className="control-label">{label}</span>
-      <div className="slice-choices" data-choice={choice}>
+      <div className="slice-choices" data-choice={choice} role="group" aria-label={label}>
         {options.map((option) => (
           <button
             type="button"
             key={option}
             data-choice-value={option}
             className={value === option ? 'active' : ''}
+            aria-pressed={value === option}
             onClick={() => onChange(option)}
           >
             {labels[option]}
@@ -200,31 +203,51 @@ const REPRESENTATIONS: {
 }[] = [
   {
     id: 'point_cloud',
-    label: 'Electron cloud',
+    label: REPRESENTATION_LABELS.point_cloud,
     icon: Cloud,
-    purpose: 'Positions sampled from |ψ|² d³r; every marker has equal visual weight',
+    purpose: '从 |ψ|² d³r 采样位置；每个 marker 具有相同视觉权重',
   },
   {
     id: 'isosurface',
-    label: 'Density surface',
+    label: REPRESENTATION_LABELS.isosurface,
     icon: Layers3,
-    purpose: 'A |ψ|² level set enclosing the requested probability mass',
+    purpose: '包围指定概率质量的 |ψ|² level set',
   },
   {
     id: 'slice',
-    label: 'Plane section',
+    label: REPRESENTATION_LABELS.slice,
     // A 2-D sampled section, which is what this icon says and what the route
     // returns: `resolution**2` samples on one principal plane.
     icon: Grid2x2,
-    purpose: 'One scalar field sampled on a principal plane through the nucleus',
+    purpose: '在过原子核的主平面上采样一个标量场',
   },
   {
     id: 'streamlines',
-    label: 'Probability flow',
+    label: REPRESENTATION_LABELS.streamlines,
     icon: Waves,
-    purpose: 'Streamlines of j/ρ (probability flow, not electron trajectories)',
+    purpose: 'j/ρ 的 streamlines（概率流，不是电子轨迹）',
   },
 ]
+
+/** Chinese UI copy for the fixed server catalogue; formulas stay untouched. */
+const MIXTURE_COPY: Readonly<Record<string, { label: string; note: string }>> = {
+  '1s-2pz': {
+    label: '1s + 2p_z · Bohr 振荡',
+    note: 'ω = 3/8 Ha；偶极矩随 t 振荡。',
+  },
+  '2s-2pz': {
+    label: '2s + 2p_z · 简并定态',
+    note: '两项能量相同，density 不随 t 变化。',
+  },
+  '1s-3dz2': {
+    label: '1s + 3d_z²',
+    note: 'ω = 4/9 Ha；无 dipole coupling，呈 quadrupole 呼吸。',
+  },
+  '2pplus-2pminus': {
+    label: '2p(+1) + 2p(−1)',
+    note: '简并叠加；等价于实 p orbital，净 current 为 0。',
+  },
+}
 
 /**
  * How each request parameter is labelled and where its value lives.
@@ -238,12 +261,12 @@ const PARAMETER_ROWS: {
   label: string
   suffix?: string
 }[] = [
-  { id: 'samples', label: 'Samples' },
-  { id: 'seed', label: 'Seed' },
-  { id: 'resolution', label: 'Grid' },
-  { id: 'probabilityMass', label: 'Mass' },
-  { id: 'seedCount', label: 'Seeds' },
-  { id: 'timeAu', label: 'Time', suffix: ' a.u.' },
+  { id: 'samples', label: '样本数' },
+  { id: 'seed', label: '随机 seed' },
+  { id: 'resolution', label: '网格' },
+  { id: 'probabilityMass', label: '概率质量' },
+  { id: 'seedCount', label: '流线种子' },
+  { id: 'timeAu', label: 't', suffix: ' a.u.' },
 ]
 
 export function ControlPanel() {
@@ -354,13 +377,14 @@ export function ControlPanel() {
     <aside className="panel controls-panel">
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">STATE LAB</span>
-          <h2>Orbital controls</h2>
+          <span className="eyebrow">态制备</span>
+          <h2>轨道与表示设置</h2>
         </div>
         <button
           type="button"
           className="round-button"
-          title="Restore 2pz defaults"
+          title="恢复 2p_z 默认值"
+          aria-label="恢复 2p_z 默认值"
           onClick={() => store.applyPreset({ n: 2, l: 1, m: 0, z: 1, basis: 'real' })}
         >
           <RotateCcw size={16} />
@@ -368,27 +392,28 @@ export function ControlPanel() {
       </div>
 
       <div className="preset-strip">
-        {presets.slice(0, 6).map((preset) => (
-          <button
-            type="button"
-            key={preset.id}
-            onClick={() => store.applyPreset(preset)}
-            className={
+        {presets.slice(0, 6).map((preset) => {
+          const active =
               preset.n === store.orbital.n &&
               preset.l === store.orbital.l &&
               preset.m === store.orbital.m &&
               preset.basis === store.orbital.basis
-                ? 'preset active'
-                : 'preset'
-            }
-          >
-            {preset.label}
-          </button>
-        ))}
+          return (
+            <button
+              type="button"
+              key={preset.id}
+              onClick={() => store.applyPreset(preset)}
+              className={active ? 'preset active' : 'preset'}
+              aria-pressed={active}
+            >
+              {preset.label}
+            </button>
+          )
+        })}
       </div>
 
       <section className="control-section">
-        <div className="section-title"><Atom size={15} /> Quantum numbers</div>
+        <div className="section-title"><Atom size={15} /> 量子数</div>
         <div className="quantum-grid">
           <label>
             <span>n</span>
@@ -426,31 +451,34 @@ export function ControlPanel() {
               type="button"
               key={basis}
               className={store.orbital.basis === basis ? 'active' : ''}
+              aria-pressed={store.orbital.basis === basis}
               onClick={() => store.setOrbital({ basis })}
             >
-              {basis === 'real' ? 'Real / chemistry' : 'Complex / Lz'}
+              {basis === 'real' ? '实基 · chemistry' : '复基 · Lz'}
             </button>
           ))}
         </div>
       </section>
 
       <section className="control-section">
-        <div className="section-title"><Clock size={15} /> State kind</div>
+        <div className="section-title"><Clock size={15} /> 态构成</div>
         <div className="representation-switch">
           <button
             type="button"
             className={store.mode === 'eigenstate' ? 'active' : ''}
+            aria-pressed={store.mode === 'eigenstate'}
             onClick={() => store.setMode('eigenstate')}
           >
-            <Atom size={17} /> Eigenstate
+            <Atom size={17} /> 本征态
           </button>
           <button
             type="button"
             className={store.mode === 'superposition' ? 'active' : ''}
-            title="Analytic time-dependent superposition of eigenstates"
+            aria-pressed={store.mode === 'superposition'}
+            title="解析含时 eigenstate 叠加"
             onClick={() => store.setMode('superposition')}
           >
-            <Clock size={17} /> Superposition
+            <Clock size={17} /> 叠加态
           </button>
         </div>
 
@@ -461,11 +489,12 @@ export function ControlPanel() {
                 <button
                   key={mixture.id}
                   type="button"
-                  title={mixture.note}
+                  title={MIXTURE_COPY[mixture.id]?.note ?? mixture.note}
                   className={`preset${store.superpositionTerms === mixture.terms ? ' active' : ''}`}
+                  aria-pressed={store.superpositionTerms === mixture.terms}
                   onClick={() => store.setSuperposition(mixture.terms, mixture.label)}
                 >
-                  {mixture.label}
+                  {MIXTURE_COPY[mixture.id]?.label ?? mixture.label}
                 </button>
               ))}
             </div>
@@ -499,17 +528,18 @@ export function ControlPanel() {
             type="button"
             className="toggle-row"
             data-control="playback"
+            aria-pressed={store.playing}
             onClick={() => store.setPlaying(!store.playing)}
           >
             {store.playing ? <Pause size={15} /> : <Play size={15} />}
-            <span>Evolve in time</span>
+            <span>随 t 演化</span>
             <span className={store.playing ? 'switch on' : 'switch'} />
           </button>
         ) : null}
       </section>
 
       <section className="control-section">
-        <div className="section-title"><Layers3 size={15} /> Representation</div>
+        <div className="section-title"><Layers3 size={15} /> 表示法</div>
         <div className="representation-switch">
           {REPRESENTATIONS.map(({ id, label, icon: Icon, purpose }) => {
             const capability = capabilityFor({ mode, orbital, representation: id })
@@ -520,9 +550,13 @@ export function ControlPanel() {
                 key={id}
                 data-representation={id}
                 className={store.representation === id ? 'active' : ''}
-                disabled={!available}
+                aria-pressed={store.representation === id}
+                aria-disabled={!available}
+                aria-label={available ? label : `${label}暂不可用：${capability.reason}`}
                 title={available ? purpose : capability.reason}
-                onClick={() => store.setRepresentation(id)}
+                onClick={() => {
+                  if (available) store.setRepresentation(id)
+                }}
               >
                 <Icon size={17} /> {label}
               </button>
@@ -533,7 +567,7 @@ export function ControlPanel() {
         {planes === undefined ? null : (
           <ChoiceRow
             choice="plane"
-            label="Plane"
+            label="平面"
             options={planes}
             labels={PLANE_LABEL}
             value={store.plane}
@@ -544,7 +578,7 @@ export function ControlPanel() {
         {observables === undefined ? null : (
           <ChoiceRow
             choice="observable"
-            label="Field"
+            label="场"
             options={observables}
             labels={OBSERVABLE_LABEL}
             value={store.sliceObservable}
@@ -593,27 +627,46 @@ export function ControlPanel() {
           </dl>
         ) : null}
 
-        {/*
-          Below this line nothing reaches a route: these set how the asset is
-          drawn, not which asset is asked for, so they carry no capability
-          bound and are always offered.
-        */}
-        <DisplayRow control="pointSize" label="Point size" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
-        <DisplayRow control="opacity" label="Opacity" value={Math.round(store.opacity * 100)} min={25} max={100} step={1} suffix="%" onChange={(value) => store.setOpacity(value / 100)} />
-        <DisplayRow control="exposure" label="Exposure" value={Math.round(store.exposure * 100)} min={50} max={140} step={2} suffix="%" onChange={(value) => store.setExposure(value / 100)} />
-        <DisplayRow control="fog" label="Fog" value={Math.round(store.fogStrength * 100)} min={0} max={70} step={2} suffix="%" onChange={(value) => store.setFogStrength(value / 100)} />
-        <DisplayRow control="bloom" label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={50} step={1} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
       </section>
 
-      <section className="control-section compact">
-        <button type="button" className="toggle-row" onClick={() => store.setAutoRotate(!store.autoRotate)}>
+      {/*
+        Display controls are representation-specific. A slider is shown only
+        when the current renderer consumes it; that keeps this compact panel
+        from offering a polished-looking control over nothing. Exposure stays
+        internal until the composer path owns an audited tone-mapping policy.
+      */}
+      <section className="control-section compact display-section">
+        <div className="section-title"><SlidersHorizontal size={15} /> 显示</div>
+        {store.representation === 'point_cloud' ? (
+          <DisplayRow control="pointSize" label="点尺寸" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
+        ) : null}
+        {store.representation !== 'slice' ? (
+          <DisplayRow control="opacity" label="透明度" value={Math.round(store.opacity * 100)} min={25} max={100} step={1} suffix="%" onChange={(value) => store.setOpacity(value / 100)} />
+        ) : null}
+        {store.representation === 'streamlines' ? (
+          <DisplayRow control="fog" label="雾强度" value={Math.round(store.fogStrength * 100)} min={0} max={70} step={2} suffix="%" onChange={(value) => store.setFogStrength(value / 100)} />
+        ) : null}
+        {store.representation === 'slice' || store.representation === 'streamlines' ? (
+          <DisplayRow control="bloom" label="Bloom" value={Math.round(store.bloom * 100)} min={0} max={50} step={1} suffix="%" onChange={(value) => store.setBloom(value / 100)} />
+        ) : null}
+        <button
+          type="button"
+          className="toggle-row"
+          aria-pressed={store.autoRotate}
+          onClick={() => store.setAutoRotate(!store.autoRotate)}
+        >
           {store.autoRotate ? <Pause size={15} /> : <Play size={15} />}
-          <span>Auto rotate</span>
+          <span>自动旋转</span>
           <span className={store.autoRotate ? 'switch on' : 'switch'} />
         </button>
-        <button type="button" className="toggle-row" onClick={() => store.setShowGrid(!store.showGrid)}>
+        <button
+          type="button"
+          className="toggle-row"
+          aria-pressed={store.showGrid}
+          onClick={() => store.setShowGrid(!store.showGrid)}
+        >
           <Layers3 size={15} />
-          <span>Reference grid</span>
+          <span>参考网格</span>
           <span className={store.showGrid ? 'switch on' : 'switch'} />
         </button>
       </section>

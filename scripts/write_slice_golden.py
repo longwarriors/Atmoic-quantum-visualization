@@ -37,11 +37,11 @@ incidental formatting:
 * ``sort_keys=True`` -- key order follows field declaration order, so sorting
   keeps a harmless field reordering from reading as a payload change.
 * ``indent=2`` -- a readable diff is the whole point of committing it.
-* ``allow_nan=False`` -- Python's ``json`` writes the bare ``NaN`` /
+* ``allow_nan=False`` -- Python's ``json`` otherwise writes the bare ``NaN`` /
   ``Infinity`` tokens that no JSON parser outside Python accepts. A non-finite
-  sample must raise here rather than land in a fixture, which is the same
-  raw-text concern the API's own NaN gates carry: the app serves Starlette's
-  default JSON encoder, and that encoder emits those tokens happily.
+  sample must raise here rather than land in a fixture. The API's pinned
+  Starlette response class also refuses those values; the model rejects them
+  earlier so a bad scientific field is identified before response rendering.
 """
 
 from __future__ import annotations

@@ -21,7 +21,9 @@
  * a runtime failure in the browser today, with nothing red before it.
  */
 import { describe, expect, it } from 'vitest'
+import { ShaderChunk } from 'three'
 
+import { PHASE_SATURATION, PHASE_TURN_RADIANS, PHASE_VALUE } from '../color'
 import { orbitalPointFragmentShader, orbitalPointVertexShader } from './orbitalPoints'
 
 /** The two programs, as `ShaderMaterial` receives them. */
@@ -40,18 +42,19 @@ const UNIFORMS = ['pointSize', 'pixelRatio', 'opacity']
 
 /**
  * three.js resolves `#include <name>` against its own ShaderChunk registry
- * while compiling, and an unknown name throws there. These are the chunks the
- * material's flags require: `fog` on the JSX element means both fog chunk
- * pairs must be present, and `toneMapped` plus the renderer's output colour
- * space mean the fragment stage must run the tonemapping and colorspace
- * chunks or the points render in the wrong space.
+ * while compiling, and an unknown name throws there. Phase is data, so this
+ * shader performs only the renderer's output colour-space conversion. Fog and
+ * tone mapping are deliberately absent: their corresponding material flags
+ * are false and either transform would make the legend cease to be a key.
  */
-const VERTEX_CHUNKS = ['fog_pars_vertex', 'fog_vertex']
-const FRAGMENT_CHUNKS = [
+const VERTEX_CHUNKS: readonly string[] = []
+const FRAGMENT_CHUNKS = ['colorspace_fragment']
+const DATA_COLOR_TRANSFORMS = [
+  'fog_pars_vertex',
+  'fog_vertex',
   'fog_pars_fragment',
-  'tonemapping_fragment',
-  'colorspace_fragment',
   'fog_fragment',
+  'tonemapping_fragment',
 ]
 
 describe('orbitalPoints shaders', () => {
@@ -76,6 +79,29 @@ describe('orbitalPoints shaders', () => {
 
   it('writes a fragment colour', () => {
     expect(orbitalPointFragmentShader).toMatch(/\bgl_FragColor\s*=/)
+  })
+
+  it('shares the CPU phase palette and decodes its sRGB before output conversion', () => {
+    expect(orbitalPointFragmentShader).toContain(`vPhase / ${PHASE_TURN_RADIANS}`)
+    expect(orbitalPointFragmentShader).toContain(
+      `hsv2rgb(vec3(hue, ${PHASE_SATURATION}, ${PHASE_VALUE}))`,
+    )
+
+    const palette = orbitalPointFragmentShader.indexOf('vec3 phaseSrgb = hsv2rgb')
+    const decode = orbitalPointFragmentShader.indexOf('vec3 phaseLinear = sRGBTransferEOTF')
+    const output = orbitalPointFragmentShader.indexOf('gl_FragColor = vec4(phaseLinear')
+    expect(palette).toBeGreaterThan(-1)
+    expect(decode).toBeGreaterThan(palette)
+    expect(output).toBeGreaterThan(decode)
+    expect(orbitalPointFragmentShader).not.toContain('gl_FragColor = vec4(phaseSrgb')
+
+    // ShaderMaterial receives this helper from Three's program prefix. Pin the
+    // dependency contract and the coefficients color.ts's numerical anchors
+    // exercise, so either side changing alone makes this test fail.
+    expect(ShaderChunk.colorspace_pars_fragment).toMatch(/\bvec4\s+sRGBTransferEOTF\b/)
+    for (const coefficient of ['0.04045', '0.9478672986', '0.0521327014', '2.4', '0.0773993808']) {
+      expect(ShaderChunk.colorspace_pars_fragment).toContain(coefficient)
+    }
   })
 
   it.each(UNIFORMS)('declares the %s uniform ElectronCloud.tsx sets by name', (name) => {
@@ -115,5 +141,10 @@ describe('orbitalPoints shaders', () => {
       'shader chunks this spec does not know about: add them here, with the material flag ' +
         'that requires them, or drop them from the shader',
     ).toEqual([])
+  })
+
+  it.each(DATA_COLOR_TRANSFORMS)('does not opt phase data into <%s>', (chunk) => {
+    const sources = STAGES.map(([, source]) => source).join('\n')
+    expect(sources).not.toContain(`#include <${chunk}>`)
   })
 })

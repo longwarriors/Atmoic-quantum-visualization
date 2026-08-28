@@ -5,9 +5,37 @@ import {
 } from '../api/sliceContract'
 import type {
   CurrentFieldPayload,
+  RepresentationKind,
   SceneStatus,
   SuperpositionIsosurfacePayload,
 } from '../api/types'
+
+/** Human-facing labels; wire values stay untouched in requests and metadata. */
+export const REPRESENTATION_LABELS: Readonly<Record<RepresentationKind, string>> = {
+  point_cloud: '电子云',
+  isosurface: '等密度面',
+  slice: '平面切片',
+  streamlines: '概率流线',
+}
+
+export function representationLabel(value: string | undefined): string {
+  if (value === undefined) return '—'
+  return value in REPRESENTATION_LABELS
+    ? REPRESENTATION_LABELS[value as RepresentationKind]
+    : value
+}
+
+const OBSERVABLE_LABELS: Readonly<Record<string, string>> = {
+  probability_density: '概率密度 |ψ|²',
+  probability_current: '概率流 j',
+  wavefunction: '波函数 ψ',
+  phase: 'phase · arg ψ',
+}
+
+export function observableLabel(value: string | undefined): string {
+  if (value === undefined) return '—'
+  return OBSERVABLE_LABELS[value] ?? value
+}
 
 /** Keep the Python scene contract attached while adapting snake_case payloads for the UI. */
 export function statusFromSuperpositionIsosurface(

@@ -16,17 +16,17 @@ export function Header() {
         <span className="brand-mark"><Orbit size={22} /></span>
         <div>
           <div className="brand-name">QuViz</div>
-          <div className="brand-subtitle">Quantum state · observable · representation</div>
+          <div className="brand-subtitle">量子态 · 可观测量 · 表示法</div>
         </div>
       </div>
       <div className="topbar-actions">
-        <a className="icon-button" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" title="OpenAPI">
+        <a className="icon-button" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" title="查看 OpenAPI" aria-label="查看 OpenAPI">
           <BookOpen size={17} />
-          <span>API</span>
+          <span>OpenAPI</span>
         </a>
-        <button className="icon-button primary" type="button" onClick={saveScreenshot}>
+        <button className="icon-button primary" type="button" onClick={saveScreenshot} title="保存当前画布" aria-label="保存当前画布">
           <Camera size={17} />
-          <span>Capture</span>
+          <span>保存图像</span>
         </button>
       </div>
     </header>

@@ -37,7 +37,7 @@
 - **只暴露访问器，不暴露下标算术**：`sliceValueAt` 是读取样本的唯一出口，`k = row * resolution + col` 只写一次。在每个调用点重写一遍索引算术，就是迟早会写错一次的索引算术——而 u/v 转置在对称态上完全看不出来；
 - **哨兵值要在边界上变成 `null`**：被遮罩的样本携带有限哨兵 `0.0`（这样严格 JSON 解析器能通过、忽略遮罩的客户端画出确定占位值），但 `0.0` 同时是一个完全合法的相位（“正实数”），所以访问器返回 `null`；
 - 把数组映射到这个 representation 真正需要的 GPU 对象——**不一定是 `BufferGeometry` attribute**：等值面是 indexed geometry，点云是 `THREE.Points`，切片是一张 `DataTexture` 贴在按 payload 标架旋转的 quad 上（`src/scene/SliceField.tsx`）；
-- **凡是影响像素的默认值都要显式写出来并说明理由**：three@0.185.1 的 `DataTexture` 默认就是 `NearestFilter` / `flipY = false` / `NoColorSpace`，但默认值是关于某个版本的事实，不是关于这段代码的意图，所以四项各写一行；
+- **凡是影响像素的决定都要显式写出来并说明理由**：切片的 `NearestFilter` / `flipY = false` 恰好与 three@0.185.1 默认值相同，`SRGBColorSpace` 则刻意偏离默认值；默认值是关于某个版本的事实，不是关于这段代码的意图，所以四项各写一行，并用测试钉住；
 - 材质只消费明确命名的 attribute / uniform / 纹理通道；
 - 控件变化若改变物理资产，必须重新请求后端；
 - 释放旧资源：geometry、material，以及切片多出来的 texture——换 payload 时被取代的那一份也要释放，不只是卸载时。
@@ -75,4 +75,4 @@
 - 标量场类（切片）：布局按行主序、标架右手且逐平面对得上、遮罩样本读作 `null` 而不是哨兵、采样轴逐位反对称、`resolution` 为奇数所以原点在网格上；
 - 三者共有：payload 能通过严格 JSON 解析（没有裸 `NaN` / `Infinity`），以及一份逐字节黄金 fixture。
 
-**视觉回归图不能替代物理测试。** 现在这句话有了具体形式：截图门禁确实存在（`web/e2e/`），但每一条截图声明都另有一条与平台无关的 vitest 断言，图片只多出“GPU 真的把它画出来了”这一句。一张绿的截图对物理只字未提。
+**视觉回归图不能替代物理测试。** 现在这句话有了具体形式：截图门禁确实存在（`web/e2e/`），但每一条截图声明都另有一条与平台无关的 vitest 断言，图片只多出“固定的 Linux/Chromium/SwiftShader WebGL 管线确实把它光栅化成了这些像素”这一句。它不代表真实 GPU 或其他浏览器；一张绿的截图对物理只字未提。

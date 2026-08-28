@@ -66,21 +66,21 @@ test('renders through a software WebGL2 stack, not whatever GPU is present', asy
     }
   })
 
-  expect(
+  await expect(
     report.supported,
     'the browser gave up no WebGL2 context at all: every scene in this app renders nothing, so ' +
       'a screenshot baseline taken here would pin an empty canvas. This is a hard failure and ' +
       'not a skip on purpose -- a skip would report the broken environment as success.',
   ).toBe(true)
 
-  expect(
+  await expect(
     report.unmasked,
     'WEBGL_debug_renderer_info is unavailable, so the renderer string below is Chromium\'s ' +
       'masked generic answer and cannot prove which stack drew the pixels. Check the launch ' +
       'args in playwright.config.ts.',
   ).toBe(true)
 
-  expect(
+  await expect(
     report.renderer,
     `WebGL2 renderer is "${report.renderer}" (vendor "${report.vendor}", version ` +
       `"${report.version}"), not SwiftShader. Every committed baseline in e2e/__screenshots__ ` +

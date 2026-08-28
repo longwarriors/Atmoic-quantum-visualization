@@ -116,12 +116,12 @@ describe('Inspector scientific diagnostics', () => {
 
     const markup = renderToStaticMarkup(createElement(Inspector, { status }))
 
-    expect(markup).toContain('<dt>Grid mass status</dt>')
+    expect(markup).toContain('<dt>网格质量状态</dt>')
     expect(markup).toContain('phase-dependent quadrature error')
-    expect(markup).toContain('<dt>Grid report threshold</dt><dd>2.000e-3</dd>')
-    expect(markup).toContain('<dt>Grid mass error ≥</dt><dd>3.912e-2</dd>')
-    expect(markup).toContain('<dt>Grid alias variation ≥</dt><dd>1.957e-2</dd>')
-    expect(markup).toContain('<dt>Finite-box variation ≤</dt><dd>9.520e-10</dd>')
+    expect(markup).toContain('<dt>网格报告阈值</dt><dd>2.000e-3</dd>')
+    expect(markup).toContain('<dt>网格质量 error ≥</dt><dd>3.912e-2</dd>')
+    expect(markup).toContain('<dt>网格 alias 变化 ≥</dt><dd>1.957e-2</dd>')
+    expect(markup).toContain('<dt>有限盒变化 ≤</dt><dd>9.520e-10</dd>')
   })
 
   it('does not turn absent error evidence into an accuracy certificate', () => {
@@ -132,7 +132,7 @@ describe('Inspector scientific diagnostics', () => {
 
     const markup = renderToStaticMarkup(createElement(Inspector, { status }))
 
-    expect(markup).toContain('no above-threshold error demonstrated (accuracy not certified)')
+    expect(markup).toContain('未发现超过阈值的 error（不构成 accuracy 证明）')
     expect(markup).not.toContain('no error above tolerance proven')
   })
 
@@ -144,7 +144,7 @@ describe('Inspector scientific diagnostics', () => {
 
     const markup = renderToStaticMarkup(createElement(Inspector, { status }))
 
-    expect(markup).toContain('stationary density')
+    expect(markup).toContain('定态 density')
     expect(markup).not.toContain('degenerate')
   })
 
@@ -156,8 +156,8 @@ describe('Inspector scientific diagnostics', () => {
 
     const markup = renderToStaticMarkup(createElement(Inspector, { status }))
 
-    expect(markup).toContain('<dt>Continuity residual</dt><dd>2.50e-5</dd>')
-    expect(markup).toContain('<dt>Continuity scale kind</dt><dd>transition coherence</dd>')
+    expect(markup).toContain('<dt>连续性 residual</dt><dd>2.50e-5</dd>')
+    expect(markup).toContain('<dt>连续性尺度类型</dt><dd>transition coherence</dd>')
     expect(markup).not.toContain('∇·j residual')
   })
 })
@@ -201,8 +201,8 @@ describe('Inspector non-finite numbers', () => {
       }),
     )
 
-    expect(notFinite).toContain('<dt>Continuity residual</dt><dd>—</dd>')
-    expect(notFinite).toContain('<dt>Continuity |residual|</dt><dd>—</dd>')
+    expect(notFinite).toContain('<dt>连续性 residual</dt><dd>—</dd>')
+    expect(notFinite).toContain('<dt>连续性 |residual|</dt><dd>—</dd>')
     expect(notFinite).not.toContain('NaN')
     expect(notFinite).not.toContain('Infinity')
   })
@@ -221,11 +221,11 @@ describe('Inspector reports every measured diagnostic', () => {
       }),
     )
 
-    expect(markup).toContain('<dt>Continuity residual</dt><dd>2.00e-6</dd>')
-    expect(markup).toContain('<dt>Continuity |residual|</dt><dd>3.000e-9</dd>')
-    expect(markup).toContain('<dt>Continuity scale</dt><dd>1.500e-3</dd>')
-    expect(markup).toContain('<dt>Continuity probes</dt><dd>8</dd>')
-    expect(markup).toContain('<dt>Continuity phase samples</dt><dd>5</dd>')
+    expect(markup).toContain('<dt>连续性 residual</dt><dd>2.00e-6</dd>')
+    expect(markup).toContain('<dt>连续性 |residual|</dt><dd>3.000e-9</dd>')
+    expect(markup).toContain('<dt>连续性尺度</dt><dd>1.500e-3</dd>')
+    expect(markup).toContain('<dt>连续性 probe 数</dt><dd>8</dd>')
+    expect(markup).toContain('<dt>连续性 phase 样本</dt><dd>5</dd>')
   })
 
   it('shows the finite-box tail mass and the finite-grid phase variation bounds', () => {
@@ -236,8 +236,8 @@ describe('Inspector reports every measured diagnostic', () => {
       }),
     )
 
-    expect(markup).toContain('<dt>Finite-box tail mass ≤</dt><dd>2.360e-5</dd>')
-    expect(markup).toContain('<dt>Grid phase variation ≤</dt><dd>3.915e-2</dd>')
+    expect(markup).toContain('<dt>有限盒尾部质量 ≤</dt><dd>2.360e-5</dd>')
+    expect(markup).toContain('<dt>网格 phase 变化 ≤</dt><dd>3.915e-2</dd>')
   })
 
   it('reports every measured number of a loaded eigenstate scene', () => {
@@ -265,14 +265,14 @@ describe('Inspector reports every measured diagnostic', () => {
     expect(markup).toContain('900 pts')
     expect(markup).toContain('512 tris')
     expect(markup).toContain('6 lines')
-    expect(markup).toContain('<dt>Radial mass</dt><dd>98.76543%</dd>')
-    expect(markup).toContain('<dt>Superlevel mass</dt><dd>90.000%</dd>')
-    expect(markup).toContain('<dt>Finite-grid ∫ρdV</dt><dd>0.999875</dd>')
-    expect(markup).toContain('<dt>Grid</dt><dd>129³ · Δ=0.156 bohr</dd>')
-    expect(markup).toContain('<dt>Time</dt><dd>12.50 a.u.</dd>')
-    expect(markup).toContain('<dt>Streamlines</dt><dd>6</dd>')
+    expect(markup).toContain('<dt>径向质量</dt><dd>98.76543%</dd>')
+    expect(markup).toContain('<dt>超水平集质量</dt><dd>90.000%</dd>')
+    expect(markup).toContain('<dt>有限网格 ∫ρdV</dt><dd>0.999875</dd>')
+    expect(markup).toContain('<dt>3D 网格</dt><dd>129³ · Δ=0.156 bohr</dd>')
+    expect(markup).toContain('<dt>t</dt><dd>12.50 a.u.</dd>')
+    expect(markup).toContain('<dt>流线数</dt><dd>6</dd>')
     expect(markup).toContain('<dt>Max |j|/ρ</dt><dd>4.200e-3 a.u.</dd>')
-    expect(markup).toContain('<dt>Density level</dt><dd>1.500e-4</dd>')
+    expect(markup).toContain('<dt>density level</dt><dd>1.500e-4</dd>')
     expect(markup).toContain('<code>NIST-hydrogen</code>')
     expect(markup).toContain('stream ended early')
     expect(markup).toContain('grid is coarse')
@@ -282,11 +282,11 @@ describe('Inspector reports every measured diagnostic', () => {
     const idle = render({ loading: false })
     const busy = render({ loading: true })
 
-    expect(idle).toContain('<h2>No asset</h2>')
-    expect(idle).toContain('Awaiting verified metadata')
+    expect(idle).toContain('<h2>暂无资产</h2>')
+    expect(idle).toContain('等待已验证 metadata')
     expect(idle).toContain('<span class="energy-pill">—</span>')
     expect(idle).not.toContain('NaN')
-    expect(busy).toContain('<h2>Computing…</h2>')
+    expect(busy).toContain('<h2>计算中…</h2>')
   })
 
   it('keeps the sign of a leading negative term and of a negative imaginary part', () => {
@@ -331,28 +331,28 @@ describe('Inspector reports every measured diagnostic', () => {
   it('reports the plane, the sample grid and the unit a slice was measured in', () => {
     const markup = render(sliceStatus())
 
-    expect(markup).toContain('<dt>Plane</dt><dd>xz</dd>')
+    expect(markup).toContain('<dt>切片平面</dt><dd>xz</dd>')
     // resolution × resolution, never the isosurface's cubed grid: a plane
     // section buys resolution**2 samples and claiming resolution**3 of them
     // overstates the evidence by two orders of magnitude.
-    expect(markup).toContain('<dt>Slice grid</dt><dd>129 × 129 · Δ=0.125 bohr</dd>')
+    expect(markup).toContain('<dt>2D 网格</dt><dd>129 × 129 · Δ=0.125 bohr</dd>')
     expect(markup).not.toContain('129³')
-    expect(markup).toContain('<dt>Value unit</dt><dd>radian</dd>')
-    expect(markup).toContain('<dt>Max |value|</dt><dd>3.142e+0</dd>')
+    expect(markup).toContain('<dt>数值单位</dt><dd>radian</dd>')
+    expect(markup).toContain('<dt>max |value|</dt><dd>3.142e+0</dd>')
   })
 
   it('reports every term of the mask rule, not just the fraction it produced', () => {
     const markup = render(sliceStatus())
 
-    expect(markup).toContain('<dt>Phase mask relative</dt><dd>3.000e-3</dd>')
-    expect(markup).toContain('<dt>Phase mask scale</dt><dd>5.000e-1</dd>')
-    expect(markup).toContain('<dt>Phase mask threshold</dt><dd>1.500e-3</dd>')
-    expect(markup).toContain('<dt>Phase mask floor</dt><dd>2.200e-16</dd>')
-    expect(markup).toContain('<dt>Masked fraction</dt><dd>6.250%</dd>')
+    expect(markup).toContain('<dt>phase mask 相对阈值</dt><dd>3.000e-3</dd>')
+    expect(markup).toContain('<dt>phase mask 振幅尺度</dt><dd>5.000e-1</dd>')
+    expect(markup).toContain('<dt>phase mask 振幅阈值</dt><dd>1.500e-3</dd>')
+    expect(markup).toContain('<dt>phase mask 数值下限</dt><dd>2.200e-16</dd>')
+    expect(markup).toContain('<dt>mask 占比</dt><dd>6.250%</dd>')
     // The finite value a masked sample literally holds. `0.0` is also a
     // perfectly good phase, so a reader comparing numbers has to be told which
     // zero means "undefined here".
-    expect(markup).toContain('<dt>Masked value sentinel</dt><dd>0.000</dd>')
+    expect(markup).toContain('<dt>mask 哨兵值</dt><dd>0.000</dd>')
   })
 
   it('renders an em dash rather than a NaN in any slice field', () => {
@@ -369,14 +369,14 @@ describe('Inspector reports every measured diagnostic', () => {
       }),
     )
 
-    expect(markup).toContain('<dt>Slice grid</dt><dd>129 × 129 · Δ=—</dd>')
-    expect(markup).toContain('<dt>Max |value|</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Phase mask relative</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Phase mask scale</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Phase mask threshold</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Phase mask floor</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Masked fraction</dt><dd>—</dd>')
-    expect(markup).toContain('<dt>Masked value sentinel</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>2D 网格</dt><dd>129 × 129 · Δ=—</dd>')
+    expect(markup).toContain('<dt>max |value|</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>phase mask 相对阈值</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>phase mask 振幅尺度</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>phase mask 振幅阈值</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>phase mask 数值下限</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>mask 占比</dt><dd>—</dd>')
+    expect(markup).toContain('<dt>mask 哨兵值</dt><dd>—</dd>')
     expect(markup).not.toContain('NaN')
     expect(markup).not.toContain('Infinity')
   })
@@ -393,12 +393,12 @@ describe('Inspector reports every measured diagnostic', () => {
       }),
     )
 
-    expect(markup).toContain('<dt>Value unit</dt><dd>bohr^-3</dd>')
-    expect(markup).not.toContain('Phase mask relative')
-    expect(markup).not.toContain('Phase mask threshold')
+    expect(markup).toContain('<dt>数值单位</dt><dd>bohr^-3</dd>')
+    expect(markup).not.toContain('phase mask 相对阈值')
+    expect(markup).not.toContain('phase mask 振幅阈值')
     // The counted fraction is reported for every slice: a section with no mask
     // has masked nothing, and 0% is a fact where a blank would read as unknown.
-    expect(markup).toContain('<dt>Masked fraction</dt><dd>6.250%</dd>')
+    expect(markup).toContain('<dt>mask 占比</dt><dd>6.250%</dd>')
   })
 
   it('shows the charge and reduced-mass scales the superposition was built with', () => {
@@ -409,8 +409,8 @@ describe('Inspector reports every measured diagnostic', () => {
 
     const markup = render(status)
 
-    expect(markup).toContain('<dt>Nuclear charge Z</dt><dd>2.000</dd>')
-    expect(markup).toContain('<dt>Reduced-Bohr scale a_μ</dt><dd>1.250</dd>')
-    expect(markup).toContain('<dt>Reduced mass ratio</dt><dd>0.800</dd>')
+    expect(markup).toContain('<dt>核电荷 Z</dt><dd>2.000</dd>')
+    expect(markup).toContain('<dt>约化 Bohr 尺度 a_μ</dt><dd>1.250</dd>')
+    expect(markup).toContain('<dt>约化质量比 μ/mₑ</dt><dd>0.800</dd>')
   })
 })

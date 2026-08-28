@@ -22,15 +22,11 @@ export function ElectronCloud({ data, pointSize, opacity }: ElectronCloudProps) 
   }, [data])
 
   const uniforms = useMemo(
-    () =>
-      THREE.UniformsUtils.merge([
-        THREE.UniformsLib.fog,
-        {
-          pointSize: { value: pointSize },
-          pixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-          opacity: { value: opacity },
-        },
-      ]),
+    () => ({
+      pointSize: { value: pointSize },
+      pixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      opacity: { value: opacity },
+    }),
     [],
   )
 
@@ -53,8 +49,10 @@ export function ElectronCloud({ data, pointSize, opacity }: ElectronCloudProps) 
         transparent
         depthWrite={false}
         blending={THREE.NormalBlending}
-        fog
-        toneMapped
+        // Phase colour is scientific data, so it must not move with camera
+        // depth (fog) or photographic exposure (tone mapping).
+        fog={false}
+        toneMapped={false}
       />
     </points>
   )

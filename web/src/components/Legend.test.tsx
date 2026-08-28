@@ -61,10 +61,11 @@ describe('Legend names what is actually on screen', () => {
     const markup = render({ loading: false, unavailable: { kind: 'point_cloud', reason } })
 
     expect(markup).toContain(reason)
-    expect(markup).toContain('point_cloud')
+    expect(markup).toContain('电子云')
+    expect(markup).not.toContain('<strong>point_cloud</strong>')
     // A phase wheel over an empty viewport names a colour nothing is painted in.
     expect(markup).not.toContain('phase-wheel')
-    expect(markup).not.toContain('Waiting for asset metadata')
+    expect(markup).not.toContain('等待 asset metadata')
   })
 
   it('describes streamline colour as speed, not phase', () => {
@@ -74,7 +75,7 @@ describe('Legend names what is actually on screen', () => {
       metadata: eigenstateMetadata('streamlines', 'complex'),
     })
 
-    expect(markup).toContain('Probability flow speed')
+    expect(markup).toContain('概率流速率 |j|/ρ')
     expect(markup).toContain('0.0421 a.u.')
     expect(markup).not.toContain('phase-wheel')
   })
@@ -85,7 +86,7 @@ describe('Legend names what is actually on screen', () => {
       superposition: superpositionMetadata('streamlines'),
     })
 
-    expect(markup).toContain('Probability flow speed')
+    expect(markup).toContain('概率流速率 |j|/ρ')
     expect(markup).toContain('>max<')
   })
 
@@ -110,7 +111,7 @@ describe('Legend names what is actually on screen', () => {
   })
 
   it('waits for metadata rather than naming a representation it has not been told', () => {
-    expect(render({ loading: true })).toContain('Waiting for asset metadata')
+    expect(render({ loading: true })).toContain('等待 asset metadata')
   })
 })
 
@@ -151,7 +152,7 @@ describe('Legend names a slice by the field the plane actually carries', () => {
     expect(markup).not.toContain('phase-wheel')
     expect(markup).not.toContain('level set')
     expect(markup).toContain('density-ramp')
-    expect(markup).toContain('Probability density')
+    expect(markup).toContain('概率密度 |ψ|²')
   })
 
   it('names the imaginary part from the slice observable, not the coarser metadata one', () => {
@@ -174,15 +175,14 @@ describe('Legend names a slice by the field the plane actually carries', () => {
 
     expect(markup).toContain('phase-wheel')
     expect(markup).toContain(
-      'Transparent texels are masked: |ψ| below the threshold, ' +
-        'where the phase is undefined — not nodes.',
+      '透明 texel 属于 mask：|ψ| 低于阈值，此处 arg ψ 未定义；这不是节点。',
     )
-    expect(markup).toContain('6.25% of this plane is masked')
+    expect(markup).toContain('该平面有 6.25% 被 mask')
     // A node is a place where the amplitude is KNOWN to vanish -- the physically
     // interesting part of the picture. Naming the mask after it is the one
     // reading this sentence exists to forbid.
     expect(markup).not.toContain('nodal')
-    expect(markup).not.toContain('node.')
+    expect(markup).toContain('这不是节点')
   })
 
   it('labels the diverging ramp with the amplitude the colour is normalised to', () => {
@@ -196,26 +196,26 @@ describe('Legend names a slice by the field the plane actually carries', () => {
     const markup = render(sliceStatus('probability_density'))
 
     expect(markup).toContain('<span>0</span><span>max</span>')
-    expect(markup).toContain('brightness proportional to |ψ|/max|ψ| (square root of density)')
+    expect(markup).toContain('亮度 ∝ |ψ|/max|ψ|，即概率密度的平方根')
   })
 
   it('names the plane every slice was sampled on', () => {
     const markup = render(sliceStatus('phase', { plane: 'yz' }))
 
     expect(markup).toContain(
-      'Sampled on the yz plane through the origin; nearest-sample colour, no interpolation.',
+      '在过原点的 yz 平面采样；使用 nearest-sample 颜色，无插值。',
     )
   })
 
   it('refuses to name a colour scheme the slice did not report', () => {
     const markup = render(sliceStatus(undefined, { plane: undefined }))
 
-    expect(markup).toContain('Plane section')
-    expect(markup).toContain('reported no observable')
+    expect(markup).toContain('平面切片')
+    expect(markup).toContain('没有报告 observable')
     expect(markup).not.toContain('phase-wheel')
     expect(markup).not.toContain('diverging-ramp')
     expect(markup).not.toContain('density-ramp')
-    expect(markup).toContain('Sampled on the unreported plane through the origin')
+    expect(markup).toContain('在过原点的 未报告 平面采样')
   })
 
   it('shows an em dash instead of inventing a missing or non-finite number', () => {
@@ -229,9 +229,9 @@ describe('Legend names a slice by the field the plane actually carries', () => {
     expect(absent).toContain('A = —')
     // A slice that reported no unit gets the bare number, never the word
     // "undefined" pressed into service as one.
-    expect(unitless).toContain('A = 0.0421,')
+    expect(unitless).toContain('A = 0.0421，')
     expect(unitless).not.toContain('undefined')
-    expect(masked).toContain('— of this plane is masked')
+    expect(masked).toContain('该平面有 — 被 mask')
     expect(masked).not.toContain('NaN')
   })
 })

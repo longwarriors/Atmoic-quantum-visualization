@@ -18,7 +18,7 @@ describe('LoadingOverlay covers the viewport only when there is nothing in it', 
   it('names what it is waiting for when it is visible', () => {
     const markup = render(true)
     expect(markup).toContain('loading-overlay')
-    expect(markup).toContain('Computing quantum scene')
-    expect(markup).toContain('sampling / meshing / GPU upload')
+    expect(markup).toContain('正在构建量子场')
+    expect(markup).toContain('采样 · 网格构建 · GPU 上传')
   })
 })

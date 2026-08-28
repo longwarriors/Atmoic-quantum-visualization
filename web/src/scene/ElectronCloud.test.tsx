@@ -160,6 +160,20 @@ describe('ElectronCloud', () => {
     await renderer.unmount()
   })
 
+  it('keeps phase data colours independent of fog depth and tone mapping', async () => {
+    const { renderer, material } = await render(cloud())
+
+    // Negative controls: enabling either transform makes one phase acquire a
+    // different screen colour as the camera or exposure control moves.
+    expect(material.fog).toBe(false)
+    expect(material.toneMapped).toBe(false)
+    expect(material.uniforms).not.toHaveProperty('fogColor')
+    expect(material.uniforms).not.toHaveProperty('fogNear')
+    expect(material.uniforms).not.toHaveProperty('fogFar')
+
+    await renderer.unmount()
+  })
+
   it('sizes its sprites by the device pixel ratio, capped at 2', async () => {
     const original = window.devicePixelRatio
     Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true })

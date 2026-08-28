@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 
 import type { SceneStatus, SliceObservable } from '../api/types'
+import { representationLabel } from './sceneStatus'
 
 /** What an absent or non-finite number is shown as. Never "NaN", never a guess. */
 const PLACEHOLDER = '—'
@@ -29,10 +30,10 @@ function amountWithUnit(value: number, unit: string, separator = ' '): string {
  * a fifth observable a compile error here rather than an unnamed picture.
  */
 const SLICE_TITLES: Record<SliceObservable, string> = {
-  phase: 'Wavefunction phase',
-  wavefunction_real: 'Re ψ on the plane',
-  wavefunction_imag: 'Im ψ on the plane',
-  probability_density: 'Probability density',
+  phase: '波函数 phase',
+  wavefunction_real: '平面上的 Re ψ',
+  wavefunction_imag: '平面上的 Im ψ',
+  probability_density: '概率密度 |ψ|²',
 }
 
 /**
@@ -55,10 +56,8 @@ function sliceKey(status: SceneStatus): ReactElement {
         <div className="phase-wheel" />
         <div className="phase-labels"><span>−π</span><span>0</span><span>π</span></div>
         <p>
-          Transparent texels are masked: |ψ| below the threshold, where the phase is undefined
-          {' — not nodes. '}
-          {amountWithUnit((status.phaseMaskedFraction ?? Number.NaN) * 100, '%', '')} of this plane
-          is masked.
+          透明 texel 属于 mask：|ψ| 低于阈值，此处 arg ψ 未定义；这不是节点。该平面有{' '}
+          {amountWithUnit((status.phaseMaskedFraction ?? Number.NaN) * 100, '%', '')} 被 mask。
         </p>
       </>
     )
@@ -70,8 +69,8 @@ function sliceKey(status: SceneStatus): ReactElement {
         <div className="diverging-ramp" />
         <div className="phase-labels"><span>−A</span><span>0</span><span>+A</span></div>
         <p>
-          A = {extreme}, the largest |value| on this plane; colour is linear in the signed value and
-          normalised to it, so cyan and red are equal amplitudes of opposite sign.
+          A = {extreme}，即该平面最大的 |value|；颜色对有符号 value 线性映射并按 A
+          归一化，因此青色与红色表示等振幅、反符号。
         </p>
       </>
     )
@@ -83,8 +82,7 @@ function sliceKey(status: SceneStatus): ReactElement {
         <div className="density-ramp" />
         <div className="phase-labels"><span>0</span><span>max</span></div>
         <p>
-          max = {extreme}; brightness proportional to |ψ|/max|ψ| (square root of density), not to
-          the density itself.
+          max = {extreme}；亮度 ∝ |ψ|/max|ψ|，即概率密度的平方根，不与 density 本身成正比。
         </p>
       </>
     )
@@ -92,7 +90,7 @@ function sliceKey(status: SceneStatus): ReactElement {
 
   // No ramp is drawn for an observable that was never reported: a legend that
   // guessed one would name a colour scheme the texture may not be using.
-  return <p>This slice reported no observable, so its colours cannot be named.</p>
+  return <p>该切片没有报告 observable，因此无法为其颜色命名。</p>
 }
 
 /**
@@ -111,9 +109,9 @@ export function Legend({ status }: { status: SceneStatus }) {
     // metadata" would promise one that is not coming.
     return (
       <div className="legend">
-        <div className="legend-title">Nothing drawn</div>
+        <div className="legend-title">无可绘制资产</div>
         <p>
-          <strong>{status.unavailable.kind}</strong> is not available for this state.{' '}
+          <strong>{representationLabel(status.unavailable.kind)}</strong> 对当前量子态不可用。{' '}
           {status.unavailable.reason}
         </p>
       </div>
@@ -129,13 +127,12 @@ export function Legend({ status }: { status: SceneStatus }) {
       <div className="legend">
         <div className="legend-title">
           {status.sliceObservable === undefined
-            ? 'Plane section'
+            ? '平面切片'
             : SLICE_TITLES[status.sliceObservable]}
         </div>
         {sliceKey(status)}
         <p>
-          Sampled on the {status.plane ?? 'unreported'} plane through the origin; nearest-sample
-          colour, no interpolation.
+          在过原点的 {status.plane ?? '未报告'} 平面采样；使用 nearest-sample 颜色，无插值。
         </p>
       </div>
     )
@@ -144,7 +141,7 @@ export function Legend({ status }: { status: SceneStatus }) {
   if (representation === 'streamlines') {
     return (
       <div className="legend">
-        <div className="legend-title">Probability flow speed</div>
+        <div className="legend-title">概率流速率 |j|/ρ</div>
         <div className="speed-ramp" />
         <div className="phase-labels">
           <span>0</span>
@@ -153,8 +150,8 @@ export function Legend({ status }: { status: SceneStatus }) {
           </span>
         </div>
         <p>
-          Streamlines of <strong>j</strong>/ρ, evenly spaced in arc length; colour is speed, not
-          phase. These are probability-flow lines, not electron trajectories.
+          <strong>j</strong>/ρ 的 streamlines 按弧长等距采样；颜色表示速率，不表示 phase。
+          这些是概率流线，不是电子轨迹。
         </p>
       </div>
     )
@@ -162,7 +159,7 @@ export function Legend({ status }: { status: SceneStatus }) {
 
   return (
     <div className="legend">
-      <div className="legend-title">Wavefunction phase</div>
+      <div className="legend-title">波函数 phase</div>
       {basis !== 'complex' ? (
         <div className="real-legend">
           <span><i className="phase-dot red" /> phase 0</span>
@@ -176,10 +173,10 @@ export function Legend({ status }: { status: SceneStatus }) {
       )}
       <p>
         {representation === 'point_cloud'
-          ? 'Positions sample |ψ|²d³r; every marker has equal visual weight.'
+          ? '位置从 |ψ|²d³r 采样；每个 marker 具有相同视觉权重。'
           : representation === 'isosurface'
-            ? 'Geometry is a |ψ|² level set; color carries phase.'
-            : 'Waiting for asset metadata.'}
+            ? '几何是 |ψ|² level set；颜色承载 phase。'
+            : '等待 asset metadata。'}
       </p>
     </div>
   )

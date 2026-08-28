@@ -93,6 +93,9 @@ describe('Header capture', () => {
       expect(link?.getAttribute('href')).toBe('http://127.0.0.1:8000/docs')
       expect(link?.rel).toBe('noreferrer')
       expect(tree.container.textContent).toContain('QuViz')
+      expect(tree.container.textContent).toContain('量子态 · 可观测量 · 表示法')
+      expect(tree.container.textContent).toContain('OpenAPI')
+      expect(captureButton(tree).getAttribute('aria-label')).toBe('保存当前画布')
     } finally {
       await tree.unmount()
     }

@@ -462,8 +462,9 @@ def test_slice_payload_rejects_a_masked_entry_that_is_not_the_sentinel() -> None
 
 
 def test_slice_payload_rejects_non_finite_values() -> None:
-    # The app serves Starlette's default JSON encoder, which happily writes a
-    # bare NaN token that no strict JSON parser accepts.
+    # Starlette's pinned JSONResponse rejects these values only while rendering
+    # the response. The payload contract must fail earlier, where the invalid
+    # scientific field is still named and attributable.
     values = _slice_values(SliceObservable.PROBABILITY_DENSITY)
     values[7] = float("nan")
     with pytest.raises(ValueError, match="values must all be finite"):
@@ -471,6 +472,34 @@ def test_slice_payload_rejects_non_finite_values() -> None:
     values[7] = float("inf")
     with pytest.raises(ValueError, match="values must all be finite"):
         SlicePayload(**_slice_kwargs(SliceObservable.PROBABILITY_DENSITY, values=values))
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("origin_bohr", lambda bad: [bad, 0.0, 0.0], "origin_bohr must have only finite"),
+        ("u_axis", lambda bad: [1.0, bad, 0.0], "u_axis must have only finite"),
+        ("v_axis", lambda bad: [0.0, 1.0, bad], "v_axis must have only finite"),
+        ("normal", lambda bad: [bad, 0.0, 1.0], "normal must have only finite"),
+        ("extent_bohr", lambda bad: bad, "extent_bohr"),
+        ("spacing_bohr", lambda bad: bad, "spacing_bohr"),
+    ],
+)
+def test_slice_payload_rejects_non_finite_geometry(
+    bad: float,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    resolved = value(bad) if callable(value) else value
+    with pytest.raises(ValueError, match=message):
+        SlicePayload(
+            **_slice_kwargs(
+                SliceObservable.PROBABILITY_DENSITY,
+                **{field: resolved},
+            )
+        )
 
 
 def test_slice_payload_rejects_a_unit_that_contradicts_the_observable() -> None:

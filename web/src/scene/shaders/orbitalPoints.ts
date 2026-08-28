@@ -1,3 +1,5 @@
+import { PHASE_SATURATION, PHASE_TURN_RADIANS, PHASE_VALUE } from '../color'
+
 export const orbitalPointVertexShader = /* glsl */ `
   attribute float phase;
 
@@ -6,8 +8,6 @@ export const orbitalPointVertexShader = /* glsl */ `
 
   varying float vPhase;
 
-  #include <fog_pars_vertex>
-
   void main() {
     vPhase = phase;
 
@@ -15,8 +15,6 @@ export const orbitalPointVertexShader = /* glsl */ `
     float perspective = clamp(150.0 / max(1.0, -mvPosition.z), 0.45, 3.4);
     gl_PointSize = pointSize * pixelRatio * perspective;
     gl_Position = projectionMatrix * mvPosition;
-
-    #include <fog_vertex>
   }
 `
 
@@ -24,8 +22,6 @@ export const orbitalPointFragmentShader = /* glsl */ `
   uniform float opacity;
 
   varying float vPhase;
-
-  #include <fog_pars_fragment>
 
   vec3 hsv2rgb(vec3 c) {
     vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
@@ -38,12 +34,14 @@ export const orbitalPointFragmentShader = /* glsl */ `
     float disc = 1.0 - smoothstep(0.18, 0.50, radius);
     if (disc <= 0.001) discard;
 
-    float hue = fract(vPhase / 6.28318530718 + 1.0);
-    vec3 phaseColor = hsv2rgb(vec3(hue, 0.72, 0.98));
-    gl_FragColor = vec4(phaseColor, disc * opacity * 0.60);
+    float hue = fract(vPhase / ${PHASE_TURN_RADIANS} + 1.0);
+    vec3 phaseSrgb = hsv2rgb(vec3(hue, ${PHASE_SATURATION}, ${PHASE_VALUE}));
+    // The palette is defined in sRGB so its numbers are the CSS legend's
+    // bytes. Render targets hold linear light: decode once here, then let the
+    // output chunk encode once when this pass eventually reaches the screen.
+    vec3 phaseLinear = sRGBTransferEOTF(vec4(phaseSrgb, 1.0)).rgb;
+    gl_FragColor = vec4(phaseLinear, disc * opacity * 0.60);
 
-    #include <tonemapping_fragment>
     #include <colorspace_fragment>
-    #include <fog_fragment>
   }
 `

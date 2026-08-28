@@ -385,17 +385,23 @@ export function SceneContent({
   }
 }
 
+type SceneStoreState = ReturnType<typeof useSceneStore.getState>
+
+interface SceneViewProps {
+  state: SceneStoreState
+  asset: SceneAsset | null
+  fitKey: string | null
+}
+
 /**
- * Everything inside the canvas that does not need a GPU.
+ * The in-canvas view of an already coordinated scene.
  *
- * Split out from `OrbitalCanvas` so the composition can be mounted under
- * `@react-three/test-renderer` and asserted on: the store reaches the request
- * layer here, the asset reaches the right component here, and the scene's own
- * extent reaches the fog and the grid here.
+ * Keeping the fetched asset as an explicit input is important: the same asset
+ * must drive both the object that is drawn and the post-processing decision in
+ * `OrbitalCanvas`. The requested representation can lead the response while a
+ * fetch is in flight, but this value always describes the frame on screen.
  */
-export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
-  const state = useSceneStore()
-  const { asset, fitKey } = useSceneAsset(sceneAssetInputs(state), onStatus)
+function SceneView({ state, asset, fitKey }: SceneViewProps) {
   const extent = sceneExtentBohr(asset)
   const reducedMotion = usePrefersReducedMotion()
 
@@ -440,6 +446,46 @@ export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
   )
 }
 
+function useSceneModel(onStatus: OrbitalCanvasProps['onStatus']): SceneViewProps {
+  const state = useSceneStore()
+  const { asset, fitKey } = useSceneAsset(sceneAssetInputs(state), onStatus)
+  return { state, asset, fitKey }
+}
+
+/**
+ * Everything inside the canvas that does not need a GPU.
+ *
+ * Split out from `OrbitalCanvas` so the composition can be mounted under
+ * `@react-three/test-renderer` and asserted on: the store reaches the request
+ * layer here, the asset reaches the right component here, and the scene's own
+ * extent reaches the fog and the grid here.
+ */
+export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
+  const model = useSceneModel(onStatus)
+  return <SceneView {...model} />
+}
+
+/** Whether the frame actually on screen may use the presentation post chain. */
+export function usesPresentationEffects(asset: SceneAsset | null): boolean {
+  if (asset === null) return false
+  switch (asset.kind) {
+    case 'point_cloud':
+    case 'isosurface':
+    case 'superposition_isosurface':
+      return false
+    case 'slice':
+    case 'superposition_slice':
+    case 'streamlines':
+    case 'superposition_streamlines':
+      return true
+  }
+
+  // Compile-time fail-closed policy: a new asset kind must choose its colour
+  // treatment explicitly instead of silently inheriting presentation effects.
+  const unhandled: never = asset
+  throw new Error(`usesPresentationEffects: unhandled asset ${String(unhandled)}`)
+}
+
 /**
  * The WebGL surface, and nothing else.
  *
@@ -450,7 +496,19 @@ export function SceneRoot({ onStatus }: OrbitalCanvasProps) {
  * needs one.
  */
 export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
-  const bloom = useSceneStore((state) => state.bloom)
+  const model = useSceneModel(onStatus)
+  // Point clouds and isosurfaces use the adjacent phase legend as a data key.
+  // A full-frame bloom/vignette pass runs after material fog/tone-mapping
+  // flags and would therefore recolour even an explicitly unlit data layer.
+  // Keep that presentation chain off those two representations. Slice pixels
+  // retain their separately baselined pipeline; streamlines retain the legacy
+  // speed presentation until each receives the same representation-level
+  // visual audit.
+  // This MUST follow the arrived asset, not the store's requested
+  // representation. During a cross-kind request the store leads the screen;
+  // consulting it here would briefly recolour the old scientific frame (or
+  // remove effects from the old presentation frame) before the response lands.
+  const showPresentationEffects = usesPresentationEffects(model.asset)
 
   return (
     <Canvas
@@ -469,13 +527,20 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
         gl.toneMappingExposure = 1.0
       }}
     >
-      <SceneRoot onStatus={onStatus} />
-      {/* Bloom and vignette read the rendered buffers back, so unlike
-          everything above them they cannot exist without a real renderer. */}
-      <EffectComposer multisampling={0}>
-        <Bloom intensity={bloom} luminanceThreshold={0.56} luminanceSmoothing={0.46} mipmapBlur />
-        <Vignette eskil={false} offset={0.18} darkness={0.76} />
-      </EffectComposer>
+      <SceneView {...model} />
+      {showPresentationEffects ? (
+        /* Bloom and vignette read the rendered buffers back, so unlike
+           everything above them they cannot exist without a real renderer. */
+        <EffectComposer multisampling={0}>
+          <Bloom
+            intensity={model.state.bloom}
+            luminanceThreshold={0.56}
+            luminanceSmoothing={0.46}
+            mipmapBlur
+          />
+          <Vignette eskil={false} offset={0.18} darkness={0.76} />
+        </EffectComposer>
+      ) : null}
     </Canvas>
   )
 }

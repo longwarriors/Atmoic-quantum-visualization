@@ -7,15 +7,21 @@
 仓库使用 React、TypeScript、Vite、React Three Fiber、Drei、Three.js `BufferGeometry`、自定义点云 shader 和后处理。生产构建已通过，并完成以下 M0R 修复：
 
 - 点云使用普通 alpha blending 和统一 marker 权重，密度只由空间点浓度编码；
-- 点云与等值面使用同一 HSV 周期相位映射，实基相位 0 为红、相位 $\pi$ 为青；
-- 曝光、雾、Bloom 和 opacity 控件实际驱动 renderer；
+- 点云与等值面使用同一套以 sRGB 定义的 HSV 周期相位映射，送入 GPU 前统一解码到 Linear-sRGB；实基相位 0 为红、相位 $\pi$ 为青；
+- 雾、Bloom 和 opacity 控件只出现在实际消费它们的展示层；相位点云/等值面刻意绕过会改写数据色的雾与全帧后处理，因此这些 representation 不显示 Bloom。Exposure 在后处理接管 tone mapping 的真实挂载路径完成验证前不向用户暴露；
 - 新资产到达后按轨道方向重新选择观察轴并 fit camera；
 - Inspector 从服务端 metadata 显示标签、能量、单位、几何/颜色语义和引用；
 - 等值面默认不透明并使用已校正绕向的 front faces，避免透明排序制造假结构。
 
 PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与右手 $(u,v,n)$ 标架，前端把它上传成一张 `DataTexture` 贴在一块按同一标架旋转的 quad 上（`src/scene/SliceField.tsx`）。
 
-截图回归的接线已经进 CI（`web/e2e/`、`npm run test:visual`、`ci.yml` 的 `web-visual` job），但**基线 PNG 还没有**：它们只能由 Linux/SwiftShader 产生，且必须有人逐张看过第一次失败运行的 `*-actual.png` 之后才提交，见[质量门禁](../reference/quality-gates.md)。交互回归仍只有 vitest 层的组件测试，主 bundle 也需要拆分。完整边界见[当前状态](../project/status.md)。
+截图回归的接线已经进 CI（`web/e2e/`、`npm run test:visual`、`ci.yml` 的 `web-visual` job），五张经人工检查、只由 Linux/SwiftShader 产生的 PNG 基线已经提交，见[质量门禁](../reference/quality-gates.md)。这套端到端回归覆盖切片主路径，不代表真实 GPU、多浏览器或其余表示法；主 bundle 也仍需拆分。完整边界见[当前状态](../project/status.md)。
+
+## 界面语言与视觉层级
+
+WebUI 采用“中文主述、专业记法原样保留”的单一信息层级，不把同一句话并排做中英文翻译。操作、状态、错误前缀和解释句使用中文；`basis`、`phase`、`density`、`OpenAPI`、`Bloom`、`arg ψ`、`Re ψ`、`Im ψ`、`|ψ|²`、`Ha`、`bohr` 与 `a.u.` 等名称、公式和单位保持领域写法。`point_cloud` 之类 wire enum 仍留在请求与 metadata 中，但界面显示“电子云 / 等密度面 / 平面切片 / 概率流线”。
+
+视觉系统是低饱和深色底、细边框、少量 cyan 状态色和等宽数值，不再使用蓝紫玻璃拟态、强 glow 或装饰性渐变；科学色轮、发散色标和 density ramp 不跟随品牌色重设计。桌面壳固定为 `100dvh`，左右 panel 各自滚动，画布尺寸不再随控制项或 Inspector 的内容高度变化；`1180px` 以下恢复自然页面滚动，`820px` 以下按 viewport → 控制栏 → Inspector 排成单列。
 
 ## 当前渲染契约
 
@@ -43,7 +49,7 @@ PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与
 
 等值面路径是：后端用 `indexing="ij"`、显式 spacing 和奇数网格生成 scalar field；marching cubes 返回顶点和 faces；后端验证包围质量、法向/绕向和节点；前端只创建 indexed geometry 并应用材质 [@skimage-marching-cubes]。
 
-相位由颜色承载，几何由 $|\psi|^2=c$ 承载。透明度、Fresnel rim、Bloom 或雾都必须足够克制，不能让彼此分离的叶瓣看似连接。
+相位由颜色承载，几何由 $|\psi|^2=c$ 承载。等值面使用未照明材质，不接收或投射阴影；点云和等值面都绕过 fog、tone mapping 以及全帧 Bloom/Vignette，使相位色不随法线、灯光、景深或后处理改变。透明度仍会按正常 alpha 合成，因此图例描述的是源数据色，不承诺半透明像素与 CSS 字节相等。
 
 ## 平面切片
 
@@ -51,7 +57,7 @@ PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与
 
 三条渲染决定必须写出来，不能靠默认值：
 
-- **采样与色彩空间四项全部显式设置**：`magFilter` / `minFilter` 都是 `NearestFilter`（插值会在节线两侧编出后端从未计算过的中间值）、`flipY = false`（行主序的第 0 行就是 $v$ 的第 0 个样本，翻转即上下镜像）、`colorSpace = NoColorSpace`（texel 已经是要显示的字节，再做一次 sRGB 转换等于把色标解码两次）。这四项恰好是 three@0.185.1 `DataTexture` 的默认值，但**默认值是关于当前版本的事实，不是关于本项目的决定**，所以逐条写出并各带一句理由；
+- **采样与色彩空间四项全部显式设置**：`magFilter` / `minFilter` 都是 `NearestFilter`（插值会在节线两侧编出后端从未计算过的中间值）、`flipY = false`（行主序的第 0 行就是 $v$ 的第 0 个样本，翻转即上下镜像）、`colorSpace = SRGBColorSpace`（texel 保存的是与 CSS 图例相同的 sRGB 字节，采样时先解码到线性空间，输出时再编码回 sRGB，屏幕字节才保持不变）。前三项是 three@0.185.1 `DataTexture` 的默认值，色彩空间不是；**默认值是关于当前版本的事实，不是关于本项目的决定**，所以四项都逐条写出并各带一句理由；
 - **quad 的边长是 `resolution * spacing`，不是 `2 * extent`**：样本是格心，整张图比被采样的跨度正好宽一个 spacing；
 - **被遮罩的样本画成全透明且为黑**，而不是画成哨兵值 `0.0` 的颜色——`0.0` 是一个完全合法的相位（“正实数”），照着画会把低振幅区域填成一片“有确定相位”的颜色。
 

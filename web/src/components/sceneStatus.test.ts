@@ -10,6 +10,8 @@ import type {
   SuperpositionMetadata,
 } from '../api/types'
 import {
+  observableLabel,
+  representationLabel,
   statusFromCurrentField,
   statusFromSlice,
   statusFromSuperpositionIsosurface,
@@ -52,6 +54,20 @@ const orbitalMetadata: OrbitalMetadata = {
   references: [],
   warnings: ['current warning'],
 }
+
+describe('scene status UI labels', () => {
+  it('localizes known wire values without rewriting unknown contract values', () => {
+    expect(representationLabel('point_cloud')).toBe('电子云')
+    expect(representationLabel('streamlines')).toBe('概率流线')
+    expect(representationLabel('future_representation')).toBe('future_representation')
+    expect(representationLabel(undefined)).toBe('—')
+
+    expect(observableLabel('probability_density')).toBe('概率密度 |ψ|²')
+    expect(observableLabel('probability_current')).toBe('概率流 j')
+    expect(observableLabel('future_observable')).toBe('future_observable')
+    expect(observableLabel(undefined)).toBe('—')
+  })
+})
 
 describe('scene payload status adapters', () => {
   it('forwards every finite-box and render-grid diagnostic', () => {

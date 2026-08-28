@@ -293,6 +293,8 @@ class _SlicePayloadBase(BaseModel):
         ):
             if len(vector) != 3:
                 raise ValueError(f"{name} must have three components, got {len(vector)}")
+            if not all(isfinite(value) for value in vector):
+                raise ValueError(f"{name} must have only finite components")
 
         unit = SLICE_VALUE_UNITS[self.slice_observable]
         if self.value_unit != unit:
@@ -301,11 +303,17 @@ class _SlicePayloadBase(BaseModel):
                 f"got {self.value_unit!r}"
             )
 
-        # Starlette's default JSON encoder writes bare NaN and Infinity tokens,
-        # which no strict JSON parser accepts. A non-finite sample must fail
-        # here, where it is still attributable, not in the browser.
+        # Starlette's pinned JSONResponse rejects NaN and Infinity while
+        # serialising. Reject them here first so the API reports a broken
+        # scientific payload at its source instead of turning it into an
+        # unattributable response-rendering failure. This also keeps the
+        # contract safe if a future response class is more permissive.
         if not all(isfinite(value) for value in self.values):
             raise ValueError("values must all be finite: JSON has no NaN or Infinity")
+        if not isfinite(self.extent_bohr):
+            raise ValueError("extent_bohr must be finite")
+        if not isfinite(self.spacing_bohr):
+            raise ValueError("spacing_bohr must be finite")
         if not isfinite(self.masked_value_sentinel):
             raise ValueError("masked_value_sentinel must be finite")
         if not isfinite(self.max_amplitude_on_plane):

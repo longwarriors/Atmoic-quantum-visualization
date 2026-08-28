@@ -464,7 +464,7 @@ describe('useSceneAsset', () => {
     const status = latest(statuses)
     expect(status.loading).toBe(false)
     expect(status.unavailable?.kind).toBe('point_cloud')
-    expect(status.unavailable?.reason).toContain('has not been built')
+    expect(status.unavailable?.reason).toContain('尚未实现')
     await tree.unmount()
   })
 

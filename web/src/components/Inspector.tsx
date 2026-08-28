@@ -1,6 +1,7 @@
 import { AlertTriangle, Box, Database, Gauge, Sigma } from 'lucide-react'
 
 import type { SceneStatus } from '../api/types'
+import { observableLabel, representationLabel } from './sceneStatus'
 
 interface InspectorProps {
   status: SceneStatus
@@ -94,11 +95,10 @@ function formatSuperpositionTerms(terms: NonNullable<SceneStatus['superposition'
 
 function formatFiniteGridMassStatus(status: NonNullable<SceneStatus['finiteGridMassStatus']>): string {
   const labels: Record<NonNullable<SceneStatus['finiteGridMassStatus']>, string> = {
-    phase_dependent_quadrature_error: 'phase-dependent quadrature error',
-    time_invariant_quadrature_error: 'time-invariant quadrature error',
-    quadrature_error_at_reported_time: 'quadrature error at reported time',
-    no_error_above_tolerance_proven:
-      'no above-threshold error demonstrated (accuracy not certified)',
+    phase_dependent_quadrature_error: '检测到 phase-dependent quadrature error',
+    time_invariant_quadrature_error: '检测到 time-invariant quadrature error',
+    quadrature_error_at_reported_time: '当前 t 检测到 quadrature error',
+    no_error_above_tolerance_proven: '未发现超过阈值的 error（不构成 accuracy 证明）',
   }
   return labels[status]
 }
@@ -116,15 +116,15 @@ export function Inspector({ status }: InspectorProps) {
   const subtitle = state
     ? `ψ(${state.n}, ${state.l}, ${state.m}) · ${state.basis} basis`
     : mixture
-      ? `${mixture.terms.length}-term superposition · ${mixture.basis} basis`
-      : 'Awaiting verified metadata'
+      ? `${mixture.terms.length} 项叠加 · ${mixture.basis} basis`
+      : '等待已验证 metadata'
 
   return (
     <aside className="panel inspector-panel">
-      <span className="eyebrow">SCENE CONTRACT</span>
+      <span className="eyebrow">场景契约</span>
       <div className="state-title-row">
         <div>
-          <h2>{label ?? (status.loading ? 'Computing…' : 'No asset')}</h2>
+          <h2>{label ?? (status.loading ? '计算中…' : '暂无资产')}</h2>
           <p>{subtitle}</p>
         </div>
         <span className="energy-pill">
@@ -135,17 +135,17 @@ export function Inspector({ status }: InspectorProps) {
       <div className="inspector-grid">
         <div className="metric-card">
           <Sigma size={15} />
-          <span>Observable</span>
-          <strong>{observable ?? '—'}</strong>
+          <span>可观测量</span>
+          <strong>{observableLabel(observable)}</strong>
         </div>
         <div className="metric-card">
           <Box size={15} />
-          <span>Representation</span>
-          <strong>{representation ?? '—'}</strong>
+          <span>表示法</span>
+          <strong>{representationLabel(representation)}</strong>
         </div>
         <div className="metric-card">
           <Database size={15} />
-          <span>Asset size</span>
+          <span>资产规模</span>
           <strong>
             {status.pointCount !== undefined
               ? formatFiniteUnit(status.pointCount, { kind: 'count' }, 'pts')
@@ -165,17 +165,17 @@ export function Inspector({ status }: InspectorProps) {
         </div>
         <div className="metric-card">
           <Gauge size={15} />
-          <span>Extent</span>
+          <span>空间范围</span>
           <strong>{formatFiniteUnit(status.extentBohr, { kind: 'fixed', digits: 2 }, 'bohr')}</strong>
         </div>
       </div>
 
       <dl className="contract-list">
-        <div><dt>Coordinates</dt><dd>{metadata?.coordinate_convention ?? mixture?.coordinate_convention ?? '—'}</dd></div>
-        <div><dt>Normalization</dt><dd>{metadata?.normalization ?? mixture?.normalization ?? '—'}</dd></div>
-        <div><dt>Length unit</dt><dd>{metadata?.length_unit ?? mixture?.length_unit ?? '—'}</dd></div>
-        <div><dt>Geometry</dt><dd>{metadata?.geometry_semantics ?? mixture?.geometry_semantics ?? '—'}</dd></div>
-        <div><dt>Color</dt><dd>{metadata?.color_semantics ?? mixture?.color_semantics ?? '—'}</dd></div>
+        <div><dt>坐标约定</dt><dd>{metadata?.coordinate_convention ?? mixture?.coordinate_convention ?? '—'}</dd></div>
+        <div><dt>归一化</dt><dd>{metadata?.normalization ?? mixture?.normalization ?? '—'}</dd></div>
+        <div><dt>长度单位</dt><dd>{metadata?.length_unit ?? mixture?.length_unit ?? '—'}</dd></div>
+        <div><dt>几何语义</dt><dd>{metadata?.geometry_semantics ?? mixture?.geometry_semantics ?? '—'}</dd></div>
+        <div><dt>色彩语义</dt><dd>{metadata?.color_semantics ?? mixture?.color_semantics ?? '—'}</dd></div>
         {/*
           The scales the superposition was actually built with. a_mu = m_e/mu is
           the dimensionless reduced-Bohr scale in ordinary bohr, and the reduced
@@ -183,26 +183,26 @@ export function Inspector({ status }: InspectorProps) {
           because they set the length and energy scales of everything above.
         */}
         {mixture ? (
-          <div><dt>Nuclear charge Z</dt><dd>{formatFinite(mixture.z, { kind: 'magnitude', digits: 3 })}</dd></div>
+          <div><dt>核电荷 Z</dt><dd>{formatFinite(mixture.z, { kind: 'magnitude', digits: 3 })}</dd></div>
         ) : null}
         {mixture ? (
-          <div><dt>Reduced-Bohr scale a_μ</dt><dd>{formatFinite(mixture.a_mu, { kind: 'magnitude', digits: 3 })}</dd></div>
+          <div><dt>约化 Bohr 尺度 a_μ</dt><dd>{formatFinite(mixture.a_mu, { kind: 'magnitude', digits: 3 })}</dd></div>
         ) : null}
         {mixture ? (
           <div>
-            <dt>Reduced mass ratio</dt>
+            <dt>约化质量比 μ/mₑ</dt>
             <dd>{formatFinite(mixture.reduced_mass_ratio, { kind: 'magnitude', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.radialMass !== undefined ? (
           <div>
-            <dt>Radial mass</dt>
+            <dt>径向质量</dt>
             <dd>{formatFiniteUnit(status.radialMass * 100, { kind: 'fixed', digits: 5 }, '%', '')}</dd>
           </div>
         ) : null}
         {status.capturedProbabilityMass !== undefined ? (
           <div>
-            <dt>Superlevel mass</dt>
+            <dt>超水平集质量</dt>
             <dd>
               {formatFiniteUnit(status.capturedProbabilityMass * 100, { kind: 'fixed', digits: 3 }, '%', '')}
             </dd>
@@ -210,13 +210,13 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.finiteGridDensityIntegral !== undefined ? (
           <div>
-            <dt>Finite-grid ∫ρdV</dt>
+            <dt>有限网格 ∫ρdV</dt>
             <dd>{formatFinite(status.finiteGridDensityIntegral, { kind: 'fixed', digits: 6 })}</dd>
           </div>
         ) : null}
         {status.gridResolution !== undefined ? (
           <div>
-            <dt>Grid</dt>
+            <dt>3D 网格</dt>
             <dd>
               {formatFinite(status.gridResolution, { kind: 'count' })}³ · Δ=
               {formatFiniteUnit(status.gridSpacingBohr, { kind: 'fixed', digits: 3 }, 'bohr')}
@@ -235,11 +235,11 @@ export function Inspector({ status }: InspectorProps) {
           the evidence behind every number beside it.
         */}
         {status.plane !== undefined ? (
-          <div><dt>Plane</dt><dd>{status.plane}</dd></div>
+          <div><dt>切片平面</dt><dd>{status.plane}</dd></div>
         ) : null}
         {status.sliceResolution !== undefined ? (
           <div>
-            <dt>Slice grid</dt>
+            <dt>2D 网格</dt>
             <dd>
               {formatFinite(status.sliceResolution, { kind: 'count' })} ×{' '}
               {formatFinite(status.sliceResolution, { kind: 'count' })} · Δ=
@@ -248,7 +248,7 @@ export function Inspector({ status }: InspectorProps) {
           </div>
         ) : null}
         {status.sliceValueUnit !== undefined ? (
-          <div><dt>Value unit</dt><dd>{status.sliceValueUnit}</dd></div>
+          <div><dt>数值单位</dt><dd>{status.sliceValueUnit}</dd></div>
         ) : null}
         {/*
           The extreme the renderer normalises colour to -- the largest |value|
@@ -259,7 +259,7 @@ export function Inspector({ status }: InspectorProps) {
         */}
         {status.sliceMaxAbsValue !== undefined ? (
           <div>
-            <dt>Max |value|</dt>
+            <dt>max |value|</dt>
             <dd>{formatFinite(status.sliceMaxAbsValue, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
@@ -273,7 +273,7 @@ export function Inspector({ status }: InspectorProps) {
         */}
         {status.phaseMaskRelativeAmplitude !== undefined ? (
           <div>
-            <dt>Phase mask relative</dt>
+            <dt>phase mask 相对阈值</dt>
             <dd>
               {formatFinite(status.phaseMaskRelativeAmplitude, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -281,7 +281,7 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.phaseMaskAmplitudeScale !== undefined ? (
           <div>
-            <dt>Phase mask scale</dt>
+            <dt>phase mask 振幅尺度</dt>
             <dd>
               {formatFinite(status.phaseMaskAmplitudeScale, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -289,7 +289,7 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.phaseMaskAmplitudeThreshold !== undefined ? (
           <div>
-            <dt>Phase mask threshold</dt>
+            <dt>phase mask 振幅阈值</dt>
             <dd>
               {formatFinite(status.phaseMaskAmplitudeThreshold, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -297,7 +297,7 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.phaseMaskNumericFloor !== undefined ? (
           <div>
-            <dt>Phase mask floor</dt>
+            <dt>phase mask 数值下限</dt>
             <dd>
               {formatFinite(status.phaseMaskNumericFloor, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -305,7 +305,7 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.phaseMaskedFraction !== undefined ? (
           <div>
-            <dt>Masked fraction</dt>
+            <dt>mask 占比</dt>
             <dd>
               {formatFiniteUnit(
                 status.phaseMaskedFraction * 100,
@@ -324,25 +324,25 @@ export function Inspector({ status }: InspectorProps) {
         */}
         {status.maskedValueSentinel !== undefined ? (
           <div>
-            <dt>Masked value sentinel</dt>
+            <dt>mask 哨兵值</dt>
             <dd>{formatFinite(status.maskedValueSentinel, { kind: 'magnitude', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteGridMassStatus !== undefined ? (
           <div>
-            <dt>Grid mass status</dt>
+            <dt>网格质量状态</dt>
             <dd>{formatFiniteGridMassStatus(status.finiteGridMassStatus)}</dd>
           </div>
         ) : null}
         {status.finiteGridReportingTolerance !== undefined ? (
           <div>
-            <dt>Grid report threshold</dt>
+            <dt>网格报告阈值</dt>
             <dd>{formatFinite(status.finiteGridReportingTolerance, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteGridMassErrorLowerBound !== undefined ? (
           <div>
-            <dt>Grid mass error ≥</dt>
+            <dt>网格质量 error ≥</dt>
             <dd>{formatFinite(status.finiteGridMassErrorLowerBound, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
@@ -352,13 +352,13 @@ export function Inspector({ status }: InspectorProps) {
         */}
         {status.finiteGridPhaseVariationBound !== undefined ? (
           <div>
-            <dt>Grid phase variation ≤</dt>
+            <dt>网格 phase 变化 ≤</dt>
             <dd>{formatFinite(status.finiteGridPhaseVariationBound, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteGridAliasingVariationLowerBound !== undefined ? (
           <div>
-            <dt>Grid alias variation ≥</dt>
+            <dt>网格 alias 变化 ≥</dt>
             <dd>
               {formatFinite(status.finiteGridAliasingVariationLowerBound, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -367,13 +367,13 @@ export function Inspector({ status }: InspectorProps) {
         {/* Probability outside the render box, bounded from the component tails. */}
         {status.finiteBoxTailMassUpperBound !== undefined ? (
           <div>
-            <dt>Finite-box tail mass ≤</dt>
+            <dt>有限盒尾部质量 ≤</dt>
             <dd>{formatFinite(status.finiteBoxTailMassUpperBound, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.finiteBoxMassVariationUpperBound !== undefined ? (
           <div>
-            <dt>Finite-box variation ≤</dt>
+            <dt>有限盒变化 ≤</dt>
             <dd>
               {formatFinite(status.finiteBoxMassVariationUpperBound, { kind: 'exponential', digits: 3 })}
             </dd>
@@ -381,13 +381,13 @@ export function Inspector({ status }: InspectorProps) {
         ) : null}
         {status.timeAu !== undefined ? (
           <div>
-            <dt>Time</dt>
+            <dt>t</dt>
             <dd>{formatFiniteUnit(status.timeAu, { kind: 'fixed', digits: 2 }, 'a.u.')}</dd>
           </div>
         ) : null}
         {status.superposition ? (
           <div>
-            <dt>Coefficients</dt>
+            <dt>系数</dt>
             <dd>
               {formatSuperpositionTerms(status.superposition.terms)}
             </dd>
@@ -402,12 +402,12 @@ export function Inspector({ status }: InspectorProps) {
                 { kind: 'fixed', digits: 6 },
                 'Ha',
               )}
-              {status.superposition.is_stationary ? ' · stationary density' : ''}
+              {status.superposition.is_stationary ? ' · 定态 density' : ''}
             </dd>
           </div>
         ) : null}
         {status.lineCount !== undefined ? (
-          <div><dt>Streamlines</dt><dd>{formatFinite(status.lineCount, { kind: 'count' })}</dd></div>
+          <div><dt>流线数</dt><dd>{formatFinite(status.lineCount, { kind: 'count' })}</dd></div>
         ) : null}
         {status.maxSpeed !== undefined ? (
           <div>
@@ -424,43 +424,43 @@ export function Inspector({ status }: InspectorProps) {
         */}
         {status.continuityResidual !== undefined ? (
           <div>
-            <dt>Continuity residual</dt>
+            <dt>连续性 residual</dt>
             <dd>{formatFinite(status.continuityResidual, { kind: 'exponential', digits: 2 })}</dd>
           </div>
         ) : null}
         {status.continuityAbsoluteResidual !== undefined ? (
           <div>
-            <dt>Continuity |residual|</dt>
+            <dt>连续性 |residual|</dt>
             <dd>{formatFinite(status.continuityAbsoluteResidual, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.continuityScale !== undefined ? (
           <div>
-            <dt>Continuity scale</dt>
+            <dt>连续性尺度</dt>
             <dd>{formatFinite(status.continuityScale, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
         {status.continuityScaleKind !== undefined ? (
           <div>
-            <dt>Continuity scale kind</dt>
+            <dt>连续性尺度类型</dt>
             <dd>{status.continuityScaleKind.replaceAll('_', ' ')}</dd>
           </div>
         ) : null}
         {status.continuityProbeCount !== undefined ? (
           <div>
-            <dt>Continuity probes</dt>
+            <dt>连续性 probe 数</dt>
             <dd>{formatFinite(status.continuityProbeCount, { kind: 'count' })}</dd>
           </div>
         ) : null}
         {status.continuityPhaseCount !== undefined ? (
           <div>
-            <dt>Continuity phase samples</dt>
+            <dt>连续性 phase 样本</dt>
             <dd>{formatFinite(status.continuityPhaseCount, { kind: 'count' })}</dd>
           </div>
         ) : null}
         {status.densityLevel !== undefined ? (
           <div>
-            <dt>Density level</dt>
+            <dt>density level</dt>
             <dd>{formatFinite(status.densityLevel, { kind: 'exponential', digits: 3 })}</dd>
           </div>
         ) : null}
@@ -468,7 +468,7 @@ export function Inspector({ status }: InspectorProps) {
 
       {(metadata ?? mixture)?.references.length ? (
         <div className="reference-block">
-          <span>Reference keys</span>
+          <span>参考文献 key</span>
           {(metadata ?? mixture)!.references.map((reference) => (
             <code key={reference}>{reference}</code>
           ))}
@@ -476,7 +476,7 @@ export function Inspector({ status }: InspectorProps) {
       ) : null}
 
       {status.error ? (
-        <div className="warning-card error"><AlertTriangle size={16} /><span>{status.error}</span></div>
+        <div className="warning-card error"><AlertTriangle size={16} /><span>场景错误 · {status.error}</span></div>
       ) : null}
       {status.warnings?.map((warning) => (
         <div className="warning-card" key={warning}><AlertTriangle size={16} /><span>{warning}</span></div>

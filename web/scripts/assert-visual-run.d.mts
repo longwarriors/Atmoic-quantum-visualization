@@ -54,10 +54,22 @@ export interface PlaywrightJsonReport {
   }
 }
 
+/** Required test titles, keyed by web-root-relative visual spec path. */
+export const REQUIRED_VISUAL_TESTS: Readonly<Record<string, readonly string[]>>
+
 /** e2e spec files under `<webRoot>/e2e`, sorted, as web-root-relative posix paths. */
 export function listVisualSpecFiles(webRoot: string): string[]
 
-/** Problems found in `report`; empty when every expected spec ran and every test passed. */
+/** Problems found when the discovered spec inventory differs from the closed manifest. */
+export function auditVisualSpecInventory(actualSpecs: readonly string[]): string[]
+
+/** Problems found when one spec source is missing a required visual assertion. */
+export function auditVisualSpecSource(specPath: string, source: string): string[]
+
+/** Read and audit every visual spec source under `webRoot`. */
+export function auditVisualSources(webRoot: string): string[]
+
+/** Problems found in `report`; empty when every required title ran exactly once and passed. */
 export function auditVisualRun(
   report: PlaywrightJsonReport,
   expectedSpecs: readonly string[],
