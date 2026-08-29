@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from math import tau
 
 from fastapi import APIRouter, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 
 from quviz import __version__
 from quviz.conventions import (
@@ -14,15 +16,20 @@ from quviz.conventions import (
     RepresentationKind,
     SliceObservable,
 )
-from quviz.physics.hydrogenic import validate_quantum_numbers
+from quviz.errors import ScientificComputationError
+from quviz.physics.hydrogenic import hydrogenic_energy_hartree, validate_quantum_numbers
 from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
 from quviz.sampling.point_cloud import sample_orbital_point_cloud
 from quviz.scene.binary import encode_point_cloud
 from quviz.scene.builders import (
+    CurrentFieldWorkEstimate,
     build_current_field,
     build_isosurface,
     build_superposition_current_field,
     build_superposition_isosurface,
+    estimate_current_field_workload,
+    estimate_superposition_current_workload,
+    estimate_superposition_isosurface_workload,
     orbital_metadata,
 )
 from quviz.scene.models import (
@@ -40,9 +47,22 @@ from quviz.scene.slices import (
     MINIMUM_SLICE_RESOLUTION,
     build_slice,
     build_superposition_slice,
+    superposition_slice_resolution_floor,
 )
 
 router = APIRouter(prefix="/api", tags=["QuViz"])
+_SCIENTIFIC_REQUEST_ERRORS = (
+    ValueError,
+    ScientificComputationError,
+    FloatingPointError,
+    OverflowError,
+)
+
+
+def _isolated_cached_payload[PayloadModel: BaseModel](payload: PayloadModel) -> PayloadModel:
+    """Keep mutable response models from becoming shared cache state."""
+
+    return payload.model_copy(deep=True)
 
 
 @router.get("/health")
@@ -55,17 +75,34 @@ def orbital_catalog() -> list[dict[str, object]]:
     """Curated presets that have immediately recognizable geometry."""
 
     return [
-        {"id": "1s", "n": 1, "l": 0, "m": 0, "basis": "real", "label": "1s"},
-        {"id": "2px", "n": 2, "l": 1, "m": 1, "basis": "real", "label": "2pₓ"},
-        {"id": "2py", "n": 2, "l": 1, "m": -1, "basis": "real", "label": "2pᵧ"},
-        {"id": "2pz", "n": 2, "l": 1, "m": 0, "basis": "real", "label": "2p_z"},
-        {"id": "3dxy", "n": 3, "l": 2, "m": -2, "basis": "real", "label": "3dₓᵧ"},
-        {"id": "3dz2", "n": 3, "l": 2, "m": 0, "basis": "real", "label": "3d_z²"},
+        {"id": "1s", "n": 1, "l": 0, "m": 0, "z": 1.0, "basis": "real", "label": "1s"},
+        {"id": "2px", "n": 2, "l": 1, "m": 1, "z": 1.0, "basis": "real", "label": "2pₓ"},
+        {"id": "2py", "n": 2, "l": 1, "m": -1, "z": 1.0, "basis": "real", "label": "2pᵧ"},
+        {"id": "2pz", "n": 2, "l": 1, "m": 0, "z": 1.0, "basis": "real", "label": "2p_z"},
+        {
+            "id": "3dxy",
+            "n": 3,
+            "l": 2,
+            "m": -2,
+            "z": 1.0,
+            "basis": "real",
+            "label": "3dₓᵧ",
+        },
+        {
+            "id": "3dz2",
+            "n": 3,
+            "l": 2,
+            "m": 0,
+            "z": 1.0,
+            "basis": "real",
+            "label": "3d_z²",
+        },
         {
             "id": "3d-complex",
             "n": 3,
             "l": 2,
             "m": 2,
+            "z": 1.0,
             "basis": "complex",
             "label": "3d, m=2",
         },
@@ -133,7 +170,10 @@ def point_cloud(
     seed: int = Query(7, ge=0, le=2_147_483_647),
 ) -> Response:
     _validate_or_422(n, l, m)
-    payload, radial_mass, extent = _point_cloud_bytes(n, l, m, z, basis, samples, seed)
+    try:
+        payload, radial_mass, extent = _point_cloud_bytes(n, l, m, z, basis, samples, seed)
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     headers = {
         "X-QuViz-Format": "QVPC/1",
         "X-QuViz-Radial-Mass": f"{radial_mass:.9f}",
@@ -177,12 +217,12 @@ def isosurface(
     _validate_or_422(n, l, m)
     try:
         result = _cached_isosurface(n, l, m, z, basis, resolution, probability_mass)
-    except (ValueError, RuntimeError) as exc:
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return result
+    return _isolated_cached_payload(result)
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=4)
 def _cached_current_field(
     n: int,
     l: int,
@@ -202,7 +242,7 @@ def current_field(
     m: int = Query(2, ge=-5, le=5),
     z: float = Query(1.0, gt=0.0, le=20.0),
     basis: BasisKind = BasisKind.COMPLEX,
-    seed_count: int = Query(48, ge=1, le=256),
+    seed_count: int = Query(48, ge=1, le=96),
     arc_step: float | None = Query(None, gt=0.0),
 ) -> CurrentFieldPayload:
     """Probability-flow streamlines.
@@ -214,34 +254,21 @@ def current_field(
 
     _validate_or_422(n, l, m)
     try:
-        return _cached_current_field(n, l, m, z, basis, seed_count, arc_step)
-    except (ValueError, RuntimeError) as exc:
+        estimate = estimate_current_field_workload(
+            n,
+            l,
+            m,
+            z=z,
+            basis=basis,
+            seed_count=seed_count,
+            arc_step=arc_step,
+        )
+        _enforce_current_field_workload("eigenstate current-field", estimate)
+        return _isolated_cached_payload(
+            _cached_current_field(n, l, m, z, basis, seed_count, arc_step)
+        )
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@lru_cache(maxsize=8)
-def _cached_slice(
-    n: int,
-    l: int,
-    m: int,
-    z: float,
-    a_mu: float,
-    basis: BasisKind,
-    plane: PrincipalPlane,
-    observable: SliceObservable,
-    resolution: int,
-) -> SlicePayload:
-    return build_slice(
-        n,
-        l,
-        m,
-        z=z,
-        a_mu=a_mu,
-        basis=basis,
-        plane=plane,
-        observable=observable,
-        resolution=resolution,
-    )
 
 
 @router.get("/orbitals/slice")
@@ -274,8 +301,18 @@ def orbital_slice(
 
     _validate_or_422(n, l, m)
     try:
-        return _cached_slice(n, l, m, z, a_mu, basis, plane, observable, resolution)
-    except (ValueError, RuntimeError) as exc:
+        return build_slice(
+            n,
+            l,
+            m,
+            z=z,
+            a_mu=a_mu,
+            basis=basis,
+            plane=plane,
+            observable=observable,
+            resolution=resolution,
+        )
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -284,6 +321,83 @@ def orbital_slice(
 _TERM_SPEC_HELP = (
     "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'"
 )
+_DEFAULT_SUPERPOSITION_TERMS = "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"
+_MAXIMUM_TERM_SPEC_LENGTH = 512
+_MAXIMUM_SUPERPOSITION_TERMS = 8
+_MAXIMUM_ISOSURFACE_N = 4
+_MAXIMUM_CURRENT_FIELD_N = 6
+_MAXIMUM_SLICE_N = 12
+_ISOSURFACE_WORK_LIMIT = 2_500_000
+_ADAPTIVE_ISOSURFACE_WORK_LIMIT = 16_000_000
+_SLICE_WORK_LIMIT = 1_500_000
+_CURRENT_FIELD_PATH_SAMPLE_LIMIT = 100_000
+_CURRENT_FIELD_WORK_LIMIT = 2_000_000
+_MAXIMUM_SUPERPOSITION_CURRENT_SEEDS = 40
+
+
+def _enforce_request_workload(
+    operation: str,
+    *,
+    active_terms: int,
+    work_per_term: int,
+    limit: int,
+    unit: str,
+) -> None:
+    """Reject a combined request before a scientific builder allocates its arrays."""
+
+    cost = active_terms * work_per_term
+    if cost > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{operation} request work is {cost} {unit} "
+                f"({active_terms} active terms * {work_per_term}); limit is {limit}"
+            ),
+        )
+
+
+def _enforce_current_field_workload(operation: str, estimate: CurrentFieldWorkEstimate) -> None:
+    """Reject RK4 work or serialized geometry before entering a builder cache."""
+
+    _enforce_request_workload(
+        f"{operation} serialized output",
+        active_terms=estimate.requested_seeds,
+        work_per_term=estimate.max_points_per_line,
+        limit=_CURRENT_FIELD_PATH_SAMPLE_LIMIT,
+        unit="path samples",
+    )
+    _enforce_request_workload(
+        operation,
+        active_terms=estimate.active_terms,
+        work_per_term=estimate.velocity_evaluations_per_term,
+        limit=_CURRENT_FIELD_WORK_LIMIT,
+        unit="term-velocity evaluations",
+    )
+
+
+def _hydrogenic_beat_period_au(first_n: int, second_n: int) -> float:
+    """Return ``2*pi/|E_b-E_a|`` for the default hydrogenic energy scale."""
+
+    gap = abs(hydrogenic_energy_hartree(second_n) - hydrogenic_energy_hartree(first_n))
+    return 0.0 if gap == 0.0 else tau / gap
+
+
+class SuperpositionCatalogEntry(BaseModel):
+    """One client-ready preset, including its builder-derived capabilities."""
+
+    id: str
+    label: str
+    terms: str
+    period_au: float
+    note: str
+    slice_resolution_floor: int = Field(
+        ge=MINIMUM_SLICE_RESOLUTION,
+        le=MAXIMUM_SLICE_RESOLUTION,
+        description=(
+            "First odd uniform grid accepted by the superposition slice builder for this "
+            "preset; independent of Z and a_mu because all relevant lengths scale together."
+        ),
+    )
 
 
 def _parse_superposition(
@@ -292,81 +406,149 @@ def _parse_superposition(
     *,
     z: float = 1.0,
     a_mu: float = 1.0,
+    maximum_n: int = _MAXIMUM_SLICE_N,
+    operation: str = "superposition",
 ) -> SuperpositionState:
     """Parse the compact query encoding, turning any error into a 422."""
 
+    if len(spec) > _MAXIMUM_TERM_SPEC_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"terms must contain at most {_MAXIMUM_TERM_SPEC_LENGTH} characters; "
+                f"got {len(spec)}"
+            ),
+        )
+
+    chunks = spec.split(";")
+    if len(chunks) > _MAXIMUM_SUPERPOSITION_TERMS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"terms must contain at most {_MAXIMUM_SUPERPOSITION_TERMS} encoded terms; "
+                f"got {len(chunks)}"
+            ),
+        )
+
     terms: list[SuperpositionTerm] = []
-    for chunk in spec.split(";"):
-        fields = [piece.strip() for piece in chunk.split(",") if piece.strip()]
+    for index, chunk in enumerate(chunks, start=1):
+        fields = [piece.strip() for piece in chunk.split(",")]
         if len(fields) not in (4, 5):
             raise HTTPException(
-                status_code=422, detail=f"malformed term {chunk!r}; expected {_TERM_SPEC_HELP}"
+                status_code=422,
+                detail=f"malformed term {index} {chunk!r}; expected {_TERM_SPEC_HELP}",
+            )
+        if any(not field for field in fields):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"malformed term {index} {chunk!r}: empty fields are not allowed; "
+                    f"expected {_TERM_SPEC_HELP}"
+                ),
             )
         try:
             n, l, m = (int(value) for value in fields[:3])
             real = float(fields[3])
             imag = float(fields[4]) if len(fields) == 5 else 0.0
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"unparsable term {chunk!r}") from exc
+            raise HTTPException(
+                status_code=422, detail=f"unparsable term {index} {chunk!r}"
+            ) from exc
         _validate_or_422(n, l, m)
+        if n > maximum_n:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{operation} supports n <= {maximum_n}; term {index} has n={n}",
+            )
         try:
             terms.append(SuperpositionTerm(n, l, m, complex(real, imag)))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        return SuperpositionState(terms=tuple(terms), z=z, a_mu=a_mu, basis=basis)
+        state = SuperpositionState(terms=tuple(terms), z=z, a_mu=a_mu, basis=basis)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if len(state.terms) > _MAXIMUM_SUPERPOSITION_TERMS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"a superposition may contain at most {_MAXIMUM_SUPERPOSITION_TERMS} active terms; "
+                f"got {len(state.terms)}"
+            ),
+        )
+    return state
 
 
-@router.get("/superposition/catalog")
+def _superposition_catalog_entry(
+    *,
+    preset_id: str,
+    label: str,
+    terms: str,
+    period_au: float,
+    note: str,
+) -> dict[str, object]:
+    """Attach the actual builder floor rather than a duplicated client literal."""
+
+    state = _parse_superposition(
+        terms,
+        BasisKind.COMPLEX,
+        maximum_n=_MAXIMUM_SLICE_N,
+        operation="superposition catalogue slice",
+    )
+    return {
+        "id": preset_id,
+        "label": label,
+        "terms": terms,
+        "period_au": period_au,
+        "note": note,
+        "slice_resolution_floor": superposition_slice_resolution_floor(state),
+    }
+
+
+@router.get("/superposition/catalog", response_model=list[SuperpositionCatalogEntry])
 def superposition_catalog() -> list[dict[str, object]]:
     """Presets chosen to make the physics legible, including a negative control."""
 
     return [
-        {
-            "id": "1s-2pz",
-            "label": "1s + 2p_z (Bohr oscillation)",
-            "terms": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
-            "period_au": 16.755160819145562,
-            "note": "Dipole oscillates at omega = 3/8 hartree; the textbook radiating state.",
-        },
-        {
-            "id": "2s-2pz",
-            "label": "2s + 2p_z (degenerate, stationary)",
-            "terms": "2,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
-            "period_au": 0.0,
-            "note": "Same energy, so nothing moves. A control: visible motion here is a bug.",
-        },
-        {
-            "id": "1s-3dz2",
-            "label": "1s + 3d_z2",
-            "terms": "1,0,0,0.7071067811865476;3,2,0,0.7071067811865476",
-            "period_au": 14.139717579927678,
-            "note": "omega = 4/9 hartree. No dipole coupling, so the breathing is quadrupolar.",
-        },
-        {
-            "id": "2pplus-2pminus",
-            "label": "2p(+1) + 2p(-1)",
-            "terms": "2,1,1,0.7071067811865476;2,1,-1,0.7071067811865476",
-            "period_au": 0.0,
-            "note": "Degenerate: a real p orbital in disguise, with zero net current.",
-        },
+        _superposition_catalog_entry(
+            preset_id="1s-2pz",
+            label="1s + 2p_z (Bohr oscillation)",
+            terms="1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+            period_au=_hydrogenic_beat_period_au(1, 2),
+            note="Dipole oscillates at omega = 3/8 hartree; the textbook radiating state.",
+        ),
+        _superposition_catalog_entry(
+            preset_id="2s-2pz",
+            label="2s + 2p_z (degenerate, stationary)",
+            terms="2,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+            period_au=_hydrogenic_beat_period_au(2, 2),
+            note="Same energy, so nothing moves. A control: visible motion here is a bug.",
+        ),
+        _superposition_catalog_entry(
+            preset_id="1s-3dz2",
+            label="1s + 3d_z2",
+            terms="1,0,0,0.7071067811865476;3,2,0,0.7071067811865476",
+            period_au=_hydrogenic_beat_period_au(1, 3),
+            note="omega = 4/9 hartree. No dipole coupling, so the breathing is quadrupolar.",
+        ),
+        _superposition_catalog_entry(
+            preset_id="2pplus-2pminus",
+            label="2p(+1) + 2p(-1)",
+            terms="2,1,1,0.7071067811865476;2,1,-1,0.7071067811865476",
+            period_au=_hydrogenic_beat_period_au(2, 2),
+            note="Degenerate: a real p orbital in disguise, with zero net current.",
+        ),
     ]
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)
 def _cached_superposition_isosurface(
-    spec: str,
-    basis: BasisKind,
-    z: float,
-    a_mu: float,
+    state: SuperpositionState,
     time: float,
     resolution: int,
     probability_mass: float,
 ) -> SuperpositionIsosurfacePayload:
-    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
     return build_superposition_isosurface(
         state, time=time, resolution=resolution, probability_mass=probability_mass
     )
@@ -374,7 +556,12 @@ def _cached_superposition_isosurface(
 
 @router.get("/superposition/isosurface")
 def superposition_isosurface(
-    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    terms: str = Query(
+        _DEFAULT_SUPERPOSITION_TERMS,
+        min_length=1,
+        max_length=_MAXIMUM_TERM_SPEC_LENGTH,
+        description=_TERM_SPEC_HELP,
+    ),
     time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
     basis: BasisKind = BasisKind.COMPLEX,
     z: float = Query(1.0, gt=0.0, le=20.0),
@@ -384,31 +571,51 @@ def superposition_isosurface(
 ) -> SuperpositionIsosurfacePayload:
     r"""The :math:`|\Psi(t)|^2` level set of a superposition at one instant."""
 
+    state = _parse_superposition(
+        terms,
+        basis,
+        z=z,
+        a_mu=a_mu,
+        maximum_n=_MAXIMUM_ISOSURFACE_N,
+        operation="superposition isosurface",
+    )
     try:
-        return _cached_superposition_isosurface(
-            terms,
-            basis,
-            z,
-            a_mu,
-            time,
-            resolution,
-            probability_mass,
+        work_estimate = estimate_superposition_isosurface_workload(
+            state,
+            resolution=resolution,
+            probability_mass=probability_mass,
         )
-    except (ValueError, RuntimeError) as exc:
+        work_limit = (
+            _ADAPTIVE_ISOSURFACE_WORK_LIMIT
+            if work_estimate.uses_adaptive_isosurface_budget
+            else _ISOSURFACE_WORK_LIMIT
+        )
+        _enforce_request_workload(
+            "superposition isosurface",
+            active_terms=work_estimate.active_terms,
+            work_per_term=sum(value**3 for value in work_estimate.resolutions),
+            limit=work_limit,
+            unit="term-voxel evaluations",
+        )
+        return _isolated_cached_payload(
+            _cached_superposition_isosurface(
+                state,
+                time,
+                resolution,
+                probability_mass,
+            )
+        )
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=2)
 def _cached_superposition_current(
-    spec: str,
-    basis: BasisKind,
-    z: float,
-    a_mu: float,
+    state: SuperpositionState,
     time: float,
     seed_count: int,
     arc_step: float | None,
 ) -> SuperpositionCurrentPayload:
-    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
     return build_superposition_current_field(
         state, time=time, seed_count=seed_count, arc_step=arc_step
     )
@@ -416,54 +623,56 @@ def _cached_superposition_current(
 
 @router.get("/superposition/current-field")
 def superposition_current_field(
-    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    terms: str = Query(
+        _DEFAULT_SUPERPOSITION_TERMS,
+        min_length=1,
+        max_length=_MAXIMUM_TERM_SPEC_LENGTH,
+        description=_TERM_SPEC_HELP,
+    ),
     time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
     basis: BasisKind = BasisKind.COMPLEX,
     z: float = Query(1.0, gt=0.0, le=20.0),
     a_mu: float = Query(1.0, gt=0.0, le=20.0),
-    seed_count: int = Query(24, ge=1, le=128),
+    seed_count: int = Query(24, ge=1, le=_MAXIMUM_SUPERPOSITION_CURRENT_SEEDS),
     arc_step: float | None = Query(None, gt=0.0),
 ) -> SuperpositionCurrentPayload:
     """Probability-flow streamlines of a superposition, with its continuity residual."""
 
-    try:
-        return _cached_superposition_current(
-            terms,
-            basis,
-            z,
-            a_mu,
-            time,
-            seed_count,
-            arc_step,
-        )
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@lru_cache(maxsize=8)
-def _cached_superposition_slice(
-    spec: str,
-    basis: BasisKind,
-    z: float,
-    a_mu: float,
-    time: float,
-    plane: PrincipalPlane,
-    observable: SliceObservable,
-    resolution: int,
-) -> SuperpositionSlicePayload:
-    state = _parse_superposition(spec, basis, z=z, a_mu=a_mu)
-    return build_superposition_slice(
-        state,
-        time=time,
-        plane=plane,
-        observable=observable,
-        resolution=resolution,
+    state = _parse_superposition(
+        terms,
+        basis,
+        z=z,
+        a_mu=a_mu,
+        maximum_n=_MAXIMUM_CURRENT_FIELD_N,
+        operation="superposition current-field",
     )
+    try:
+        estimate = estimate_superposition_current_workload(
+            state,
+            seed_count=seed_count,
+            arc_step=arc_step,
+        )
+        _enforce_current_field_workload("superposition current-field", estimate)
+        return _isolated_cached_payload(
+            _cached_superposition_current(
+                state,
+                time,
+                seed_count,
+                arc_step,
+            )
+        )
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/superposition/slice")
 def superposition_slice(
-    terms: str = Query("1,0,0,0.7071067811865476;2,1,0,0.7071067811865476"),
+    terms: str = Query(
+        _DEFAULT_SUPERPOSITION_TERMS,
+        min_length=1,
+        max_length=_MAXIMUM_TERM_SPEC_LENGTH,
+        description=_TERM_SPEC_HELP,
+    ),
     time: float = Query(0.0, ge=-1_000.0, le=1_000.0),
     basis: BasisKind = BasisKind.COMPLEX,
     z: float = Query(1.0, gt=0.0, le=20.0),
@@ -483,16 +692,28 @@ def superposition_slice(
     names the shell that demands more samples.
     """
 
+    state = _parse_superposition(
+        terms,
+        basis,
+        z=z,
+        a_mu=a_mu,
+        maximum_n=_MAXIMUM_SLICE_N,
+        operation="superposition slice",
+    )
+    _enforce_request_workload(
+        "superposition slice",
+        active_terms=len(state.terms),
+        work_per_term=resolution**2,
+        limit=_SLICE_WORK_LIMIT,
+        unit="term-pixel evaluations",
+    )
     try:
-        return _cached_superposition_slice(
-            terms,
-            basis,
-            z,
-            a_mu,
-            time,
-            plane,
-            observable,
-            resolution,
+        return build_superposition_slice(
+            state,
+            time=time,
+            plane=plane,
+            observable=observable,
+            resolution=resolution,
         )
-    except (ValueError, RuntimeError) as exc:
+    except _SCIENTIFIC_REQUEST_ERRORS as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

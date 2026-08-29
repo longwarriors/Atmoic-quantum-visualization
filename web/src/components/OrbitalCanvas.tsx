@@ -5,12 +5,8 @@ import { type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
 import * as THREE from 'three'
 
 import type {
-  BasisKind,
-  OrbitalParameters,
   PrincipalPlane,
-  RepresentationKind,
   SceneStatus,
-  SliceObservable,
 } from '../api/types'
 import { Atmosphere } from '../scene/Atmosphere'
 import {
@@ -25,12 +21,12 @@ import { fogRangeFor } from '../scene/fog'
 import { OrbitalSurface } from '../scene/OrbitalSurface'
 import { SceneReady } from '../scene/SceneReady'
 import { SliceField } from '../scene/SliceField'
-import { useSceneStore, type SceneMode } from '../state/useSceneStore'
+import { useSceneStore } from '../state/useSceneStore'
+import { selectSceneRequestInputs } from './sceneRequest'
 import {
   sceneExtentBohr,
   useSceneAsset,
   type SceneAsset,
-  type SceneAssetInputs,
 } from './useSceneAsset'
 
 interface OrbitalCanvasProps {
@@ -124,73 +120,6 @@ function usePrefersReducedMotion(): boolean {
   }, [])
 
   return reduced
-}
-
-/**
- * Exactly the store fields a scene request reads, and nothing else.
- *
- * Spelled out rather than taken as the whole store type so that the list of
- * things that can change what the server is asked is visible in one place. The
- * store's own state satisfies it structurally, so `sceneAssetInputs` still
- * stops compiling if the store renames or drops one of them.
- */
-export interface SceneInputSource {
-  mode: SceneMode
-  orbital: OrbitalParameters
-  representation: RepresentationKind
-  samples: number
-  seed: number
-  resolution: number
-  probabilityMass: number
-  seedCount: number
-  superpositionTerms: string
-  superpositionBasis: BasisKind
-  superpositionZ: number
-  aMu: number
-  timeAu: number
-  plane: PrincipalPlane
-  sliceObservable: SliceObservable
-}
-
-/**
- * The store, as the request layer wants it.
- *
- * One translation, in one place. The canvas used to read the store and then
- * re-derive the request from `mode` and `representation` inline, with the
- * superposition's basis, charge and reduced mass hard-coded to the server's
- * defaults -- so the panel could describe one state while the server drew
- * another.
- */
-export function sceneAssetInputs(state: SceneInputSource): SceneAssetInputs {
-  return {
-    mode: state.mode,
-    // A plan carries ONE nuclear charge, and for a superposition request it is
-    // read from `orbital.z`. The store keeps the two charges apart on purpose
-    // (they describe different states), so the superposition's own charge is
-    // substituted here; without this it never reaches the wire and the
-    // time-dependent state is drawn at the eigenstate panel's charge.
-    orbital:
-      state.mode === 'superposition'
-        ? { ...state.orbital, z: state.superpositionZ }
-        : state.orbital,
-    representation: state.representation,
-    samples: state.samples,
-    seed: state.seed,
-    resolution: state.resolution,
-    probabilityMass: state.probabilityMass,
-    seedCount: state.seedCount,
-    superpositionTerms: state.superpositionTerms,
-    superpositionBasis: state.superpositionBasis,
-    aMu: state.aMu,
-    timeAu: state.timeAu,
-    // The pair whose absence is SILENT. routes.py declares a default for each,
-    // so a request that omits them is answered with a perfectly valid section
-    // of a plane nobody asked for, carrying a field nobody asked for, while
-    // the panel goes on displaying the choice the user made. Every other
-    // missing parameter produces a 422 somebody can see.
-    plane: state.plane,
-    sliceObservable: state.sliceObservable,
-  }
 }
 
 /**
@@ -448,7 +377,7 @@ function SceneView({ state, asset, fitKey }: SceneViewProps) {
 
 function useSceneModel(onStatus: OrbitalCanvasProps['onStatus']): SceneViewProps {
   const state = useSceneStore()
-  const { asset, fitKey } = useSceneAsset(sceneAssetInputs(state), onStatus)
+  const { asset, fitKey } = useSceneAsset(selectSceneRequestInputs(state), onStatus)
   return { state, asset, fitKey }
 }
 

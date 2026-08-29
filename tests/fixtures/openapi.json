@@ -578,6 +578,48 @@
         "title": "SlicePayload",
         "type": "object"
       },
+      "SuperpositionCatalogEntry": {
+        "description": "One client-ready preset, including its builder-derived capabilities.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "period_au": {
+            "title": "Period Au",
+            "type": "number"
+          },
+          "slice_resolution_floor": {
+            "description": "First odd uniform grid accepted by the superposition slice builder for this preset; independent of Z and a_mu because all relevant lengths scale together.",
+            "maximum": 513.0,
+            "minimum": 65.0,
+            "title": "Slice Resolution Floor",
+            "type": "integer"
+          },
+          "terms": {
+            "title": "Terms",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "terms",
+          "period_au",
+          "note",
+          "slice_resolution_floor"
+        ],
+        "title": "SuperpositionCatalogEntry",
+        "type": "object"
+      },
       "SuperpositionCurrentPayload": {
         "description": "Probability-flow streamlines of a superposition at one instant.\n\nFor a non-stationary state, ``continuity_residual`` is the full statement\n``d(rho)/dt + div j = 0``, normalized by a time-independent root-sum-square\ntransition-coherence reference and audited at four phases of every\ndistinct energy gap. A stationary non-zero flow instead uses\n``max|j| / L_d``; a spatial\nstate proved real up to global phase reports analytic zero with no probes\nor phase samples. ``density_rate_scale`` remains the instantaneous value\nfor transparency, but is never the non-stationary denominator.",
         "properties": {
@@ -1370,7 +1412,7 @@
             "required": false,
             "schema": {
               "default": 48,
-              "maximum": 256,
+              "maximum": 96,
               "minimum": 1,
               "title": "Seed Count",
               "type": "integer"
@@ -1881,8 +1923,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/SuperpositionCatalogEntry"
                   },
                   "title": "Response Superposition Catalog Api Superposition Catalog Get",
                   "type": "array"
@@ -1904,11 +1945,15 @@
         "operationId": "superposition_current_field_api_superposition_current_field_get",
         "parameters": [
           {
+            "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
             "in": "query",
             "name": "terms",
             "required": false,
             "schema": {
               "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
+              "maxLength": 512,
+              "minLength": 1,
               "title": "Terms",
               "type": "string"
             }
@@ -1964,7 +2009,7 @@
             "required": false,
             "schema": {
               "default": 24,
-              "maximum": 128,
+              "maximum": 40,
               "minimum": 1,
               "title": "Seed Count",
               "type": "integer"
@@ -2022,11 +2067,15 @@
         "operationId": "superposition_isosurface_api_superposition_isosurface_get",
         "parameters": [
           {
+            "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
             "in": "query",
             "name": "terms",
             "required": false,
             "schema": {
               "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
+              "maxLength": 512,
+              "minLength": 1,
               "title": "Terms",
               "type": "string"
             }
@@ -2135,11 +2184,15 @@
         "operationId": "superposition_slice_api_superposition_slice_get",
         "parameters": [
           {
+            "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
             "in": "query",
             "name": "terms",
             "required": false,
             "schema": {
               "default": "1,0,0,0.7071067811865476;2,1,0,0.7071067811865476",
+              "description": "semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678'",
+              "maxLength": 512,
+              "minLength": 1,
               "title": "Terms",
               "type": "string"
             }

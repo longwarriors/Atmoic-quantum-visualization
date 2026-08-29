@@ -7,41 +7,37 @@
 - Node.js `^22.13.0 || >=24.0.0` 与 npm——即 22.13.0 起的 22.x 或 24.0.0 及以上；Node 20 与 21 会被 `web/package.json` 的 `engines` 拒绝；
 - 支持 WebGL 2 的现代浏览器。
 
-`uv` 会根据 `pyproject.toml` 创建项目内 `.venv`。首次联网执行 `uv sync` 会生成 `uv.lock`；应将该锁文件提交到版本库，使后续安装可复现 [@uv-docs]。
+仓库已经提交 `uv.lock` 与 `web/package-lock.json`。常规安装必须消费这两份锁文件，而不是在本地重新解析一棵依赖树；只有有意更新依赖时才修改并审查锁文件 [@uv-docs]。
 
 ## Python 环境
 
 ```bash
-uv sync --all-groups
+uv sync --locked --all-groups
 ```
 
-首次同步后确认并提交锁文件：
-
-```bash
-git add uv.lock
-```
+`--locked` 会在 `pyproject.toml` 与 `uv.lock` 不一致或锁文件缺失时失败，不会静默重写锁文件。
 
 只运行科学内核和 API 时：
 
 ```bash
-uv sync
+uv sync --locked
 ```
 
 包含文档依赖：
 
 ```bash
-uv sync --group docs
+uv sync --locked --group docs
 ```
 
 ## 前端环境
 
 ```bash
 cd web
-npm install
+npm ci --no-audit --no-fund
 cd ..
 ```
 
-首次安装会生成 `web/package-lock.json`，同样应提交到版本库。
+`npm ci` 要求已提交的 `web/package-lock.json` 与 `package.json` 一致，并按锁文件重建依赖目录。需要升级依赖时，应显式运行相应的 `uv lock` / npm 更新命令并把锁文件 diff 与声明文件一起审查；不要把普通安装写成“首次生成锁文件”的 bootstrap 流程。
 
 ## 启动开发模式
 

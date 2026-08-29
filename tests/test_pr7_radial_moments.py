@@ -14,6 +14,7 @@ from math import factorial
 import numpy as np
 import pytest
 
+from quviz.errors import ScientificComputationError
 from quviz.physics.observables import expectation_radial
 
 
@@ -62,7 +63,7 @@ def test_radial_moment_requires_node_refinement_not_only_a_fine_grid_norm() -> N
     # At 128 nodes the final n=12 norm looks converged, while the independent
     # 64-node estimate is still grossly wrong.  A check of the fine norm alone
     # therefore certifies a result for which it has no refinement evidence.
-    with pytest.raises(RuntimeError, match="node refinement"):
+    with pytest.raises(ScientificComputationError, match="node refinement"):
         expectation_radial(12, 0, 31, quadrature_nodes=128)
 
 

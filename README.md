@@ -16,7 +16,7 @@ Quantum state → Observable → Representation → Scene contract → GPU rende
 
 ## 当前状态
 
-Phase 0 目前已有可演示基线：解析氢样轨道、实/复球谐、概率密度、相位、定态概率流和分离逆 CDF 点采样通过测试；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$；FastAPI/QVPC/1 与 React/Three.js 已端到端传递 Scene metadata。它仍是 Alpha，不代表通用 TISE/TDSE 或多电子求解器已经完成。
+当前 Alpha 基线已覆盖解析氢样轨道、实/复球谐、概率密度、相位、定态与解析含时叠加态的概率流、分离逆 CDF 点采样，以及 $\psi$/相位平面切片；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$。FastAPI/QVPC/1、typed JSON Scene payload 与 React/Three.js 已端到端接线。它仍不代表通用 TISE/TDSE、一般叠加态采样或多电子求解器已经完成。
 
 请先阅读文档中的[当前状态](docs/project/status.md)；愿景或路线图中的能力不代表今天已经实现。
 
@@ -44,7 +44,7 @@ QuViz/
 ### 1. 安装全部 Python 依赖
 
 ```bash
-uv sync --all-groups
+uv sync --locked --all-groups
 ```
 
 ### 2. 启动科学 API
@@ -61,7 +61,7 @@ API 文档位于 `http://127.0.0.1:8000/docs`。
 
 ```bash
 cd web
-npm install
+npm ci --no-audit --no-fund
 npm run dev
 ```
 

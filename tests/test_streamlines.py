@@ -21,12 +21,63 @@ import pytest
 from quviz.conventions import BasisKind, ObservableKind, RepresentationKind
 from quviz.physics.hydrogenic import cartesian_to_spherical, hydrogenic_wavefunction
 from quviz.physics.observables import probability_density
-from quviz.scene.builders import build_current_field
-from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamline
+from quviz.physics.superposition import SuperpositionState, SuperpositionTerm
+from quviz.scene.builders import (
+    _serialize_scaled_speeds,
+    build_current_field,
+    build_superposition_current_field,
+)
+from quviz.scene.streamlines import (
+    hydrogenic_flow_velocity,
+    integrate_streamline,
+    integrate_streamlines,
+    stable_vector_magnitudes,
+)
 
 
 def _cylindrical_radius(points: np.ndarray) -> np.ndarray:
     return np.hypot(points[:, 0], points[:, 1])
+
+
+def test_vector_magnitudes_do_not_square_away_tiny_finite_flow() -> None:
+    largest = np.finfo(np.float64).max
+    magnitude = stable_vector_magnitudes(
+        np.asarray(((1e-300, 0.0, 0.0), (largest / 2.0, largest / 2.0, 0.0)))
+    )
+
+    assert magnitude[0] == pytest.approx(1e-300, rel=1e-15, abs=0.0)
+    assert np.isfinite(magnitude[1])
+    assert magnitude[1] > largest / 2.0
+
+
+def test_relative_speed_floor_is_invariant_to_batch_grouping_and_order() -> None:
+    def separated_speed_field(points: np.ndarray) -> np.ndarray:
+        speed = np.where(points[:, 1] < 0.5, 1e-200, 1.0)
+        return np.column_stack((speed, np.zeros_like(speed), np.zeros_like(speed)))
+
+    slow_seed = np.asarray([[0.0, 0.0, 0.0]])
+    fast_seed = np.asarray([[0.0, 1.0, 0.0]])
+    slow_alone = integrate_streamlines(
+        separated_speed_field, slow_seed, arc_step=0.1, max_points=5
+    )[0]
+    together = integrate_streamlines(
+        separated_speed_field,
+        np.vstack((slow_seed, fast_seed)),
+        arc_step=0.1,
+        max_points=5,
+    )
+    reversed_batch = integrate_streamlines(
+        separated_speed_field,
+        np.vstack((fast_seed, slow_seed)),
+        arc_step=0.1,
+        max_points=5,
+    )
+
+    assert slow_alone.vertices.shape[0] == 5
+    assert together[0].vertices == pytest.approx(slow_alone.vertices, abs=0.0)
+    assert together[0].speed == pytest.approx(slow_alone.speed, abs=0.0)
+    assert reversed_batch[1].vertices == pytest.approx(slow_alone.vertices, abs=0.0)
+    assert reversed_batch[1].speed == pytest.approx(slow_alone.speed, abs=0.0)
 
 
 @pytest.mark.parametrize(("n", "l", "m"), [(2, 1, 1), (3, 2, 2), (3, 2, -1), (4, 3, 3)])
@@ -106,6 +157,33 @@ def test_speed_matches_the_analytic_azimuthal_magnitude() -> None:
     assert float(line.speed[0]) == pytest.approx(2.0 / 2.0, rel=1e-12)
 
 
+def test_default_velocity_and_integrator_floors_survive_an_extreme_z_dilation() -> None:
+    z = 1e-13
+    seed = np.asarray([4.0, 0.0, 1.0])
+    reference_velocity = hydrogenic_flow_velocity(2, 1, 1, basis=BasisKind.COMPLEX)
+    diffuse_velocity = hydrogenic_flow_velocity(2, 1, 1, z=z, basis=BasisKind.COMPLEX)
+
+    assert diffuse_velocity(seed[None, :] / z) == pytest.approx(
+        z * reference_velocity(seed[None, :]), rel=2e-13, abs=0.0
+    )
+
+    reference = integrate_streamline(
+        reference_velocity,
+        seed,
+        arc_step=0.05,
+        max_points=40,
+    )
+    diffuse = integrate_streamline(
+        diffuse_velocity,
+        seed / z,
+        arc_step=0.05 / z,
+        max_points=40,
+    )
+    assert diffuse.vertices.shape == reference.vertices.shape
+    assert diffuse.vertices * z == pytest.approx(reference.vertices, rel=2e-12, abs=2e-12)
+    assert diffuse.speed / z == pytest.approx(reference.speed, rel=2e-12, abs=0.0)
+
+
 def test_velocity_on_the_polar_axis_is_silent_rather_than_warning() -> None:
     # On the axis both j and rho vanish for m != 0, so the quotient is 0/0.
     # The masked branch exists to keep that quiet: a library that emits numpy
@@ -130,6 +208,126 @@ def test_current_field_payload_declares_current_and_streamlines() -> None:
         assert len(line) == len(speed)
         assert all(len(vertex) == 3 for vertex in line)
     assert payload.max_speed > 0.0
+
+
+@pytest.mark.parametrize("z", [0.1, 1e-12])
+def test_current_field_payload_serialization_is_scale_covariant_and_nonzero(z: float) -> None:
+    reference = build_current_field(
+        2,
+        1,
+        1,
+        z=1.0,
+        basis=BasisKind.COMPLEX,
+        seed_count=2,
+        arc_step=0.5,
+    )
+    diffuse = build_current_field(
+        2,
+        1,
+        1,
+        z=z,
+        basis=BasisKind.COMPLEX,
+        seed_count=2,
+        arc_step=0.5 / z,
+    )
+
+    assert diffuse.seed_count == reference.seed_count > 0
+    assert diffuse.max_speed == pytest.approx(z * reference.max_speed, rel=2e-15)
+    assert diffuse.seed_density_floor == pytest.approx(
+        z**3 * reference.seed_density_floor, rel=2e-15
+    )
+    for reference_line, diffuse_line, reference_speed, diffuse_speed in zip(
+        reference.lines,
+        diffuse.lines,
+        reference.speed,
+        diffuse.speed,
+        strict=True,
+    ):
+        assert np.asarray(diffuse_line) * z == pytest.approx(
+            np.asarray(reference_line), rel=2e-15, abs=2e-15
+        )
+        assert np.asarray(diffuse_speed) / z == pytest.approx(
+            np.asarray(reference_speed), rel=1e-11, abs=0.0
+        )
+        assert np.count_nonzero(diffuse_speed) == len(diffuse_speed)
+
+    assert diffuse.max_speed == max(max(line_speed) for line_speed in diffuse.speed)
+
+
+def test_speed_serialization_preserves_weak_values_by_significant_digits() -> None:
+    values = np.asarray([1.51909067e-7, 1.767758e-9, 0.0])
+    serialized = _serialize_scaled_speeds(values, physical_scale=1.0)
+    contracted = _serialize_scaled_speeds(0.1 * values, physical_scale=0.1)
+
+    assert np.count_nonzero(serialized) == 2
+    assert serialized[:2] == pytest.approx(values[:2], rel=1e-11, abs=0.0)
+    assert contracted == pytest.approx(0.1 * serialized, rel=2e-15, abs=0.0)
+
+
+@pytest.mark.parametrize("epsilon", [1e-8, 1e-12])
+def test_weak_superposition_coherence_is_not_serialized_as_zero(epsilon: float) -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, np.sqrt(1.0 - epsilon**2)),
+            SuperpositionTerm(2, 1, 0, 1j * epsilon),
+        ),
+        basis=BasisKind.REAL,
+    )
+    payload = build_superposition_current_field(state, time=0.0, seed_count=2)
+
+    assert payload.seed_count > 0
+    assert payload.max_speed > 0.0
+    assert any(speed > 0.0 for line in payload.speed for speed in line)
+    assert payload.max_speed == max(max(line) for line in payload.speed)
+
+
+def test_common_tiny_z_and_a_mu_scale_retains_representable_stationary_current() -> None:
+    state = SuperpositionState(
+        terms=(SuperpositionTerm(2, 1, 1, 1.0),),
+        z=1e-160,
+        a_mu=1e-160,
+        basis=BasisKind.COMPLEX,
+    )
+
+    payload = build_superposition_current_field(state, time=0.0, seed_count=1)
+
+    assert payload.seed_count == 1
+    assert payload.max_speed > 0.0
+    assert payload.continuity_scale_kind == "stationary_current"
+    assert payload.continuity_scale > 0.0
+
+
+def test_weak_superposition_speed_serialization_remains_coulomb_covariant() -> None:
+    epsilon = 1e-8
+    terms = (
+        SuperpositionTerm(1, 0, 0, np.sqrt(1.0 - epsilon**2)),
+        SuperpositionTerm(2, 1, 0, 1j * epsilon),
+    )
+    reference = build_superposition_current_field(
+        SuperpositionState(terms=terms, z=1.0, basis=BasisKind.REAL),
+        time=0.0,
+        seed_count=1,
+    )
+    diffuse = build_superposition_current_field(
+        SuperpositionState(terms=terms, z=0.1, basis=BasisKind.REAL),
+        time=0.0,
+        seed_count=1,
+    )
+
+    assert diffuse.seed_count == reference.seed_count > 0
+    for reference_line, diffuse_line, reference_speed, diffuse_speed in zip(
+        reference.lines,
+        diffuse.lines,
+        reference.speed,
+        diffuse.speed,
+        strict=True,
+    ):
+        assert np.asarray(diffuse_line) * 0.1 == pytest.approx(
+            np.asarray(reference_line), rel=2e-12, abs=2e-12
+        )
+        assert np.asarray(diffuse_speed) / 0.1 == pytest.approx(
+            np.asarray(reference_speed), rel=5e-10, abs=0.0
+        )
 
 
 def test_current_field_reports_its_own_continuity_residual() -> None:

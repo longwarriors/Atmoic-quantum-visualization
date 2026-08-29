@@ -25,11 +25,13 @@
 
 当前已实现的 observable × representation 组合：
 
-| | point cloud | isosurface | streamlines |
-|---|---|---|---|
-| `probability_density` | ✅ | ✅ | — |
-| `probability_current` | — | — | ✅ |
+| | point cloud | isosurface | streamlines | slice |
+|---|---|---|---|---|
+| `probability_density` | ✅ | ✅ | — | ✅ |
+| `probability_current` | — | — | ✅ | — |
+| `wavefunction_real` / `wavefunction_imag` | — | — | — | ✅ |
+| `phase` | — | — | — | ✅ |
 
 定态与含时叠加态使用**不同的 metadata 契约**（`OrbitalMetadata` vs `SuperpositionMetadata`）：叠加态没有单一 $(n,\ell,m)$，硬塞一个会让契约声称一个并非画面所示的态。系数与时刻是叠加态物理身份的一部分，因此是必填字段。
 
-`wavefunction`、`phase` 作为独立 observable，以及 `slice` representation 仍是枚举中的占位，尚未实现。
+`slice` 已同时支持定态与解析含时叠加态，并把波函数实部、虚部、相位和概率密度作为不同标量场返回。相位切片中的 `valid_mask` 只标识低振幅、相位未定义的样本；它不是节点证书。当前尚未实现的是独立的**节面几何 representation**，不能把低振幅遮罩写成已经提取出的节点面。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, localcontext
 from functools import lru_cache
 
 import numpy as np
@@ -10,6 +11,7 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.special import roots_legendre
 
 from quviz.conventions import BasisKind
+from quviz.errors import ScientificComputationError
 from quviz.physics.continuity import state_support_lengths, transition_coherence_scale
 from quviz.physics.hydrogenic import (
     cartesian_to_spherical,
@@ -28,6 +30,9 @@ _RADIAL_MOMENT_NODE_TOLERANCE = 5e-10
 _RADIAL_MOMENT_TAIL_TOLERANCE = 5e-11
 _RADIAL_MOMENT_DOMAIN_GROWTH = 1.5
 _RADIAL_MOMENT_MAX_EXPANSIONS = 10
+_DECIMAL_FALLBACK_PRECISION = 100
+_FLOAT64_DIRECT_LOWER_BOUND = float(np.finfo(np.float64).tiny)
+_FLOAT64_DIRECT_UPPER_BOUND = float(np.finfo(np.float64).max / 2.0)
 _LOG_FLOAT64_MAX = float(np.log(np.finfo(np.float64).max))
 _LOG_FLOAT64_MIN = float(np.log(np.nextafter(0.0, 1.0)))
 
@@ -62,14 +67,14 @@ def _dimensionless_radial_integrals(
     quadrature = 0.5 * extent * weights
     radial = radial_wavefunction(n, l, radius)
     if not np.all(np.isfinite(radial)):
-        raise RuntimeError("radial wavefunction became non-finite during quadrature")
+        raise ScientificComputationError("radial wavefunction became non-finite during quadrature")
 
     norm_measure = quadrature * radius * radius * radial * radial
     norm = float(np.sum(norm_measure))
 
     nonzero = radial != 0.0
     if not np.any(nonzero):
-        raise RuntimeError("radial moment quadrature sampled no non-zero integrand")
+        raise ScientificComputationError("radial moment quadrature sampled no non-zero integrand")
     log_terms = (
         np.log(quadrature[nonzero])
         + (power + 2) * np.log(radius[nonzero])
@@ -82,7 +87,9 @@ def _dimensionless_radial_integrals(
     with np.errstate(under="ignore"):
         log_moment = largest_log_term + float(np.log(np.sum(np.exp(log_terms - largest_log_term))))
     if not np.isfinite(norm) or not np.isfinite(log_moment):
-        raise RuntimeError("radial moment quadrature produced a non-finite intermediate")
+        raise ScientificComputationError(
+            "radial moment quadrature produced a non-finite intermediate"
+        )
     return norm, log_moment
 
 
@@ -99,6 +106,66 @@ def phase(psi: ArrayLike) -> FloatArray:
     return np.asarray(np.angle(np.asarray(psi)), dtype=np.float64)
 
 
+DEFAULT_HYDROGENIC_DENSITY_FLOOR_RATIO = 1e-14
+
+
+def hydrogenic_density_floor(
+    *,
+    z: float,
+    a_mu: float,
+    relative_floor: float = DEFAULT_HYDROGENIC_DENSITY_FLOOR_RATIO,
+) -> float:
+    r"""Return a density cutoff covariant with the hydrogenic length scale.
+
+    Density scales as :math:`(Z/a_\mu)^3` under the exact Coulomb dilation.
+    ``relative_floor`` is therefore dimensionless; the returned value has the
+    same ``bohr^-3`` units as :func:`probability_density`.
+    """
+
+    if z <= 0.0 or not np.isfinite(z):
+        raise ValueError("z must be positive and finite")
+    if a_mu <= 0.0 or not np.isfinite(a_mu):
+        raise ValueError("a_mu must be positive and finite")
+    if relative_floor < 0.0 or not np.isfinite(relative_floor):
+        raise ValueError("relative_floor must be non-negative and finite")
+    if relative_floor == 0.0:
+        return 0.0
+    z_value = float(z)
+    a_mu_value = float(a_mu)
+    relative_floor_value = float(relative_floor)
+
+    try:
+        direct_floor = relative_floor_value * (z_value / a_mu_value) ** 3
+    except OverflowError:
+        direct_floor = float("inf")
+    if (
+        np.isfinite(direct_floor)
+        and _FLOAT64_DIRECT_LOWER_BOUND <= direct_floor <= _FLOAT64_DIRECT_UPPER_BOUND
+    ):
+        # Preserve the ordinary arithmetic path for byte-stable payloads.
+        return float(direct_floor)
+
+    # Only the exceptional path uses higher precision.  It can distinguish a
+    # true overflow/underflow from a representable result whose float64
+    # intermediate rounded across either boundary.
+    with localcontext() as context:
+        context.prec = _DECIMAL_FALLBACK_PRECISION
+        decimal_floor = (
+            Decimal.from_float(relative_floor_value)
+            * (Decimal.from_float(z_value) / Decimal.from_float(a_mu_value)) ** 3
+        )
+    try:
+        density_floor = float(decimal_floor)
+    except OverflowError:
+        density_floor = float("inf")
+    if not np.isfinite(density_floor) or density_floor <= 0.0:
+        raise ValueError(
+            "hydrogenic density floor cannot be represented in float64 "
+            f"for z={z:.6g}, a_mu={a_mu:.6g}, relative_floor={relative_floor:.6g}"
+        )
+    return density_floor
+
+
 def probability_current_hydrogenic(
     n: int,
     l: int,
@@ -110,7 +177,7 @@ def probability_current_hydrogenic(
     z: float = 1.0,
     a_mu: float = 1.0,
     basis: BasisKind | str = BasisKind.COMPLEX,
-    density_floor: float = 1e-14,
+    density_floor: float | None = None,
 ) -> FloatArray:
     r"""Return the stationary hydrogenic probability current in Cartesian form.
 
@@ -125,13 +192,23 @@ def probability_current_hydrogenic(
     accepting an independent mass here would permit an inconsistent state.
 
     Real stationary orbitals have zero current. The expression is masked at the
-    coordinate singularity and at negligible density.
+    coordinate singularity and at negligible density.  When ``density_floor``
+    is omitted, the cutoff is ``1e-14 * (Z / a_mu)**3`` rather than an absolute
+    ordinary-Bohr density, so a Coulomb dilation cannot erase valid current.
     """
 
+    validate_quantum_numbers(n, l, m)
     basis_kind = BasisKind(basis)
     r_array = np.asarray(r, dtype=np.float64)
     theta_array = np.asarray(theta, dtype=np.float64)
     phi_array = np.asarray(phi, dtype=np.float64)
+    if np.any(r_array < 0.0):
+        raise ValueError("r must be non-negative")
+    resolved_density_floor = (
+        hydrogenic_density_floor(z=z, a_mu=a_mu) if density_floor is None else float(density_floor)
+    )
+    if resolved_density_floor < 0.0 or not np.isfinite(resolved_density_floor):
+        raise ValueError("density_floor must be non-negative and finite")
     broadcast_shape = np.broadcast_shapes(r_array.shape, theta_array.shape, phi_array.shape)
     if basis_kind is BasisKind.REAL or m == 0:
         return np.zeros((*broadcast_shape, 3), dtype=np.float64)
@@ -141,7 +218,7 @@ def probability_current_hydrogenic(
     density = probability_density(psi)
     denominator = r_array * np.sin(theta_array)
     coordinate_floor = 1e-12 * a_mu / z
-    safe = (np.abs(denominator) > coordinate_floor) & (density > density_floor)
+    safe = (np.abs(denominator) > coordinate_floor) & (density > resolved_density_floor)
     j_phi = np.zeros_like(density)
     np.divide(a_mu * m * density, denominator, out=j_phi, where=safe)
     e_phi = np.stack((-np.sin(phi_array), np.cos(phi_array), np.zeros_like(phi_array)), axis=-1)
@@ -205,7 +282,7 @@ def expectation_radial(
     for _ in range(_RADIAL_MOMENT_MAX_EXPANSIONS):
         norm, log_moment = _dimensionless_radial_integrals(n, l, power, extent, fine_rule)
         if abs(norm - 1.0) > _RADIAL_MOMENT_NORM_TOLERANCE:
-            raise RuntimeError(
+            raise ScientificComputationError(
                 f"radial quadrature captured norm {norm:.12f}; widen the domain or add nodes"
             )
 
@@ -216,7 +293,9 @@ def expectation_radial(
             abs(coarse_norm - norm) > _RADIAL_MOMENT_NORM_TOLERANCE
             or abs(coarse_log_moment - log_moment) > node_convergence_log
         ):
-            raise RuntimeError("radial moment failed node refinement; increase quadrature_nodes")
+            raise ScientificComputationError(
+                "radial moment failed node refinement; increase quadrature_nodes"
+            )
 
         scaled_partial_log = log_moment + power * scale_log
         if scaled_partial_log > _LOG_FLOAT64_MAX:
@@ -246,7 +325,9 @@ def expectation_radial(
         previous_log_moment = log_moment
         extent *= _RADIAL_MOMENT_DOMAIN_GROWTH
 
-    raise RuntimeError("radial moment tail failed to converge under finite-domain expansion")
+    raise ScientificComputationError(
+        "radial moment tail failed to converge under finite-domain expansion"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,7 +416,7 @@ def radial_hamiltonian_diagnostic(
     energy = hydrogenic_energy_hartree(n, z=z, reduced_mass_ratio=1.0 / a_mu)
     energy_scale = float(np.max(np.abs(energy * u_here)))
     if not np.isfinite(energy_scale) or energy_scale <= 0.0:
-        raise RuntimeError("Hamiltonian residual has no finite non-zero |E u| scale")
+        raise ScientificComputationError("Hamiltonian residual has no finite non-zero |E u| scale")
     effective = a_mu * l * (l + 1) / (2.0 * radius * radius) - z / radius
 
     initial_step = difference_step
@@ -358,7 +439,7 @@ def radial_hamiltonian_diagnostic(
             )
         difference_step *= 0.5
 
-    raise RuntimeError(
+    raise ScientificComputationError(
         "Hamiltonian finite difference did not converge below relative error 1e-7 "
         "after 9 refinements"
     )

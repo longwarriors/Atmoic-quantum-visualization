@@ -10,17 +10,16 @@ the payload. A caller-supplied extent would let two slices of the same state
 disagree about where the state ends, and every masked-fraction or symmetry
 statement would then be a statement about the caller's crop.
 
-**The resolution floor is not the isosurface's cap.**
-:func:`quviz.scene.builders.build_isosurface` refuses ``n > 4``, but that limit
-is about *marching cubes*: the mesh extraction, the winding fix and the mass
-accounting are validated only for those shells, and a triangulated surface of a
-high-``n`` state at an affordable grid is a shape nobody has checked. A slice
-extracts no mesh. It evaluates ``psi`` at ``resolution**2`` points and reports
-the numbers, so the only thing resolution has to buy is enough samples to
-resolve the outermost radial oscillation: an ``n`` state has ``n - l`` radial
-antinodes spread over an extent that itself grows like ``n**2``, so the floor
-grows linearly, ``max(65, 16 * n + 17)``. High ``n`` therefore costs samples
-here, not validity.
+**The resolution floor is state- and extent-dependent.**
+:func:`quviz.scene.builders.build_isosurface` refuses ``n > 4`` because its
+three-dimensional mesh has a separate validation budget.  A slice is cheaper,
+but it is not automatically valid: the full extent grows like ``n**2`` while
+the innermost radial node stays near the Bohr scale, and a mixed state can put a
+compact 1s component inside a much wider shell.  In addition to the shell-count
+floor ``max(65, 16 * n + 17)``, builders therefore require at least 1.5 grid
+intervals across the smallest radial node/coordinate scale of every term.  If
+that state-specific floor exceeds the 513-sample payload cap, the uniform slice
+is rejected rather than returned as a misleading image.
 
 **The mask is referenced to the state, not to the plane.** See
 :mod:`quviz.physics.planes`: a plane of exact nodal symmetry carries numerical
@@ -53,6 +52,7 @@ from quviz.conventions import (
 from quviz.physics.hydrogenic import (
     cartesian_to_spherical,
     hydrogenic_wavefunction,
+    radial_node_radii,
     validate_quantum_numbers,
 )
 from quviz.physics.observables import phase, probability_density
@@ -97,6 +97,12 @@ MAXIMUM_SLICE_RESOLUTION: Final[int] = 513
 #: than the 513 ceiling.
 DEFAULT_SLICE_RESOLUTION: Final[int] = 129
 
+# More than one grid interval must span the smallest radial feature.  The 1.5
+# margin guarantees an off-origin sample before that feature and keeps its
+# crossing out of the centre sample's nearest-filtered texel; one interval can
+# hide the node and both neighbouring antinodes in one displayed cell.
+_MINIMUM_INTERVALS_PER_RADIAL_FEATURE: Final[float] = 1.5
+
 #: A slice reports the real and imaginary parts of ``psi`` as separate scalar
 #: fields, so two slice observables map onto the same physical observable.
 _SLICE_OBSERVABLE_KINDS: Final[Mapping[SliceObservable, ObservableKind]] = MappingProxyType(
@@ -110,11 +116,12 @@ _SLICE_OBSERVABLE_KINDS: Final[Mapping[SliceObservable, ObservableKind]] = Mappi
 
 
 def slice_resolution_floor(highest_principal_number: int) -> int:
-    """Return the smallest honest sample count for a state reaching ``n``.
+    """Return the shell-count floor for a state reaching ``n``.
 
     ``max(65, 16 * n + 17)``: odd by construction so the origin is a sample, and
     linear in ``n`` because the number of radial antinodes grows like ``n - l``
-    while the extent grows like ``n**2``.
+    while the extent grows like ``n**2``.  Builders additionally impose a
+    state-specific floor from the smallest radial node or compact component.
     """
 
     if highest_principal_number < 1:
@@ -122,7 +129,72 @@ def slice_resolution_floor(highest_principal_number: int) -> int:
     return max(MINIMUM_SLICE_RESOLUTION, 16 * highest_principal_number + 17)
 
 
-def _validate_slice_resolution(resolution: int, highest_principal_number: int) -> None:
+def _radial_feature_scale(n: int, l: int, *, z: float, a_mu: float) -> float:
+    """Return the smallest radial length that a uniform slice must represent."""
+
+    # ``n a_mu / Z`` is the exponential/Laguerre coordinate scale.  A positive
+    # Laguerre root can be smaller still and then directly bounds the first
+    # antinode adjacent to the origin.
+    candidates = [n * a_mu / z]
+    nodes = radial_node_radii(n, l, z=z, a_mu=a_mu)
+    if nodes.size:
+        candidates.append(float(nodes[0]))
+    return min(candidates)
+
+
+def _state_specific_slice_floor(
+    states: list[tuple[int, int]],
+    *,
+    z: float,
+    a_mu: float,
+    extent: float,
+) -> int:
+    """Return an odd grid size resolving every term's most compact radial feature."""
+
+    smallest_feature = min(_radial_feature_scale(n, l, z=z, a_mu=a_mu) for n, l in states)
+    maximum_spacing = smallest_feature / _MINIMUM_INTERVALS_PER_RADIAL_FEATURE
+    intervals = int(np.ceil(2.0 * extent / maximum_spacing))
+    if intervals % 2 != 0:
+        intervals += 1
+    physical_floor = intervals + 1
+    return max(slice_resolution_floor(max(n for n, _ in states)), physical_floor)
+
+
+def _superposition_slice_resolution_floor_at_extent(
+    state: SuperpositionState, extent: float
+) -> int:
+    """Return the shared mixture floor when its derived extent is already known."""
+
+    return _state_specific_slice_floor(
+        [(term.n, term.l) for term in state.terms],
+        z=state.z,
+        a_mu=state.a_mu,
+        extent=extent,
+    )
+
+
+def superposition_slice_resolution_floor(state: SuperpositionState) -> int:
+    """Return the first uniform slice grid that can honestly represent ``state``.
+
+    This is the public, side-effect-free half of the builder's resolution gate.
+    The superposition catalogue publishes this value so a client can plan the
+    first request without reimplementing the radial CDF/Laguerre calculation.
+    Both the published capability and the builder therefore read the same
+    numerical authority.
+    """
+
+    return _superposition_slice_resolution_floor_at_extent(
+        state,
+        superposition_extent(state),
+    )
+
+
+def _validate_slice_resolution(
+    resolution: int,
+    highest_principal_number: int,
+    *,
+    state_specific_floor: int,
+) -> None:
     """Reject sample counts that would make the payload's own claims false."""
 
     if resolution % 2 == 0:
@@ -139,6 +211,17 @@ def _validate_slice_resolution(resolution: int, highest_principal_number: int) -
         raise ValueError(
             f"resolution must be at most {MAXIMUM_SLICE_RESOLUTION}: "
             f"{resolution}**2 samples exceed what one JSON payload should carry"
+        )
+    if state_specific_floor > MAXIMUM_SLICE_RESOLUTION:
+        raise ValueError(
+            f"this state's smallest radial feature requires resolution at least "
+            f"{state_specific_floor}, exceeding the slice payload cap "
+            f"{MAXIMUM_SLICE_RESOLUTION}; a uniform full-extent slice would be misleading"
+        )
+    if resolution < state_specific_floor:
+        raise ValueError(
+            f"resolution must be at least {state_specific_floor} for this state's smallest "
+            "radial node or compact component"
         )
 
 
@@ -252,11 +335,13 @@ def _payload_fields(
 # largest slice is 513**2 = 263_169 samples, and the payload holds them as the
 # JSON-ready ``list[float]``: ~8 MB, since a boxed CPython float is 24 bytes
 # plus an 8-byte pointer. A phase slice adds a ``list[bool]`` of pointers to the
-# two singletons, ~2 MB. Eight such entries is therefore ~80 MB worst case; a
-# typical 129-sample slice is ~0.5 MB, so the usual footprint is ~4 MB. Entries
-# are shared, so a returned payload must be treated as read-only.
-@lru_cache(maxsize=8)
-def build_slice(
+# two singletons, ~2 MB. Four eigenstate entries therefore cap retained payload
+# storage near 40 MB worst case. Superposition animation varies ``time`` on
+# every frame, so its separate two-entry cache caps that class near 20 MB rather
+# than retaining a short movie. The cached object is private: callers receive a
+# deep copy, so an accidental mutation cannot poison a later request.
+@lru_cache(maxsize=4)
+def _cached_slice(
     n: int,
     l: int,
     m: int,
@@ -283,9 +368,13 @@ def build_slice(
     basis_kind = BasisKind(basis)
     plane_kind = PrincipalPlane(plane)
     field_kind = SliceObservable(observable)
-    _validate_slice_resolution(resolution, n)
-
     extent = radial_extent_for_mass(n, l, z, a_mu=a_mu)
+    state_specific_floor = _state_specific_slice_floor([(n, l)], z=z, a_mu=a_mu, extent=extent)
+    _validate_slice_resolution(
+        resolution,
+        n,
+        state_specific_floor=state_specific_floor,
+    )
     points = plane_grid_points(plane_kind, extent, resolution)
     radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
     psi = hydrogenic_wavefunction(
@@ -329,8 +418,8 @@ def build_slice(
     )
 
 
-@lru_cache(maxsize=8)
-def build_superposition_slice(
+@lru_cache(maxsize=2)
+def _cached_superposition_slice(
     state: SuperpositionState,
     *,
     time: float = 0.0,
@@ -348,9 +437,13 @@ def build_superposition_slice(
     plane_kind = PrincipalPlane(plane)
     field_kind = SliceObservable(observable)
     principal_numbers = [term.n for term in state.terms]
-    _validate_slice_resolution(resolution, max(principal_numbers))
-
     extent = superposition_extent(state)
+    state_specific_floor = _superposition_slice_resolution_floor_at_extent(state, extent)
+    _validate_slice_resolution(
+        resolution,
+        max(principal_numbers),
+        state_specific_floor=state_specific_floor,
+    )
     points = plane_grid_points(plane_kind, extent, resolution)
     radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
     psi = state.evaluate(radius, polar, azimuth, time=time)
@@ -378,3 +471,57 @@ def build_superposition_slice(
             field=field,
         ),
     )
+
+
+def build_slice(
+    n: int,
+    l: int,
+    m: int,
+    *,
+    z: float = 1.0,
+    a_mu: float = 1.0,
+    basis: BasisKind | str = BasisKind.REAL,
+    plane: PrincipalPlane | str,
+    observable: SliceObservable | str,
+    resolution: int = DEFAULT_SLICE_RESOLUTION,
+) -> SlicePayload:
+    """Build an isolated plane-section payload for one eigenstate."""
+
+    return _cached_slice(
+        n,
+        l,
+        m,
+        z=z,
+        a_mu=a_mu,
+        basis=basis,
+        plane=plane,
+        observable=observable,
+        resolution=resolution,
+    ).model_copy(deep=True)
+
+
+def build_superposition_slice(
+    state: SuperpositionState,
+    *,
+    time: float = 0.0,
+    plane: PrincipalPlane | str,
+    observable: SliceObservable | str,
+    resolution: int = DEFAULT_SLICE_RESOLUTION,
+) -> SuperpositionSlicePayload:
+    """Build an isolated plane-section payload for a superposition."""
+
+    return _cached_superposition_slice(
+        state,
+        time=time,
+        plane=plane,
+        observable=observable,
+        resolution=resolution,
+    ).model_copy(deep=True)
+
+
+# Keep the long-standing public cache-reset hook used by scientific sabotage
+# tests, while keeping the cache itself behind the copy boundary.
+build_slice.cache_clear = _cached_slice.cache_clear  # type: ignore[attr-defined]
+build_superposition_slice.cache_clear = (  # type: ignore[attr-defined]
+    _cached_superposition_slice.cache_clear
+)

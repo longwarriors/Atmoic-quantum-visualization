@@ -22,7 +22,14 @@ from quviz.scene.binary import (
     POINT_CLOUD_VERSION,
     encode_point_cloud,
 )
-from quviz.scene.builders import build_isosurface, orbital_metadata, superposition_metadata
+from quviz.scene.builders import (
+    _general_meshes_have_stable_topology,
+    _MeshResult,
+    build_isosurface,
+    build_superposition_isosurface,
+    orbital_metadata,
+    superposition_metadata,
+)
 from quviz.scene.models import (
     SLICE_VALUE_UNITS,
     OrbitalMetadata,
@@ -118,6 +125,82 @@ def _mesh_component_count(faces: np.ndarray) -> int:
     return len({find(int(vertex)) for vertex in vertices})
 
 
+def _independent_euler_characteristic(faces: np.ndarray) -> int:
+    """Compute V-E+F locally so the topology test does not quote production code."""
+
+    vertices = {int(vertex) for face in faces for vertex in face}
+    edges = {
+        tuple(sorted((int(left), int(right))))
+        for first, second, third in faces
+        for left, right in ((first, second), (second, third), (third, first))
+    }
+    return len(vertices) - len(edges) + len(faces)
+
+
+def _periodic_torus_faces(side: int, *, offset: int = 0) -> np.ndarray:
+    """Triangulate a periodic square grid, a closed surface with Euler value zero."""
+
+    faces: list[list[int]] = []
+    for row in range(side):
+        for column in range(side):
+            lower_left = offset + row * side + column
+            lower_right = offset + row * side + (column + 1) % side
+            upper_left = offset + ((row + 1) % side) * side + column
+            upper_right = offset + ((row + 1) % side) * side + (column + 1) % side
+            faces.extend(
+                (
+                    [lower_left, lower_right, upper_right],
+                    [lower_left, upper_right, upper_left],
+                )
+            )
+    return np.asarray(faces, dtype=np.int64)
+
+
+def _topology_only_mesh(faces: np.ndarray) -> _MeshResult:
+    vertex_count = int(np.max(faces)) + 1
+    return _MeshResult(
+        vertices=np.zeros((vertex_count, 3), dtype=np.float64),
+        faces=np.asarray(faces, dtype=np.int64),
+        normals=np.zeros((vertex_count, 3), dtype=np.float64),
+        vertex_psi=np.zeros(vertex_count, dtype=np.complex128),
+        level=0.25,
+        captured=0.8,
+        integrated_mass=1.0,
+        spacing=0.1,
+    )
+
+
+def test_general_topology_compares_the_euler_multiset_not_only_its_sum() -> None:
+    """Two components with the same total Euler value need not have the same topology."""
+
+    torus = _periodic_torus_faces(4)
+    tetrahedron_offset = 16
+    tetrahedron = tetrahedron_offset + np.asarray(
+        [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.int64
+    )
+    coarse_faces = np.vstack((torus, tetrahedron))
+
+    fine_components = (
+        np.asarray([[0, 1, 2]], dtype=np.int64),
+        np.asarray([[3, 4, 5]], dtype=np.int64),
+    )
+    fine_faces = np.vstack(fine_components)
+
+    coarse_euler = (
+        _independent_euler_characteristic(torus),
+        _independent_euler_characteristic(tetrahedron),
+    )
+    fine_euler = tuple(_independent_euler_characteristic(part) for part in fine_components)
+    assert sorted(coarse_euler) == [0, 2]
+    assert sorted(fine_euler) == [1, 1]
+    assert len(coarse_euler) == len(fine_euler) == 2
+    assert sum(coarse_euler) == sum(fine_euler) == 2
+
+    assert not _general_meshes_have_stable_topology(
+        _topology_only_mesh(coarse_faces), _topology_only_mesh(fine_faces)
+    )
+
+
 def test_pz_isosurface_preserves_nodal_plane_and_winding() -> None:
     payload = build_isosurface(2, 1, 0, resolution=49, probability_mass=0.9)
     vertices = np.asarray(payload.vertices)
@@ -150,6 +233,120 @@ def test_3p_surface_preserves_angular_and_radial_nodes() -> None:
     payload = build_isosurface(3, 1, 0, resolution=65, probability_mass=0.9)
     assert _mesh_component_count(np.asarray(payload.faces)) == 4
     assert payload.finite_grid_density_integral == pytest.approx(1.0, abs=0.002)
+
+
+def test_2s_surface_adapts_until_all_three_radial_boundaries_are_connected() -> None:
+    """The public 81 grid used to return eight components: three shells plus bubbles."""
+
+    payload = build_isosurface(2, 0, 0, resolution=81, probability_mass=0.9)
+
+    assert 81 < payload.grid_resolution <= 129
+    assert payload.grid_resolution % 2 == 1
+    assert _mesh_component_count(np.asarray(payload.faces)) == 3
+    assert any("increased from 81" in warning for warning in payload.metadata.warnings)
+
+    vertices = np.asarray(payload.vertices)
+    normals = np.asarray(payload.normals)
+    step = 1e-3
+
+    def density_at(points: np.ndarray) -> np.ndarray:
+        radius, polar, azimuth = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
+        return probability_density(
+            hydrogenic_wavefunction(2, 0, 0, radius, polar, azimuth, basis=BasisKind.REAL)
+        )
+
+    outward = density_at(vertices + step * normals) < density_at(vertices - step * normals)
+    assert float(np.mean(outward)) > 0.99
+
+
+@pytest.mark.parametrize("n", [3, 4])
+def test_compact_s_state_nodes_fail_closed_beyond_the_adaptive_mesh_budget(n: int) -> None:
+    with pytest.raises(ValueError, match=rf"the {n}s radial-node topology.*exceeding"):
+        build_isosurface(n, 0, 0, resolution=81, probability_mass=0.9)
+
+
+def test_2s_high_mass_surface_fails_closed_when_the_node_gap_is_too_narrow() -> None:
+    with pytest.raises(ValueError, match=r"2s radial-node topology.*exceeding"):
+        build_isosurface(2, 0, 0, resolution=81, probability_mass=0.99)
+
+
+@pytest.mark.parametrize("epsilon", [1e-3, 1e-8, 1e-12])
+def test_nearly_pure_2s_superpositions_require_general_topology_convergence(
+    epsilon: float,
+) -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(2, 0, 0, np.sqrt(1.0 - epsilon**2)),
+            SuperpositionTerm(2, 1, 0, epsilon),
+        ),
+        basis=BasisKind.REAL,
+    )
+    payload = build_superposition_isosurface(
+        state,
+        resolution=81,
+        probability_mass=0.9,
+    )
+
+    assert payload.grid_resolution == 137
+    assert _mesh_component_count(np.asarray(payload.faces)) == 3
+    assert any(
+        "empirical finest-two-grid convergence" in warning for warning in payload.metadata.warnings
+    )
+
+
+def test_exact_zero_companion_is_removed_before_the_radial_topology_oracle() -> None:
+    state = SuperpositionState(
+        terms=(SuperpositionTerm(2, 0, 0, 1.0), SuperpositionTerm(2, 1, 0, 0.0)),
+        basis=BasisKind.REAL,
+    )
+    payload = build_superposition_isosurface(state, resolution=81, probability_mass=0.9)
+
+    assert len(state.terms) == 1
+    assert payload.grid_resolution == 123
+    assert _mesh_component_count(np.asarray(payload.faces)) == 3
+    assert not any("empirical two-grid" in warning for warning in payload.metadata.warnings)
+
+
+def test_equal_2s_2p_mixture_fails_closed_when_finest_grids_disagree() -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(2, 0, 0, 1.0 / np.sqrt(2.0)),
+            SuperpositionTerm(2, 1, 0, 1.0 / np.sqrt(2.0)),
+        ),
+        basis=BasisKind.REAL,
+    )
+    with pytest.raises(ValueError, match="finest two grids"):
+        build_superposition_isosurface(state, resolution=81, probability_mass=0.9)
+
+
+def test_general_topology_does_not_stop_at_an_early_non_monotonic_stable_pair() -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, 1.0 / np.sqrt(2.0)),
+            SuperpositionTerm(2, 0, 0, 1j / np.sqrt(2.0)),
+        ),
+        basis=BasisKind.REAL,
+    )
+
+    with pytest.raises(ValueError, match="finest two grids"):
+        build_superposition_isosurface(
+            state,
+            time=0.0,
+            resolution=49,
+            probability_mass=0.5,
+        )
+
+
+def test_excited_s_mixture_fails_closed_when_general_convergence_exceeds_the_cap() -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(3, 0, 0, 1.0 / np.sqrt(2.0)),
+            SuperpositionTerm(3, 1, 0, 1.0 / np.sqrt(2.0)),
+        )
+    )
+
+    with pytest.raises(ValueError, match="general superposition topology convergence beyond"):
+        build_superposition_isosurface(state, resolution=81, probability_mass=0.9)
 
 
 def test_complex_surface_carries_full_phase_cycle() -> None:
@@ -434,6 +631,27 @@ def test_slice_payload_requires_the_mask_exactly_for_phase() -> None:
         )
     with pytest.raises(ValueError, match="phase slice requires valid_mask"):
         SlicePayload(**_slice_kwargs(SliceObservable.PHASE, valid_mask=None))
+
+
+def test_slice_payload_requires_the_threshold_report_exactly_for_phase() -> None:
+    with pytest.raises(ValueError, match=r"mask thresholds; missing .*phase_mask_numeric_floor"):
+        SlicePayload(
+            **_slice_kwargs(
+                SliceObservable.PHASE,
+                phase_mask_numeric_floor=None,
+            )
+        )
+    with pytest.raises(
+        ValueError,
+        match=r"phase mask fields are defined only for the phase observable.*"
+        r"phase_mask_relative_amplitude",
+    ):
+        SlicePayload(
+            **_slice_kwargs(
+                SliceObservable.PROBABILITY_DENSITY,
+                phase_mask_relative_amplitude=1e-6,
+            )
+        )
 
 
 def test_slice_payload_rejects_length_mismatches() -> None:

@@ -57,6 +57,7 @@ const CATALOGUE = vi.hoisted(() => ({
       terms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
       period_au: 39.6,
       note: 'Bohr oscillation',
+      slice_resolution_floor: 65,
     },
     {
       id: 'ring',
@@ -64,6 +65,7 @@ const CATALOGUE = vi.hoisted(() => ({
       terms: '2,1,1,0.7071067811865476;3,2,2,0.7071067811865476',
       period_au: 12.1,
       note: 'ring current',
+      slice_resolution_floor: 65,
     },
   ],
 }))
@@ -113,7 +115,9 @@ async function panel(
   orbital: OrbitalParameters = REAL_ORBITAL,
 ): Promise<MountedTree> {
   useSceneStore.setState({ mode, representation, orbital })
-  return mount(createElement(ControlPanel))
+  const tree = await mount(createElement(ControlPanel))
+  await interact(() => useSceneStore.setState({ mode, representation, orbital }))
+  return tree
 }
 
 function representationButton(tree: MountedTree, id: RepresentationKind): HTMLButtonElement {
@@ -303,17 +307,17 @@ describe('ControlPanel sliders are the capability matrix bounds', () => {
     },
   )
 
-  it('caps the seed count at 128 in superposition and 256 for an eigenstate', async () => {
+  it('caps the seed count at 40 in superposition and 96 for an eigenstate', async () => {
     const timeDependent = await panel('superposition', 'streamlines')
     try {
-      expect(parameterInput(timeDependent, 'seedCount')?.max).toBe('128')
+      expect(parameterInput(timeDependent, 'seedCount')?.max).toBe('40')
     } finally {
       await timeDependent.unmount()
     }
 
     const stationary = await panel('eigenstate', 'streamlines', FLOWING_ORBITAL)
     try {
-      expect(parameterInput(stationary, 'seedCount')?.max).toBe('256')
+      expect(parameterInput(stationary, 'seedCount')?.max).toBe('96')
     } finally {
       await stationary.unmount()
     }
@@ -745,7 +749,7 @@ describe('ControlPanel controls write to the store', () => {
     const flow = await panel('superposition', 'streamlines')
     try {
       await setValue(parameterInput(flow, 'seedCount'), 'seed count', '96')
-      expect(useSceneStore.getState().seedCount).toBe(96)
+      expect(useSceneStore.getState().seedCount).toBe(40)
     } finally {
       await flow.unmount()
     }

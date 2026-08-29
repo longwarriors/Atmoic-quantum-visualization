@@ -61,7 +61,7 @@ afterEach(() => {
 /* --------------------------------------------------------------- fixtures */
 
 const metadata = (): OrbitalMetadata => ({
-  state: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
+  state: { n: 2, l: 1, m: 0, z: 1, a_mu: 1, basis: 'real' },
   label: '2p_z',
   energy_hartree: -0.125,
   length_unit: 'bohr',

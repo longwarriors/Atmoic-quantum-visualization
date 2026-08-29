@@ -1,5 +1,11 @@
 import { parsePointCloud } from './qvpc'
-import { parseSlicePayload, SliceContractError, type AnySlicePayload } from './sliceContract'
+import {
+  MAXIMUM_SLICE_RESOLUTION,
+  MINIMUM_SLICE_RESOLUTION,
+  parseSlicePayload,
+  SliceContractError,
+  type AnySlicePayload,
+} from './sliceContract'
 import type {
   BasisKind,
   CurrentFieldPayload,
@@ -25,6 +31,123 @@ function queryString(params: object): string {
   return search.toString()
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Turn FastAPI's string or validation-list `detail` into readable UI copy. */
+function formatFastApiDetail(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail.trim() || null
+  if (!Array.isArray(detail)) return null
+
+  const messages = detail.flatMap((entry) => {
+    if (typeof entry === 'string') return entry.trim() ? [entry.trim()] : []
+    if (!isRecord(entry) || typeof entry.msg !== 'string') return []
+    const location = Array.isArray(entry.loc)
+      ? entry.loc.map((part) => String(part)).join('.')
+      : ''
+    return [location ? `${location}: ${entry.msg}` : entry.msg]
+  })
+  return messages.length === 0 ? null : messages.join('; ')
+}
+
+/**
+ * Preserve plain-text/proxy errors, while unwrapping the JSON envelope used by
+ * FastAPI (`{"detail": ...}`). This is shared by every route so a fail-closed
+ * numerical 422 reaches the panel as an explanation instead of raw JSON.
+ */
+async function responseError(response: Response): Promise<Error> {
+  const body = (await response.text()).trim()
+  const status = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
+  if (!body) return new Error(`Request failed with ${status}.`)
+
+  try {
+    const payload: unknown = JSON.parse(body)
+    if (isRecord(payload)) {
+      const detail = formatFastApiDetail(payload.detail)
+      if (detail !== null) return new Error(detail)
+    }
+    if (typeof payload === 'string' && payload.trim()) return new Error(payload.trim())
+  } catch {
+    // A reverse proxy or development server may return text/HTML. Preserve it.
+  }
+  return new Error(body)
+}
+
+function parseOrbitalPreset(value: unknown, index: number): OrbitalPreset {
+  const location = `orbital catalog[${index}]`
+  if (!isRecord(value)) throw new Error(`${location} must be an object`)
+
+  const { id, label, n, l, m, basis, z } = value
+  if (typeof id !== 'string' || !id.trim()) throw new Error(`${location}.id must be a string`)
+  if (typeof label !== 'string' || !label.trim()) {
+    throw new Error(`${location}.label must be a string`)
+  }
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
+    throw new Error(`${location}.n must be a positive integer`)
+  }
+  if (typeof l !== 'number' || !Number.isInteger(l) || l < 0 || l >= n) {
+    throw new Error(`${location}.l must be an integer in 0..n-1`)
+  }
+  if (typeof m !== 'number' || !Number.isInteger(m) || Math.abs(m) > l) {
+    throw new Error(`${location}.m must be an integer with |m| <= l`)
+  }
+  if (basis !== 'real' && basis !== 'complex') {
+    throw new Error(`${location}.basis must be "real" or "complex"`)
+  }
+  if (z !== undefined && (typeof z !== 'number' || !Number.isFinite(z) || z <= 0)) {
+    throw new Error(`${location}.z must be a positive finite number when present`)
+  }
+
+  const preset: Omit<OrbitalPreset, 'z'> = { id, label, n, l, m, basis }
+  return z === undefined ? preset : { ...preset, z }
+}
+
+function parseSuperpositionPreset(value: unknown, index: number): SuperpositionPreset {
+  const location = `superposition catalog[${index}]`
+  if (!isRecord(value)) throw new Error(`${location} must be an object`)
+
+  const {
+    id,
+    label,
+    terms,
+    period_au,
+    note,
+    slice_resolution_floor,
+  } = value
+  if (typeof id !== 'string' || !id.trim()) throw new Error(`${location}.id must be a string`)
+  if (typeof label !== 'string' || !label.trim()) {
+    throw new Error(`${location}.label must be a string`)
+  }
+  if (typeof terms !== 'string' || !terms.trim()) {
+    throw new Error(`${location}.terms must be a string`)
+  }
+  if (typeof period_au !== 'number' || !Number.isFinite(period_au) || period_au < 0) {
+    throw new Error(`${location}.period_au must be a finite non-negative number`)
+  }
+  if (typeof note !== 'string') throw new Error(`${location}.note must be a string`)
+  if (
+    typeof slice_resolution_floor !== 'number' ||
+    !Number.isInteger(slice_resolution_floor) ||
+    slice_resolution_floor < MINIMUM_SLICE_RESOLUTION ||
+    slice_resolution_floor > MAXIMUM_SLICE_RESOLUTION ||
+    slice_resolution_floor % 2 === 0
+  ) {
+    throw new Error(
+      `${location}.slice_resolution_floor must be an odd integer in ` +
+      `${MINIMUM_SLICE_RESOLUTION}..${MAXIMUM_SLICE_RESOLUTION}`,
+    )
+  }
+  return {
+    id,
+    label,
+    terms,
+    period_au,
+    note,
+    slice_resolution_floor,
+  }
+}
+
 export async function fetchPointCloud(
   params: OrbitalParameters,
   samples: number,
@@ -37,7 +160,7 @@ export async function fetchPointCloud(
     fetchMetadata(params, signal),
   ])
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   const buffer = await response.arrayBuffer()
   return { ...parsePointCloud(buffer, response.headers), metadata }
@@ -52,7 +175,7 @@ export async function fetchIsosurface(
   const query = queryString({ ...params, resolution, probability_mass: probabilityMass })
   const response = await fetch(`/api/orbitals/isosurface?${query}`, { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   return (await response.json()) as IsosurfacePayload
 }
@@ -65,7 +188,7 @@ export async function fetchCurrentField(
   const query = queryString({ ...params, seed_count: seedCount })
   const response = await fetch(`/api/orbitals/current-field?${query}`, { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   return (await response.json()) as CurrentFieldPayload
 }
@@ -76,7 +199,7 @@ export async function fetchMetadata(
 ): Promise<OrbitalMetadata> {
   const response = await fetch(`/api/orbitals/metadata?${queryString(params)}`, { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   return (await response.json()) as OrbitalMetadata
 }
@@ -84,9 +207,11 @@ export async function fetchMetadata(
 export async function fetchCatalog(signal?: AbortSignal): Promise<OrbitalPreset[]> {
   const response = await fetch('/api/orbitals/catalog', { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
-  return (await response.json()) as OrbitalPreset[]
+  const payload: unknown = await response.json()
+  if (!Array.isArray(payload)) throw new Error('orbital catalog must be an array')
+  return payload.map(parseOrbitalPreset)
 }
 
 export async function fetchSuperpositionCatalog(
@@ -94,9 +219,11 @@ export async function fetchSuperpositionCatalog(
 ): Promise<SuperpositionPreset[]> {
   const response = await fetch('/api/superposition/catalog', { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
-  return (await response.json()) as SuperpositionPreset[]
+  const payload: unknown = await response.json()
+  if (!Array.isArray(payload)) throw new Error('superposition catalog must be an array')
+  return payload.map(parseSuperpositionPreset)
 }
 
 /**
@@ -105,8 +232,8 @@ export async function fetchSuperpositionCatalog(
  * Every parameter `/superposition/isosurface` accepts is sent explicitly.
  * A parameter left off the query is not an error the caller sees: the server
  * substitutes its own default (`basis=complex`, `z=1`, `a_mu=1`,
- * `probability_mass=0.90`, routes.py:301-308) and returns a perfectly valid
- * picture of a state nobody asked for.
+ * `probability_mass=0.90` on `/api/superposition/isosurface`) and returns a
+ * perfectly valid picture of a state nobody asked for.
  */
 export async function fetchSuperpositionIsosurface(
   terms: string,
@@ -129,7 +256,7 @@ export async function fetchSuperpositionIsosurface(
   })
   const response = await fetch(`/api/superposition/isosurface?${query}`, { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   return (await response.json()) as SuperpositionIsosurfacePayload
 }
@@ -140,7 +267,7 @@ export async function fetchSuperpositionIsosurface(
  * `d(rho)/dt + div j = 0`.
  *
  * Same full-query rule as the isosurface route, over the parameter names
- * `/superposition/current-field` declares (routes.py:342-350). `arc_step` is
+ * `/superposition/current-field` declares. `arc_step` is
  * deliberately not sent: the server's `None` default lets it choose a step
  * from the state's own extent, and a client-side number would override that
  * with a worse one.
@@ -157,7 +284,7 @@ export async function fetchSuperpositionCurrentField(
   const query = queryString({ terms, time, seed_count: seedCount, basis, z, a_mu: aMu })
   const response = await fetch(`/api/superposition/current-field?${query}`, { signal })
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   return (await response.json()) as SuperpositionCurrentPayload
 }
@@ -197,7 +324,7 @@ async function decodeSlice<T extends AnySlicePayload>(
   expected: string,
 ): Promise<T> {
   if (!response.ok) {
-    throw new Error(await response.text())
+    throw await responseError(response)
   }
   const payload = parseSlicePayload(await response.json())
   if (!kind(payload)) {
@@ -215,7 +342,7 @@ async function decodeSlice<T extends AnySlicePayload>(
  * Every parameter `/api/orbitals/slice` accepts is sent explicitly, for the
  * reason the superposition routes send theirs: a parameter left off the query
  * is not an error the caller sees. `plane` and `observable` both carry
- * server-side defaults (`xz`, `probability_density`, routes.py:255-256), so a
+ * server-side defaults (`xz`, `probability_density`), so a
  * dropped one returns a valid section of a different field with no complaint
  * at all. `a_mu` is here too -- this is the only eigenstate route that reads
  * it, and it rescales the derived extent and the amplitude scale the phase
@@ -240,8 +367,7 @@ export async function fetchSlice(
 /**
  * One scalar field of a superposition on a principal plane at one instant.
  *
- * Same full-query rule, over the names `/api/superposition/slice` declares
- * (routes.py:465-481).
+ * Same full-query rule, over the names declared by `/api/superposition/slice`.
  */
 export async function fetchSuperpositionSlice(
   terms: string,

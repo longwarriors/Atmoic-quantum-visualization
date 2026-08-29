@@ -15,6 +15,7 @@ type FloatArray = NDArray[np.float64]
 
 _PROBE_NUMERATORS = (-30, -15, -7, 7, 15, 30)
 _PROBE_DENOMINATOR = 20.0
+_PROBE_SCORE_TIE_RELATIVE_TOLERANCE = 1_024.0 * np.finfo(np.float64).eps
 
 
 def state_support_lengths(state: SuperpositionState) -> tuple[float, float, float]:
@@ -135,6 +136,30 @@ def transition_frequencies(state: SuperpositionState) -> tuple[float, ...]:
     return tuple(grouped[key] for key in sorted(grouped))
 
 
+def _rank_probe_scores(scores: ArrayLike) -> NDArray[np.intp]:
+    """Rank non-negative scores with a deterministic candidate-index tie-break.
+
+    Symmetry-related probes have analytically equal coherence. Their last-bit
+    evaluation noise can change under an otherwise exact spatial rescaling, so
+    raw ``argmax``/``argsort`` may permute equal points. Quantizing only at a
+    small multiple of machine epsilon restores the analytic tie without
+    merging physically distinct scores.
+    """
+
+    values = np.asarray(scores, dtype=np.float64)
+    if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
+        raise ValueError("probe scores must be a finite non-negative one-dimensional array")
+    if values.size == 0:
+        return np.empty(0, dtype=np.intp)
+    maximum = float(np.max(values))
+    if maximum == 0.0:
+        return np.arange(values.size, dtype=np.intp)
+    width = maximum * _PROBE_SCORE_TIE_RELATIVE_TOLERANCE
+    buckets = np.rint(values / width)
+    indices = np.arange(values.size, dtype=np.intp)
+    return np.asarray(np.lexsort((indices, -buckets)), dtype=np.intp)
+
+
 def continuity_audit_times(
     state: SuperpositionState,
     *,
@@ -174,13 +199,13 @@ def select_continuity_probes(state: SuperpositionState, *, count: int = 8) -> Fl
     for principal in sorted({term.n for term in state.terms}):
         shell = _shell_probe_candidates(state, principal)
         shell_scale = transition_coherence_scale(state, shell)
-        point = np.asarray(shell[int(np.argmax(shell_scale))], dtype=np.float64)
+        point = np.asarray(shell[int(_rank_probe_scores(shell_scale)[0])], dtype=np.float64)
         key = (float(point[0]), float(point[1]), float(point[2]))
         if key not in selected_keys and len(selected) < count:
             selected.append(point)
             selected_keys.add(key)
 
-    for index in np.argsort(scale)[::-1]:
+    for index in _rank_probe_scores(scale):
         point = np.asarray(candidates[int(index)], dtype=np.float64)
         key = (float(point[0]), float(point[1]), float(point[2]))
         if key not in selected_keys:

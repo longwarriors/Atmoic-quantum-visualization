@@ -48,15 +48,19 @@
 - ✅ 径向/角向边际检验（KS 检验，对照解析 CDF） — `tests/test_analytic_gates.py` 三项 `test_sampled_*_marginal_passes_ks`；
 - ✅ 三维矩 — `test_sampled_moments_match_analytic_expectations`；
 - ✅ 截断概率显式报告 — `radial_mass_captured` 字段与 `X-QuViz-Radial-Mass` 响应头；
+- ✅ 径向 CDF 以质量、平均半径和整条 CDF 的嵌套网格差共同收敛；角向 $\cos\theta$ CDF 以质量和整条 CDF 的嵌套差共同收敛；两者入口都拒绝超过 131,073 点的初始表，细化达到同一上限仍不收敛即 fail-closed — `tests/test_sampling.py`；
+- ✅ QVPC float32 坐标在 cast 前同时验证 diffuse 上溢与最小 subnormal 长度边界，cast 后拒绝任何非零三维样本整体塌缩到原点：边界值输出全有限，向下一个 `nextafter` 明确拒绝；极小正 $Z$ 经 HTTP 返回 422 而非损坏二进制 — `tests/test_sampling.py`、`tests/test_api.py`；
 - 🕒 拒绝采样包络必须是严格上界（当前实轨道方位角采样以 $M=1$ 构造性满足，但无测试）；
 - 🕒 MCMC 报告 ESS 和 nodal-pocket mixing。
 
 ## 概率流
 
-- ✅ 与第一性原理 $\mathbf j=\operatorname{Im}(\psi^*\nabla\psi)$ 一致 — `test_current_matches_im_psi_star_grad_psi`；本节的概率流 oracle 测试（含下两项）均仅在 $Z=1$ 下验证；
+- ✅ 与第一性原理 $\mathbf j=\operatorname{Im}(\psi^*\nabla\psi)$ 一致 — `test_current_matches_im_psi_star_grad_psi`；另有 $Z=10^{-4}$、`a_mu=0.2` 的解析尺度协变回归；
 - ✅ 定态连续性残差 $\nabla\cdot\mathbf j=0$ — `test_stationary_current_satisfies_continuity`；
 - ✅ $\pm m$ 密度相同而流反向 — `test_current_reverses_sign_with_m_while_density_is_unchanged`；
-- ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`，同样仅在 $Z=1$ 下验证；
+- ✅ 流线积分器保柱半径/高度、按解析周期闭合、$\pm m$ 镜像 — `tests/test_streamlines.py`；每条线固定自己的初始速度参照，慢速 $10^{-200}$ 线单独、与单位速度线成束、重排后的结果相同；向量长度以稳定 `hypot` 归约，$Z=a_\mu=10^{-160}$ 的仍可表示电流不会被平方下溢成零；
+- ✅ 速度按 $Z$ 无量纲化后逐值保留 12 位有效数字；$10^{-8}$ / $10^{-12}$ 弱相干的非零速度不会被固定小数位清零，`max_speed` 与最终数组严格一致，$Z=0.1$ 的弱流仍满足尺度协变 — `tests/test_streamlines.py`；
+- ✅ 请求级概率流资源门禁使用 `active_terms × seed_count × [1+5(max_points−1)] ≤ 2,000,000` 与 `seed_count × max_points ≤ 100,000`，本征/叠加 route 外框分别为 96/40；两道边界均在 builder 前拒绝超预算请求 — `tests/test_api.py`；
 - ✅ payload 报告绝对残差、归一化尺度、尺度种类与探针数，而非只宣称 $\nabla\cdot\mathbf j=0$ — `CurrentFieldPayload.continuity_*` 与 `tests/test_pr7_scene_diagnostics.py`；空间探针、差分步长、弧长步长和密度 cutoff 均有 $n/Z/a_\mu$ 协变门禁；
 - ✅ 含时叠加态的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$ — `tests/test_superposition.py` 与 `tests/test_pr7_scene_diagnostics.py`；$\partial\rho/\partial t$ 取闭式，归一化先按同能隙相干合并、再按不同能隙平方和开根，builder 对每个不同能隙审计四个相位；恒零 current 的负控制在 1s–2p 转折点会得到 1 而不是空洞的 0；
 - ✅ 叠加态范数与 $\langle H\rangle$ 守恒（依赖上面的正交性门禁）；
@@ -68,13 +72,22 @@
 - ✅ 节点连通性（1s、2p、3p） — `test_pz_isosurface_...`、`test_3p_surface_...`；
 - ✅ 面绕向一致率 > 99%（按面计数，不用面积加权均值） — `test_pz_isosurface_preserves_nodal_plane_and_winding`；
 - ✅ 法向朝密度降低方向 — `test_isosurface_normals_point_away_from_higher_density`；
-- ✅ 有限盒真实质量变化与 render-grid alias 分开报告 — `tests/test_pr7_scene_diagnostics.py`；1s+2s 的同宇称离散漂移必须超过保守有限盒变化界至少 $10^6$ 倍，1s+2p 的反宇称质量必须在半周期保持不变，同能隙相干相消的四项负控制不得误报 phase-dependent error；
-- 🕒 $n>4$ 的收敛策略与拓扑回归。
+- ✅ 含径向节点的单一 s 态使用一维径向拓扑 oracle、有界自适应网格和最终连通分量复核 — 2s 在 mass=0.9 从请求 81 自动升至实际 123 并得到 3 个正确边界分量；3s/4s 及高质量 2s 在需求超过内部 129 上限时 fail-closed；
+- ✅ 非零激发 s 分量的多项叠加态绝不按系数容差冒充纯 s 态；$10^{-3}$、$10^{-8}$、$10^{-12}$ 近纯 2s 必须在 137 上限的最细 129/137 两级通过逐分量 Euler、density level 与质量门禁，等权 2s+2p 及“粗网格先稳定、最细网格再失稳”的反例均 fail-closed。精确零伴项被剔除后仍走径向 oracle；只构建并计费会参与判决的最细两个拓扑网格与最终诊断，真实 builder 的逐 term 完整立方网格求值记录必须与 estimator 逐项一致；两项 129/137 成本低于 16M，三项成本高于上限并在 builder 前拒绝 — `tests/test_scene_contract.py`、`tests/test_api.py`；
+- ✅ 有限盒真实质量变化与 render-grid alias 分开报告 — `tests/test_pr7_scene_diagnostics.py`；2p+4p 的同宇称离散漂移必须超过保守有限盒变化界至少 $10^6$ 倍，1s+2p 的反宇称质量必须在半周期保持不变，同能隙相干相消的四项负控制不得误报 phase-dependent error；
+- 🕒 不含激发 s 分量的一般多项叠加态及 $n>4$ 的通用拓扑证明；当前质量/alias 诊断不等于拓扑证书。
+
+## API 数值失败与缓存
+
+- ✅ 可归因于请求的 `ValueError`、具名 `ScientificComputationError`、`FloatingPointError` 与 `OverflowError` 在全部七类科学资产 builder 路径上转成保留原因的 422；普通 `RuntimeError` 家族不再 blanket catch。唯一的第三方边界例外是 `skimage.measure.marching_cubes` 自身抛出的**精确** `RuntimeError`：builder 就地包装为 `ScientificComputationError`，所以极小但合法的 `1s, Z=1e-20` float32 等值面塌缩返回带原因的 422；该调用点注入 `RecursionError`，以及路由注入 `RecursionError`/`AssertionError` 的负控制仍为 500 — `tests/test_api.py`；
+- ✅ float64 极值采用“普通输入保留原算术，只有直接中间量接近边界或已经溢出/下溢才转入 100 位十进制复算”的门禁：径向归一化在 `float.__pow__` 舍入边界不再泄漏裸 `(34, 'Result too large')`，径向自变量在 `Z=a_mu=1e308` 时先安全约去共同尺度而不静默归零，密度 floor 与径向节点在最大有限值及最小次正规数边界按精确二进制输入正确舍入，NumPy 标量进入兜底也不会泄漏类型错误；最终结果确实不可表示才抛含参数语境的 `ValueError` 并由 HTTP 保留为可读 422；普通切片 golden 仍逐字节不变 — `tests/test_hydrogenic.py`、`tests/test_api.py`、`tests/test_slice_contract.py`；
+- ✅ 两类 slice 只保留私有 builder LRU，public builder 返回 deep copy，HTTP route 不再重复缓存大 payload；相同路由调用仍逐次经过 public builder，且调用方变异不能污染下一次结果 — `tests/test_api.py`、`tests/test_slice_builders.py`。
 
 ## 前端
 
 - ✅ TypeScript 严格模式 — `npm run build`（`tsc -b`）；测试代码由 `tsconfig.test.json` 单独类型检查；
 - ✅ binary parser 单测 — `web/src/api/qvpc.test.ts`，含**跨语言黄金向量**（见下）；
+- ✅ 能力矩阵的 route 数值边界、本征态 ceiling 与 Z 固定参数逐项对照 committed OpenAPI；4s–8s 切片的 97/141/193/251/319 state-specific 楼层由 Python 生产 builder 重新推导后对照 TypeScript 表；叠加态 catalog 的 `slice_resolution_floor` 经生成 schema、严格 wire parser、capability、request planner、ControlPanel 与真实 store 贯穿。当前 `1s + 3d_z²` 的切片边界为 101→422、103→200，选择与迟到同步均在首个 plan 前原子提升 resolution — `tests/test_api.py`、`tests/test_slice_api.py`、`web/src/api/capability.test.ts`、`web/src/api/client.test.ts`、`web/src/state/useSceneStore.test.ts`、`web/src/components/ControlPanel.test.tsx`；
 - ✅ 相位色轮周期连续 — `web/src/scene/color.test.ts`；
 - ✅ `src/**` 下全部 `.ts` / `.tsx`（PR-8A 起把 React/three 层一并纳入；只排除测试文件与两个“仅含类型”模块 `types.ts`、`schema.gen.ts`，而“仅含类型”由 `guards.test.ts` 解析每个文件、对任何编译器会生成代码的顶层语句变红来强制）的 vitest 覆盖率门槛（语句/函数/行 90%，分支 85%，按文件评估） — `npm run test` 执行 `vitest run --coverage`，低于门槛即 exit 1。`src/scene/shaders/` 曾作为“GLSL 字符串模块”整目录排除，但没有任何检查保证该目录里只有 GLSL 字符串：往里放一个带未覆盖分支的普通 `.ts` 并从 `color.ts` 调用，三道覆盖率门禁全绿、`npm run build` exit 0、那个分支照样进生产 bundle（实测）。该排除项已删除，shader 模块与其他模块一样受门禁，由 `src/scene/shaders/orbitalPoints.test.ts` 断言导出的着色器源码含场景真正依赖的 GLSL 入口点、uniform 与 varying；
 - ✅ 前端门禁在 CI 里真的会跑 — `.github/workflows/ci.yml` 的 `web` job（`working-directory: web`、`actions/setup-node`、`npm ci`、`npm run test`、`npm run build`）与 `push` / `pull_request` 两个触发条件都由 `tests/test_check_script.py` 按结构钉住，且该 job 及其任何步骤都不得带 `if:` 或 `continue-on-error:`。此前整个 `web` job 可以被删掉而全部 pytest 照常通过，CI 会在前端门禁完全缺席的情况下变绿（实测）；

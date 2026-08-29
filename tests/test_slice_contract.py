@@ -84,9 +84,9 @@ def test_a_mutated_payload_no_longer_matches_the_golden() -> None:
     above while comparing nothing. Here the built payload is copied with one
     field changed, and the serialisation of the copy must differ.
 
-    ``model_copy`` rather than assignment because :func:`build_slice` is
-    ``lru_cache``d: the payload it hands back is shared, so mutating it in
-    place would corrupt every later caller in the same process.
+    ``model_copy`` rather than assignment keeps this negative control local.
+    :func:`build_slice` wraps a private LRU but returns a deep copy, so public
+    callers cannot corrupt the cached payload.
     """
 
     payload = write_slice_golden.build()

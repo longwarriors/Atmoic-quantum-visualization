@@ -40,7 +40,7 @@ const superpositionMetadata: SuperpositionMetadata = {
 }
 
 const orbitalMetadata: OrbitalMetadata = {
-  state: { n: 2, l: 1, m: 1, z: 1, basis: 'complex' },
+  state: { n: 2, l: 1, m: 1, z: 1, a_mu: 1, basis: 'complex' },
   label: '|2,1,1>',
   energy_hartree: -0.125,
   length_unit: 'bohr',

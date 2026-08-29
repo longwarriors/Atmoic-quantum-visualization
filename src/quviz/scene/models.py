@@ -35,6 +35,88 @@ SLICE_VALUE_UNITS: Final[Mapping[SliceObservable, str]] = MappingProxyType(
 SliceLayout = Literal["row_major_v_rows_u_columns"]
 
 
+def _validate_vector3_rows(name: str, rows: list[list[float]]) -> None:
+    """Reject malformed or non-finite Cartesian vectors at the scene boundary."""
+
+    for index, row in enumerate(rows):
+        if len(row) != 3:
+            raise ValueError(f"{name}[{index}] must have three components, got {len(row)}")
+        if not all(isfinite(value) for value in row):
+            raise ValueError(f"{name}[{index}] must have only finite components")
+
+
+def _validate_indexed_mesh(
+    vertices: list[list[float]],
+    normals: list[list[float]],
+    faces: list[list[int]],
+    phase: list[float],
+) -> None:
+    """Validate the structural invariants an indexed GPU mesh relies on."""
+
+    if not vertices:
+        raise ValueError("vertices must not be empty")
+    if not faces:
+        raise ValueError("faces must not be empty")
+    _validate_vector3_rows("vertices", vertices)
+    _validate_vector3_rows("normals", normals)
+    if len(normals) != len(vertices):
+        raise ValueError(
+            f"normals must have one row per vertex, got {len(normals)} for {len(vertices)} vertices"
+        )
+    if len(phase) != len(vertices):
+        raise ValueError(
+            f"phase must have one value per vertex, got {len(phase)} for {len(vertices)} vertices"
+        )
+    if not all(isfinite(value) for value in phase):
+        raise ValueError("phase must contain only finite values")
+
+    vertex_count = len(vertices)
+    for index, face in enumerate(faces):
+        if len(face) != 3:
+            raise ValueError(f"faces[{index}] must have three vertex indices, got {len(face)}")
+        if any(vertex < 0 or vertex >= vertex_count for vertex in face):
+            raise ValueError(f"faces[{index}] contains an index outside [0, {vertex_count - 1}]")
+
+
+def _validate_streamline_geometry(
+    lines: list[list[list[float]]],
+    speed: list[list[float]],
+    seed_count: int,
+    max_speed: float,
+) -> None:
+    """Validate the parallel arrays consumed by the streamline renderer."""
+
+    if len(lines) != seed_count:
+        raise ValueError(
+            f"seed_count must equal the number of returned lines, got {seed_count} and {len(lines)}"
+        )
+    if len(speed) != len(lines):
+        raise ValueError(
+            f"speed must have one row per line, got {len(speed)} for {len(lines)} lines"
+        )
+
+    observed_max = 0.0
+    for index, (line, line_speed) in enumerate(zip(lines, speed, strict=True)):
+        if len(line) < 2:
+            raise ValueError(f"lines[{index}] must contain at least two vertices")
+        _validate_vector3_rows(f"lines[{index}]", line)
+        if len(line_speed) != len(line):
+            raise ValueError(
+                f"speed[{index}] must have one value per line vertex, "
+                f"got {len(line_speed)} for {len(line)} vertices"
+            )
+        if not all(isfinite(value) and value >= 0.0 for value in line_speed):
+            raise ValueError(f"speed[{index}] must contain only finite, non-negative values")
+        observed_max = max(observed_max, max(line_speed, default=0.0))
+
+    if not isfinite(max_speed):
+        raise ValueError("max_speed must be finite")
+    if max_speed != observed_max:
+        raise ValueError(
+            f"max_speed must equal the maximum speed value, got {max_speed} and {observed_max}"
+        )
+
+
 class QuantumStateSpec(BaseModel):
     """A reproducible hydrogenic state specification."""
 
@@ -107,6 +189,25 @@ class IsosurfacePayload(BaseModel):
     integration_rule: str = "tensor_product_simpson"
     extent_bohr: float = Field(gt=0.0)
 
+    @model_validator(mode="after")
+    def validate_mesh_consistency(self) -> Self:
+        if self.metadata.observable is not ObservableKind.PROBABILITY_DENSITY:
+            raise ValueError("isosurface metadata observable must be probability_density")
+        if self.metadata.representation is not RepresentationKind.ISOSURFACE:
+            raise ValueError("isosurface metadata representation must be isosurface")
+        _validate_indexed_mesh(self.vertices, self.normals, self.faces, self.phase)
+        for name in (
+            "density_level",
+            "requested_probability_mass",
+            "captured_probability_mass",
+            "finite_grid_density_integral",
+            "grid_spacing_bohr",
+            "extent_bohr",
+        ):
+            if not isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
+
 
 class CurrentFieldPayload(BaseModel):
     """Probability-flow streamlines with the numbers needed to judge them.
@@ -131,6 +232,25 @@ class CurrentFieldPayload(BaseModel):
     continuity_probe_count: int = Field(ge=0)
     integration_rule: str = "rk4_arc_length"
 
+    @model_validator(mode="after")
+    def validate_streamline_consistency(self) -> Self:
+        if self.metadata.observable is not ObservableKind.PROBABILITY_CURRENT:
+            raise ValueError("streamline metadata observable must be probability_current")
+        if self.metadata.representation is not RepresentationKind.STREAMLINES:
+            raise ValueError("streamline metadata representation must be streamlines")
+        _validate_streamline_geometry(self.lines, self.speed, self.seed_count, self.max_speed)
+        for name in (
+            "arc_step_bohr",
+            "seed_density_floor",
+            "extent_bohr",
+            "continuity_residual",
+            "continuity_absolute_residual",
+            "continuity_scale",
+        ):
+            if not isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
+
 
 class SuperpositionTermSpec(BaseModel):
     """One eigenstate and its complex amplitude, JSON-serialisable."""
@@ -142,6 +262,16 @@ class SuperpositionTermSpec(BaseModel):
     m: int = Field(ge=-11, le=11)
     coefficient_real: float
     coefficient_imag: float = 0.0
+
+    @model_validator(mode="after")
+    def validate_term(self) -> Self:
+        if self.l >= self.n:
+            raise ValueError("l must satisfy 0 <= l < n")
+        if abs(self.m) > self.l:
+            raise ValueError("m must satisfy |m| <= l")
+        if not isfinite(self.coefficient_real) or not isfinite(self.coefficient_imag):
+            raise ValueError("superposition coefficients must be finite")
+        return self
 
 
 class SuperpositionMetadata(BaseModel):
@@ -175,6 +305,24 @@ class SuperpositionMetadata(BaseModel):
     references: list[str]
     warnings: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_physical_identity(self) -> Self:
+        if not self.terms:
+            raise ValueError("a superposition must contain at least one term")
+        for name in (
+            "z",
+            "a_mu",
+            "reduced_mass_ratio",
+            "time_au",
+            "energy_expectation_hartree",
+        ):
+            if not isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        reciprocal_error = abs(self.a_mu * self.reduced_mass_ratio - 1.0)
+        if reciprocal_error > 1e-12:
+            raise ValueError("a_mu and reduced_mass_ratio must be reciprocal")
+        return self
+
 
 class SuperpositionIsosurfacePayload(BaseModel):
     """A |Psi|^2 isosurface at one instant."""
@@ -204,6 +352,31 @@ class SuperpositionIsosurfacePayload(BaseModel):
         "time_invariant_quadrature_error",
         "quadrature_error_at_reported_time",
     ]
+
+    @model_validator(mode="after")
+    def validate_mesh_consistency(self) -> Self:
+        if self.metadata.observable is not ObservableKind.PROBABILITY_DENSITY:
+            raise ValueError("isosurface metadata observable must be probability_density")
+        if self.metadata.representation is not RepresentationKind.ISOSURFACE:
+            raise ValueError("isosurface metadata representation must be isosurface")
+        _validate_indexed_mesh(self.vertices, self.normals, self.faces, self.phase)
+        for name in (
+            "density_level",
+            "requested_probability_mass",
+            "captured_probability_mass",
+            "finite_grid_density_integral",
+            "grid_spacing_bohr",
+            "extent_bohr",
+            "finite_box_tail_mass_upper_bound",
+            "finite_box_mass_variation_upper_bound",
+            "finite_grid_phase_variation_bound",
+            "finite_grid_aliasing_variation_lower_bound",
+            "finite_grid_mass_error_lower_bound",
+            "finite_grid_reporting_tolerance",
+        ):
+            if not isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
 
 
 class SuperpositionCurrentPayload(BaseModel):
@@ -237,6 +410,26 @@ class SuperpositionCurrentPayload(BaseModel):
     continuity_phase_count: int = Field(ge=0)
     density_rate_scale: float = Field(ge=0.0)
     integration_rule: str = "rk4_arc_length"
+
+    @model_validator(mode="after")
+    def validate_streamline_consistency(self) -> Self:
+        if self.metadata.observable is not ObservableKind.PROBABILITY_CURRENT:
+            raise ValueError("streamline metadata observable must be probability_current")
+        if self.metadata.representation is not RepresentationKind.STREAMLINES:
+            raise ValueError("streamline metadata representation must be streamlines")
+        _validate_streamline_geometry(self.lines, self.speed, self.seed_count, self.max_speed)
+        for name in (
+            "arc_step_bohr",
+            "seed_density_floor",
+            "extent_bohr",
+            "continuity_residual",
+            "continuity_absolute_residual",
+            "continuity_scale",
+            "density_rate_scale",
+        ):
+            if not isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
 
 
 class _SlicePayloadBase(BaseModel):

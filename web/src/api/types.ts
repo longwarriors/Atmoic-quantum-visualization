@@ -36,6 +36,8 @@ export interface QuantumStateSpec {
   l: number
   m: number
   z: number
+  /** Reduced-mass Bohr-scale ratio carried by every server state record. */
+  a_mu: number
   basis: BasisKind
 }
 
@@ -165,17 +167,20 @@ export interface SuperpositionCurrentPayload
   density_rate_scale: number
 }
 
-export interface SuperpositionPreset {
-  id: string
-  label: string
-  terms: string
-  period_au: number
-  note: string
-}
+/** Server-published preset and its builder-derived capability metadata. */
+export type SuperpositionPreset = components['schemas']['SuperpositionCatalogEntry']
 
-export interface OrbitalPreset extends OrbitalParameters {
+/**
+ * One entry returned by `/api/orbitals/catalog`.
+ *
+ * Current catalogues carry `z` explicitly. Keep it optional at the client
+ * boundary so an older compatible server can still supply the quantum numbers
+ * and basis without making the UI fabricate a charge value.
+ */
+export interface OrbitalPreset extends Omit<OrbitalParameters, 'z'> {
   id: string
   label: string
+  z?: number
 }
 
 export interface SceneStatus {

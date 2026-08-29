@@ -6,8 +6,8 @@
 > had no package registry. Its counts are stale: it reports 40 tests, 25
 > BibTeX entries and 18 cited keys, whereas the repository now has materially
 > more of each. The live, verified numbers live in
-> [`docs/project/status.md`](docs/project/status.md), which is regenerated from
-> an actual `check.ps1` run.
+> [`docs/project/status.md`](docs/project/status.md), whose live snapshot is
+> manually updated from an actual `check.ps1` run.
 >
 > Retained only as a record of what could and could not be checked offline.
 
@@ -36,14 +36,20 @@ The container could not resolve PyPI or npm registry hosts, so the following dep
 - `npm install`, full TypeScript module resolution and `vite build`;
 - generation of `web/package-lock.json`.
 
-Run the following on the first online development machine:
+The commands below were the bootstrap instructions on 2026-08-22. They are no
+longer instructions for the current checkout: both `uv.lock` and
+`web/package-lock.json` are now committed. Current validation must consume
+those exact dependency trees:
 
 ```bash
-uv sync --all-groups
+uv sync --locked --all-groups
 cd web
-npm install
+npm ci --no-audit --no-fund
 cd ..
 make check
 ```
 
-Commit `uv.lock` and `web/package-lock.json` after that first successful resolution. The CI workflow automatically uses locked/frozen installation once those files exist.
+Do not regenerate either lockfile as a side effect of setup. Dependency updates
+are separate, intentional changes whose manifest and lockfile diffs must be
+reviewed together. CI unconditionally uses the locked/frozen installation and
+fails when a lockfile is missing or stale.

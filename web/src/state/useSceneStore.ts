@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-import { capabilityFor, type ParameterBound } from '../api/capability'
+import { capabilityFor, Z_CONSTRAINT, type ParameterBound } from '../api/capability'
+import { MINIMUM_SLICE_RESOLUTION } from '../api/sliceContract'
 import type {
   BasisKind,
   OrbitalParameters,
@@ -15,6 +16,8 @@ interface SceneStore {
   mode: SceneMode
   superpositionTerms: string
   superpositionLabel: string
+  /** Slice floor published by the selected server catalogue entry. */
+  superpositionSliceResolutionFloor: number
   /**
    * The superposition's own basis, independent of `orbital.basis` on purpose:
    * they describe two different states, and sharing one field silently changed
@@ -61,7 +64,15 @@ interface SceneStore {
   autoRotate: boolean
   showGrid: boolean
   setMode: (value: SceneMode) => void
-  setSuperposition: (terms: string, label: string) => void
+  setSuperposition: (
+    terms: string,
+    label: string,
+    sliceResolutionFloor: number,
+  ) => void
+  syncSuperpositionCapabilities: (
+    terms: string,
+    sliceResolutionFloor: number,
+  ) => void
   setSuperpositionBasis: (value: BasisKind) => void
   setSuperpositionZ: (value: number) => void
   setAMu: (value: number) => void
@@ -83,14 +94,19 @@ interface SceneStore {
   setFogStrength: (value: number) => void
   setAutoRotate: (value: boolean) => void
   setShowGrid: (value: boolean) => void
-  applyPreset: (preset: OrbitalParameters) => void
+  applyPreset: (
+    preset: Omit<OrbitalParameters, 'z'> & Partial<Pick<OrbitalParameters, 'z'>>,
+  ) => void
 }
 
 function normalizeOrbital(current: OrbitalParameters, patch: Partial<OrbitalParameters>): OrbitalParameters {
   const n = Math.max(1, Math.min(8, Math.round(patch.n ?? current.n)))
   const l = Math.max(0, Math.min(n - 1, Math.round(patch.l ?? current.l)))
   const m = Math.max(-l, Math.min(l, Math.round(patch.m ?? current.m)))
-  const z = Math.max(0.1, Math.min(20, patch.z ?? current.z))
+  const z = Math.max(
+    Z_CONSTRAINT.uiBound.min,
+    Math.min(Z_CONSTRAINT.uiBound.max, patch.z ?? current.z),
+  )
   const basis: BasisKind = patch.basis ?? current.basis
   return { n, l, m, z, basis }
 }
@@ -115,8 +131,14 @@ function clampResolution(
   orbital: OrbitalParameters,
   representation: RepresentationKind,
   resolution: number,
+  superpositionSliceResolutionFloor?: number,
 ): number {
-  const capability = capabilityFor({ mode, orbital, representation })
+  const capability = capabilityFor({
+    mode,
+    orbital,
+    representation,
+    superpositionSliceResolutionFloor,
+  })
   const bound: ParameterBound | undefined =
     capability.status === 'available' ? capability.parameters.resolution : undefined
   if (bound === undefined) return resolution
@@ -172,6 +194,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   mode: 'eigenstate',
   superpositionTerms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
   superpositionLabel: '1s + 2p_z (Bohr oscillation)',
+  superpositionSliceResolutionFloor: MINIMUM_SLICE_RESOLUTION,
   superpositionBasis: 'complex',
   superpositionZ: 1.0,
   aMu: 1.0,
@@ -196,23 +219,90 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   autoRotate: false,
   showGrid: true,
   setMode: (mode) =>
-    set((state) => ({
-      mode,
-      playing: false,
+    set((state) => {
       // The two modes do not serve the same representations, so the standing
       // one has to be re-resolved here or the canvas is asked for a picture no
-      // route can draw.
-      representation: resolveRepresentation(
+      // route can draw. Resolution follows that resolved row in the SAME write;
+      // otherwise the panel can show 129 while the request planner sends 81.
+      const representation = resolveRepresentation(
         mode,
         state.orbital,
         state.representation,
         state.representation,
-      ),
-    })),
-  setSuperposition: (superpositionTerms, superpositionLabel) =>
-    set({ superpositionTerms, superpositionLabel, timeAu: 0 }),
+      )
+      return {
+        mode,
+        playing: false,
+        representation,
+        resolution: clampResolution(
+          mode,
+          state.orbital,
+          representation,
+          state.resolution,
+          state.superpositionSliceResolutionFloor,
+        ),
+      }
+    }),
+  setSuperposition: (
+    superpositionTerms,
+    superpositionLabel,
+    superpositionSliceResolutionFloor,
+  ) =>
+    set((state) => {
+      const representation = resolveRepresentation(
+        state.mode,
+        state.orbital,
+        state.representation,
+        state.representation,
+      )
+      return {
+        superpositionTerms,
+        superpositionLabel,
+        superpositionSliceResolutionFloor,
+        representation,
+        timeAu: 0,
+        playing: false,
+        resolution: clampResolution(
+          state.mode,
+          state.orbital,
+          representation,
+          state.resolution,
+          superpositionSliceResolutionFloor,
+        ),
+      }
+    }),
+  syncSuperpositionCapabilities: (
+    terms,
+    superpositionSliceResolutionFloor,
+  ) =>
+    set((state) => {
+      if (state.superpositionTerms !== terms) return state
+      const representation = resolveRepresentation(
+        state.mode,
+        state.orbital,
+        state.representation,
+        state.representation,
+      )
+      return {
+        superpositionSliceResolutionFloor,
+        representation,
+        resolution: clampResolution(
+          state.mode,
+          state.orbital,
+          representation,
+          state.resolution,
+          superpositionSliceResolutionFloor,
+        ),
+      }
+    }),
   setSuperpositionBasis: (superpositionBasis) => set({ superpositionBasis }),
-  setSuperpositionZ: (superpositionZ) => set({ superpositionZ }),
+  setSuperpositionZ: (superpositionZ) =>
+    set({
+      superpositionZ: Math.max(
+        Z_CONSTRAINT.uiBound.min,
+        Math.min(Z_CONSTRAINT.uiBound.max, superpositionZ),
+      ),
+    }),
   setAMu: (aMu) => set({ aMu }),
   setTimeAu: (timeAu) => set({ timeAu }),
   setPlaying: (playing) => set({ playing }),
@@ -228,23 +318,48 @@ export const useSceneStore = create<SceneStore>()((set) => ({
       return {
         orbital,
         representation,
-        resolution: clampResolution(state.mode, orbital, representation, state.resolution),
+        resolution: clampResolution(
+          state.mode,
+          orbital,
+          representation,
+          state.resolution,
+          state.superpositionSliceResolutionFloor,
+        ),
       }
     }),
   setRepresentation: (representation) =>
-    set((state) => ({
-      representation: resolveRepresentation(
+    set((state) => {
+      const resolved = resolveRepresentation(
         state.mode,
         state.orbital,
         representation,
         state.representation,
-      ),
-    })),
+      )
+      return {
+        representation: resolved,
+        resolution: clampResolution(
+          state.mode,
+          state.orbital,
+          resolved,
+          state.resolution,
+          state.superpositionSliceResolutionFloor,
+        ),
+      }
+    }),
   setPlane: (plane) => set({ plane }),
   setSliceObservable: (sliceObservable) => set({ sliceObservable }),
   setSamples: (samples) => set({ samples }),
   setSeed: (seed) => set({ seed }),
-  setResolution: (resolution) => set({ resolution }),
+  setResolution: (resolution) =>
+    set((state) => ({
+      resolution: clampResolution(
+        state.mode,
+        state.orbital,
+        state.representation,
+        resolution,
+        state.superpositionSliceResolutionFloor,
+      ),
+    })),
   setProbabilityMass: (probabilityMass) => set({ probabilityMass }),
   setSeedCount: (seedCount) => set({ seedCount }),
   setPointSize: (pointSize) => set({ pointSize }),
@@ -266,7 +381,13 @@ export const useSceneStore = create<SceneStore>()((set) => ({
       return {
         orbital,
         representation,
-        resolution: clampResolution(state.mode, orbital, representation, state.resolution),
+        resolution: clampResolution(
+          state.mode,
+          orbital,
+          representation,
+          state.resolution,
+          state.superpositionSliceResolutionFloor,
+        ),
       }
     }),
 }))

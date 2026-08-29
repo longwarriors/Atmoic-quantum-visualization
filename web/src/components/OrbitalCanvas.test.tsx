@@ -63,10 +63,10 @@ import {
   RendererSettings,
   SceneContent,
   SceneRoot,
-  sceneAssetInputs,
   slicePlaneOf,
   usesPresentationEffects,
 } from './OrbitalCanvas'
+import { selectSceneRequestInputs as sceneAssetInputs } from './sceneRequest'
 import type { SceneAsset } from './useSceneAsset'
 
 /* --------------------------------------------------------- the GPU shell */
@@ -179,10 +179,10 @@ afterEach(() => {
 /* ---------------------------------------------------------------- payloads */
 
 const orbitalMetadata = (
-  state: OrbitalMetadata['state'],
+  state: Omit<OrbitalMetadata['state'], 'a_mu'> & { a_mu?: number },
   representation: string,
 ): OrbitalMetadata => ({
-  state,
+  state: { a_mu: 1, ...state },
   label: 'test state',
   energy_hartree: -0.125,
   length_unit: 'bohr',
@@ -493,6 +493,7 @@ describe('sceneAssetInputs', () => {
       probabilityMass: 0.77,
       seedCount: 33,
       superpositionTerms: '1,0,0,1',
+      superpositionSliceResolutionFloor: 103,
       superpositionBasis: 'real',
       superpositionZ: 4,
       aMu: 0.999456,
@@ -514,6 +515,7 @@ describe('sceneAssetInputs', () => {
       probabilityMass: 0.77,
       seedCount: 33,
       superpositionTerms: '1,0,0,1',
+      superpositionSliceResolutionFloor: 103,
       superpositionBasis: 'real',
       aMu: 0.999456,
       timeAu: 6.5,

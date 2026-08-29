@@ -88,7 +88,7 @@ const expectedVertexCount = (lines: number[][][]): number =>
   2 * lines.reduce((total, line) => total + Math.max(0, line.length - 1), 0)
 
 const orbitalMetadata = (): OrbitalMetadata => ({
-  state: { n: 2, l: 1, m: 1, z: 1, basis: 'complex' },
+  state: { n: 2, l: 1, m: 1, z: 1, a_mu: 1, basis: 'complex' },
   label: '2p_+1',
   energy_hartree: -0.125,
   length_unit: 'bohr',

@@ -311,7 +311,7 @@ def test_superposition_isosurface_carries_time_and_coefficients() -> None:
 
 
 def test_degenerate_superposition_geometry_does_not_move() -> None:
-    state = _superposition((2, 0, 0, 1.0 / sqrt(2.0)), (2, 1, 0, 1.0 / sqrt(2.0)))
+    state = _superposition((2, 1, 0, 1.0 / sqrt(2.0)), (2, 1, 1, 1.0 / sqrt(2.0)))
     early = build_superposition_isosurface(state, time=0.0, resolution=49)
     late = build_superposition_isosurface(state, time=30.0, resolution=49)
 
@@ -364,15 +364,15 @@ def test_mixed_shell_superposition_warns_about_scale_not_resolution() -> None:
 def test_mixed_shell_quadrature_error_dwarfs_the_single_shell_case() -> None:
     # The measured basis for the warning above. Both converge with resolution,
     # so the distinction is magnitude, not rate: at resolution 49 the 1s + 2p
-    # error is ~6x the 2s + 2p error, because the box is sized for the wide
-    # term while the compact one carries the cusp.
+    # error is over 70x a same-shell 2p_m=0 + 2p_m=1 error, because the box is
+    # sized for the wide term while the compact one carries the cusp.
     mixed = build_superposition_isosurface(
         _superposition((1, 0, 0, 1.0 / sqrt(2.0)), (2, 1, 0, 1.0 / sqrt(2.0))),
         time=0.0,
         resolution=49,
     ).finite_grid_density_integral
     same = build_superposition_isosurface(
-        _superposition((2, 0, 0, 1.0 / sqrt(2.0)), (2, 1, 0, 1.0 / sqrt(2.0))),
+        _superposition((2, 1, 0, 1.0 / sqrt(2.0)), (2, 1, 1, 1.0 / sqrt(2.0))),
         time=0.0,
         resolution=49,
     ).finite_grid_density_integral

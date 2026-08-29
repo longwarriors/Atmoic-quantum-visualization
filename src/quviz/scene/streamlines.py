@@ -17,9 +17,9 @@ explicitly Bohmian reading may they be given trajectory ontology; see
 
 A velocity field maps ``(N, 3)`` positions to ``(N, 3)`` velocities, and whole
 bundles of streamlines advance in lockstep. That is not incidental: evaluating
-one point at a time spends all its time in per-call SciPy overhead, and the
-numerical fields planned for M1 will be grid-interpolated, which is also
-naturally batched.
+one point at a time spends all its time in per-call SciPy overhead. The M1
+analytic superpositions use the same batched path, and later grid-interpolated
+numerical fields will also be naturally batched.
 
 The integrator takes an arbitrary velocity callable so the analytic stationary
 case and those later numerical states share one implementation.
@@ -39,10 +39,15 @@ from quviz.physics.hydrogenic import (
     hydrogenic_wavefunction,
     validate_quantum_numbers,
 )
-from quviz.physics.observables import probability_current_hydrogenic, probability_density
+from quviz.physics.observables import (
+    hydrogenic_density_floor,
+    probability_current_hydrogenic,
+    probability_density,
+)
 
 FloatArray = NDArray[np.float64]
 VelocityField = Callable[[FloatArray], FloatArray]
+DEFAULT_RELATIVE_SPEED_FLOOR = 1e-12
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +58,21 @@ class Streamline:
     speed: FloatArray
 
 
+def stable_vector_magnitudes(values: FloatArray) -> FloatArray:
+    """Return row-wise Euclidean magnitudes without squaring the components.
+
+    ``np.linalg.norm`` forms a sum of squares, so a perfectly representable
+    current component near ``1e-163`` can become an exact zero before the square
+    root. Repeated ``hypot`` rescales internally and is stable at both ends of
+    the float64 range.
+    """
+
+    vectors = np.asarray(values, dtype=np.float64)
+    if vectors.ndim != 2:
+        raise ValueError("vector magnitudes require a two-dimensional array")
+    return np.asarray(np.hypot.reduce(np.abs(vectors), axis=1), dtype=np.float64)
+
+
 def hydrogenic_flow_velocity(
     n: int,
     l: int,
@@ -61,7 +81,7 @@ def hydrogenic_flow_velocity(
     z: float = 1.0,
     a_mu: float = 1.0,
     basis: BasisKind | str = BasisKind.COMPLEX,
-    density_floor: float = 1e-14,
+    density_floor: float | None = None,
 ) -> VelocityField:
     r"""Return a batched :math:`\mathbf v=\mathbf j/\rho` for one hydrogenic state.
 
@@ -72,6 +92,11 @@ def hydrogenic_flow_velocity(
 
     validate_quantum_numbers(n, l, m)
     basis_kind = BasisKind(basis)
+    resolved_density_floor = (
+        hydrogenic_density_floor(z=z, a_mu=a_mu) if density_floor is None else float(density_floor)
+    )
+    if resolved_density_floor < 0.0 or not np.isfinite(resolved_density_floor):
+        raise ValueError("density_floor must be non-negative and finite")
 
     def velocity(points: FloatArray) -> FloatArray:
         position = np.atleast_2d(np.asarray(points, dtype=np.float64))
@@ -88,14 +113,14 @@ def hydrogenic_flow_velocity(
             z=z,
             a_mu=a_mu,
             basis=basis_kind,
-            density_floor=density_floor,
+            density_floor=resolved_density_floor,
         )
         psi = hydrogenic_wavefunction(
             n, l, m, radius, polar, azimuth, z=z, a_mu=a_mu, basis=basis_kind
         )
         density = probability_density(psi)
         result = np.zeros_like(current)
-        live = density > density_floor
+        live = density > resolved_density_floor
         np.divide(current, density[:, None], out=result, where=live[:, None])
         return np.asarray(result, dtype=np.float64)
 
@@ -103,11 +128,26 @@ def hydrogenic_flow_velocity(
 
 
 def _unit_directions(
-    velocity: VelocityField, points: FloatArray, speed_floor: float
+    velocity: VelocityField,
+    points: FloatArray,
+    speed_floor: float | FloatArray | None,
 ) -> tuple[FloatArray, FloatArray]:
     values = np.asarray(velocity(points), dtype=np.float64)
-    magnitude = np.linalg.norm(values, axis=1)
-    usable = np.isfinite(magnitude) & (magnitude > speed_floor)
+    magnitude = stable_vector_magnitudes(values)
+    finite = np.isfinite(magnitude)
+    if speed_floor is None:
+        # Each streamline owns its reference. A slow physical line must not be
+        # erased merely because a faster seed happened to share this batch.
+        resolved_speed_floor: float | FloatArray = DEFAULT_RELATIVE_SPEED_FLOOR * magnitude
+    else:
+        resolved_speed_floor = np.asarray(speed_floor, dtype=np.float64)
+        if resolved_speed_floor.ndim > 1 or (
+            resolved_speed_floor.ndim == 1 and resolved_speed_floor.shape != magnitude.shape
+        ):
+            raise ValueError("per-line speed_floor must match the number of points")
+        if np.any(resolved_speed_floor < 0.0) or not np.all(np.isfinite(resolved_speed_floor)):
+            raise ValueError("speed_floor must be non-negative and finite")
+    usable = finite & (magnitude > resolved_speed_floor)
     directions = np.zeros_like(values)
     np.divide(values, magnitude[:, None], out=directions, where=usable[:, None])
     return directions, np.where(usable, magnitude, 0.0)
@@ -119,7 +159,7 @@ def integrate_streamlines(
     *,
     arc_step: float,
     max_points: int,
-    speed_floor: float = 1e-12,
+    speed_floor: float | None = None,
     close_tolerance: float | None = None,
 ) -> list[Streamline]:
     """Integrate a bundle of streamlines with classical RK4 in arc length.
@@ -128,7 +168,11 @@ def integrate_streamlines(
     spacing. A line stops where the field vanishes or is masked, which is what
     keeps nodal surfaces and the polar axis from producing NaN vertices.
 
-    ``close_tolerance`` retires a closed orbit once it returns to its seed.
+    By default each line fixes its zero-speed cutoff at ``1e-12`` of that
+    seed's initial finite speed. It is therefore invariant when the entire
+    field is multiplied by a physical scale factor and when unrelated seeds
+    are batched, reordered, or split. ``close_tolerance`` retires a closed
+    orbit once it returns to its seed.
     Every stationary hydrogenic streamline does close, but the test is
     geometric rather than assumed, so a field that does not close simply runs
     to ``max_points``.
@@ -138,29 +182,34 @@ def integrate_streamlines(
         raise ValueError("arc_step must be positive")
     if max_points < 1:
         raise ValueError("max_points must be at least one")
+    if speed_floor is not None and (speed_floor < 0.0 or not np.isfinite(speed_floor)):
+        raise ValueError("speed_floor must be non-negative and finite")
 
     position = np.atleast_2d(np.asarray(seeds, dtype=np.float64)).copy()
     count = position.shape[0]
     _, speed = _unit_directions(velocity, position, speed_floor)
+    resolved_speed_floor: float | FloatArray = (
+        DEFAULT_RELATIVE_SPEED_FLOOR * speed if speed_floor is None else speed_floor
+    )
 
     vertices: list[list[FloatArray]] = [[position[i].copy()] for i in range(count)]
     speeds: list[list[float]] = [[float(speed[i])] for i in range(count)]
-    active = speed > speed_floor
+    active = speed > 0.0
 
     for _ in range(max_points - 1):
         if not active.any():
             break
-        k1, _ = _unit_directions(velocity, position, speed_floor)
-        k2, _ = _unit_directions(velocity, position + 0.5 * arc_step * k1, speed_floor)
-        k3, _ = _unit_directions(velocity, position + 0.5 * arc_step * k2, speed_floor)
-        k4, _ = _unit_directions(velocity, position + arc_step * k3, speed_floor)
+        k1, _ = _unit_directions(velocity, position, resolved_speed_floor)
+        k2, _ = _unit_directions(velocity, position + 0.5 * arc_step * k1, resolved_speed_floor)
+        k3, _ = _unit_directions(velocity, position + 0.5 * arc_step * k2, resolved_speed_floor)
+        k4, _ = _unit_directions(velocity, position + arc_step * k3, resolved_speed_floor)
         increment = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
 
         stalled = ~np.any(increment, axis=1)
         active &= ~stalled
         candidate = position + arc_step * increment
-        _, magnitude = _unit_directions(velocity, candidate, speed_floor)
-        active &= magnitude > speed_floor
+        _, magnitude = _unit_directions(velocity, candidate, resolved_speed_floor)
+        active &= magnitude > 0.0
 
         for index in np.flatnonzero(active):
             position[index] = candidate[index]
@@ -169,7 +218,8 @@ def integrate_streamlines(
             if (
                 close_tolerance is not None
                 and len(vertices[index]) > 3
-                and float(np.linalg.norm(candidate[index] - vertices[index][0])) < close_tolerance
+                and float(np.hypot.reduce(np.abs(candidate[index] - vertices[index][0])))
+                < close_tolerance
             ):
                 active[index] = False
 
@@ -188,7 +238,7 @@ def integrate_streamline(
     *,
     arc_step: float,
     max_points: int,
-    speed_floor: float = 1e-12,
+    speed_floor: float | None = None,
     close_tolerance: float | None = None,
 ) -> Streamline:
     """Integrate a single streamline. Thin wrapper over the batched form."""

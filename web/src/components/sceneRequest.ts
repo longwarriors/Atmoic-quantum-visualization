@@ -1,10 +1,62 @@
 import type {
+  BasisKind,
   OrbitalParameters,
   PrincipalPlane,
   RepresentationKind,
   SliceObservable,
 } from '../api/types'
+import { TIME_GRID_STEP_AU, type SceneRequestInputs } from '../api/capability'
 import type { SceneMode } from '../state/useSceneStore'
+
+/**
+ * Exactly the store fields that can change a scene request.
+ *
+ * Both the control panel and the canvas consume this shape through
+ * `selectSceneRequestInputs`. Keeping the mode-dependent charge substitution
+ * here prevents those two views from planning two different superpositions.
+ */
+export interface SceneInputSource {
+  mode: SceneMode
+  orbital: OrbitalParameters
+  representation: RepresentationKind
+  samples: number
+  seed: number
+  resolution: number
+  probabilityMass: number
+  seedCount: number
+  superpositionTerms: string
+  superpositionSliceResolutionFloor: number
+  superpositionBasis: BasisKind
+  superpositionZ: number
+  aMu: number
+  timeAu: number
+  plane: PrincipalPlane
+  sliceObservable: SliceObservable
+}
+
+/** The one store-to-request translation used by every request-aware view. */
+export function selectSceneRequestInputs(state: SceneInputSource): SceneRequestInputs {
+  return {
+    mode: state.mode,
+    orbital:
+      state.mode === 'superposition'
+        ? { ...state.orbital, z: state.superpositionZ }
+        : state.orbital,
+    representation: state.representation,
+    samples: state.samples,
+    seed: state.seed,
+    resolution: state.resolution,
+    probabilityMass: state.probabilityMass,
+    seedCount: state.seedCount,
+    superpositionTerms: state.superpositionTerms,
+    superpositionSliceResolutionFloor: state.superpositionSliceResolutionFloor,
+    superpositionBasis: state.superpositionBasis,
+    aMu: state.aMu,
+    timeAu: state.timeAu,
+    plane: state.plane,
+    sliceObservable: state.sliceObservable,
+  }
+}
 
 /**
  * Everything the canvas sends to the server EXCEPT the animation clock.
@@ -105,10 +157,10 @@ export function sceneIdentityKey(inputs: SceneIdentityInputs): string {
   ].join('|')
 }
 
-/** Atomic-unit step between playback frames. */
-const TIME_STEP_AU = 0.6
-/** Frames in one playback lap; 66 * 0.6 = 39.6 a.u. exactly. */
-const TIME_FRAMES = 66
+/** Target atomic-unit spacing; a physical period is divided into whole frames. */
+const TARGET_TIME_STEP_AU = 0.6
+/** Backward-compatible fallback for callers that do not own a catalogue period. */
+const DEFAULT_PLAYBACK_PERIOD_AU = 39.6
 
 /**
  * The next playback time, as a frame index rather than an accumulated sum.
@@ -120,10 +172,23 @@ const TIME_FRAMES = 66
  * again. Counting frames instead means a lap revisits bit-identical values, so
  * playback asks for the same 66 frames forever.
  */
-export function nextTimeAu(time: number): number {
-  const frame = Math.round(time / TIME_STEP_AU)
-  const next = (((frame + 1) % TIME_FRAMES) + TIME_FRAMES) % TIME_FRAMES
-  return Number((next * TIME_STEP_AU).toFixed(3))
+export function nextTimeAu(time: number, periodAu = DEFAULT_PLAYBACK_PERIOD_AU): number {
+  if (!Number.isFinite(time) || !Number.isFinite(periodAu) || periodAu <= 0) return 0
+  const frames = Math.max(1, Math.ceil(periodAu / TARGET_TIME_STEP_AU))
+  const normalized = ((time % periodAu) + periodAu) % periodAu
+  const frame = Math.round((normalized * frames) / periodAu) % frames
+  const next = (frame + 1) % frames
+
+  // The ideal phase samples are evenly spaced across the exact physical
+  // period. Snap each one to the same 0.2-a.u. lattice the time slider shows;
+  // otherwise a catalogue period such as 16.755... produces long binary
+  // decimals, range-step mismatches and cache keys the UI cannot reproduce.
+  // Rounding each absolute frame independently distributes the small timing
+  // error instead of accumulating it, and the integer frame still guarantees
+  // a bit-identical wrap to zero.
+  const idealTime = (next * periodAu) / frames
+  const ticks = Math.round(idealTime / TIME_GRID_STEP_AU)
+  return Number((ticks * TIME_GRID_STEP_AU).toFixed(12))
 }
 
 /**

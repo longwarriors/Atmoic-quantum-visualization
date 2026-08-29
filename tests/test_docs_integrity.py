@@ -267,6 +267,102 @@ def test_table_rows_do_not_contain_unescaped_pipes_inside_math() -> None:
     assert not violations, "unescaped '|' inside $...$ on a table row:\n" + "\n".join(violations)
 
 
+def test_capability_summaries_do_not_regress_to_pre_slice_status() -> None:
+    semantics = (ROOT / "docs/concepts/semantics.md").read_text(encoding="utf-8")
+    vision = (ROOT / "docs/project/vision.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    home = (ROOT / "docs/index.md").read_text(encoding="utf-8")
+
+    assert "`wavefunction_real` / `wavefunction_imag`" in semantics
+    assert "节面几何 representation" in semantics
+    assert "枚举中的占位" not in semantics
+    assert "概率流线已经进入当前能力" in vision
+    assert "设计中的 WebGPU、流线" not in vision
+    for summary in (readme, home):
+        assert "解析含时叠加态" in summary
+        assert "平面切片" in summary
+
+
+def test_live_installation_instructions_consume_committed_lockfiles() -> None:
+    installation = (ROOT / "docs/getting-started/installation.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    historical = (ROOT / "VALIDATION.md").read_text(encoding="utf-8")
+
+    for live_guide in (installation, readme, contributing):
+        assert "uv sync --locked --all-groups" in live_guide
+        assert "npm ci --no-audit --no-fund" in live_guide
+    assert "\tuv sync --locked --all-groups" in makefile
+    assert "\tcd web && npm ci --no-audit --no-fund" in makefile
+    assert "仓库已经提交 `uv.lock` 与 `web/package-lock.json`" in installation
+    assert "no longer instructions for the current checkout" in " ".join(historical.split())
+    assert "uv sync --locked --all-groups" in historical
+    assert "npm ci --no-audit --no-fund" in historical
+
+
+def test_api_reference_does_not_call_the_high_n_slice_floor_a_validity_proof() -> None:
+    api = (ROOT / "docs/reference/api.md").read_text(encoding="utf-8")
+    status = (ROOT / "docs/project/status.md").read_text(encoding="utf-8")
+
+    assert "不是高 $n$ 收敛性或物理准确性的证书" in api
+    assert "花的是采样数" not in api
+    multiplication = "\N{MULTIPLICATION SIGN}"
+    minus_sign = "\N{MINUS SIGN}"
+    en_dash = "\N{EN DASH}"
+    assert f"active_terms {multiplication} resolution³" in api
+    assert f"active_terms {multiplication} resolution²" in api
+    assert f"active_terms {multiplication} seed_count" in api
+    assert f"1 + 5(max_points {minus_sign} 1)" in api
+    assert "2,000,000 term-velocity evaluations" in api
+    assert "100,000 serialized path samples" in api
+    assert f"1{en_dash}96" in api
+    assert f"1{en_dash}40" in api
+    assert "1,024 term-seed" not in api
+    assert "一维径向 oracle" in api
+    assert "4s 在 81 点会被拒、97 点通过" in api
+    assert "含非零激发 s 分量的多项态使用上述最细双网格门禁" in api
+    assert "其他一般多项态仍只有质量/alias 诊断" in api
+    assert "高 $n$ 花的是采样数而不是有效性" not in status
+    assert "12s 以及 1s+12s 即使在 513 上限仍明确 fail-closed" in status
+    assert "上限 1,500,000 term-pixel evaluations" in api
+
+
+def test_visual_fixture_docs_do_not_call_the_derived_catalog_a_literal_table() -> None:
+    """The superposition period is deterministic, but it is still arithmetic."""
+
+    status = (ROOT / "docs/project/status.md").read_text(encoding="utf-8")
+    fixture_gate = (ROOT / "tests/test_visual_fixtures.py").read_text(encoding="utf-8")
+
+    assert "不经任何算术" not in status
+    assert "no arithmetic reaches them" not in fixture_gate
+    assert "period_au" in status
+    assert "fixed hydrogenic energy gaps" in fixture_gate
+
+
+def test_sampling_tutorial_describes_the_gated_adaptive_tail() -> None:
+    sampling = (ROOT / "docs/tutorials/sampling.md").read_text(encoding="utf-8")
+
+    assert "自适应扩展路径还需要专门的尾部回归测试" not in sampling
+    assert "总质量、平均半径和整条 CDF" in sampling
+    assert "`tests/test_sampling.py`" in sampling
+
+
+def test_probability_flow_docs_cover_scale_covariance_and_playback() -> None:
+    quality = (ROOT / "docs/reference/quality-gates.md").read_text(encoding="utf-8")
+    current = (ROOT / "docs/concepts/probability-current.md").read_text(encoding="utf-8")
+    frontend = (ROOT / "docs/tutorials/frontend-rendering.md").read_text(encoding="utf-8")
+    status = (ROOT / "docs/project/status.md").read_text(encoding="utf-8")
+
+    assert "均仅在 $Z=1$ 下验证" not in quality
+    assert "概率流 oracle 测试仅在 $Z=1$ 下验证" not in status
+    assert "$(Z/a_\\mu)^3$" in current
+    assert "`period_au=0` 的简并态不执行播放" in frontend
+    assert "`aria-disabled`" in frontend
+    assert "`aria-describedby`" in frontend
+    assert "`slice_resolution_floor`" in frontend
+
+
 # --- red/green cases for the gate itself --------------------------------------
 
 

@@ -15,10 +15,10 @@ samples, many of them at cancellation magnitudes -- so the gate reads
 permissive parser and accepts exactly the bytes that break the front-end. The
 negative control for this gate is a permissive encoder, not a stray ``nan``.
 
-**Every builder refusal must arrive as a 422.** The resolution parity guard,
-the ``16 * n + 17`` floor and the term-spec parser all raise ``ValueError`` deep
-inside the call; a route that let one escape would answer 500, and a route that
-swallowed one would answer 200 with a payload whose own claims are false.
+**Every expected scientific refusal must arrive as a 422.** Domain and numerical
+failures can arise below the route (for example from the parity, resolution and
+term-spec guards); a route that let one escape would answer 500, while an
+unexpected programming error must not be hidden by a blanket catch.
 
 **``a_mu`` is exposed here and only here.** ``/api/orbitals/slice`` is the sole
 eigenstate route that takes the reduced-mass Bohr length, so this file is the
@@ -87,11 +87,12 @@ def test_slice_routes_serve_a_slice_payload(path: str, params: dict[str, Any]) -
     assert payload["metadata"]["representation"] == "slice"
     assert payload["plane"] == "xz"
     assert payload["slice_observable"] == "phase"
-    assert payload["resolution"] == SMALL
-    assert len(payload["values"]) == SMALL * SMALL
+    resolution = int(params["resolution"])
+    assert payload["resolution"] == resolution
+    assert len(payload["values"]) == resolution * resolution
     assert payload["layout"] == "row_major_v_rows_u_columns"
     assert payload["normal"] == [0.0, -1.0, 0.0]
-    assert len(payload["valid_mask"]) == SMALL * SMALL
+    assert len(payload["valid_mask"]) == resolution * resolution
 
 
 @pytest.mark.parametrize(
@@ -110,7 +111,8 @@ def test_slice_response_text_is_parsable_json_with_no_nan_tokens(
     assert "NaN" not in response.text
     assert "Infinity" not in response.text
     parsed = json.loads(response.text, parse_constant=_reject_json_constant)
-    assert len(parsed["values"]) == SMALL * SMALL
+    resolution = int(params["resolution"])
+    assert len(parsed["values"]) == resolution * resolution
 
 
 @pytest.mark.parametrize(
@@ -207,6 +209,31 @@ def test_the_superposition_slice_route_refuses_impossible_requests(
     response = client.get(SUPERPOSITION_SLICE, params={**SUPERPOSITION_CELL, **override})
 
     assert response.status_code == 422
+
+
+def test_catalog_publishes_the_exact_first_accepted_superposition_slice_grid() -> None:
+    entries = client.get("/api/superposition/catalog").json()
+    floors = {entry["id"]: entry["slice_resolution_floor"] for entry in entries}
+
+    assert floors == {
+        "1s-2pz": 65,
+        "2s-2pz": 65,
+        "1s-3dz2": 103,
+        "2pplus-2pminus": 65,
+    }
+    mixed = next(entry for entry in entries if entry["id"] == "1s-3dz2")
+    base = {
+        **SUPERPOSITION_CELL,
+        "terms": mixed["terms"],
+        "observable": "probability_density",
+    }
+    below = client.get(SUPERPOSITION_SLICE, params={**base, "resolution": 101})
+    first = client.get(SUPERPOSITION_SLICE, params={**base, "resolution": 103})
+
+    assert below.status_code == 422
+    assert "at least 103" in below.json()["detail"]
+    assert first.status_code == 200, first.text
+    assert first.json()["resolution"] == 103
 
 
 def test_a_mu_reaches_the_metadata_of_the_eigenstate_slice() -> None:

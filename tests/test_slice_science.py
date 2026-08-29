@@ -28,9 +28,9 @@ time dropped                 S8 (S9 is the stationary partner)
 
 Each control monkeypatches the *real* builder chain rather than mutating an
 array after the fact, so it proves the oracle binds to the code under test and
-not to a local copy of the data. Both builders are ``lru_cache``\\ d, so a
-module-wide fixture clears the caches around every test; a sabotaged payload
-must never survive into the next test.
+not to a local copy of the data. Both public builders wrap private LRUs, return
+deep copies, and retain a ``cache_clear`` test hook; a module-wide fixture uses
+that hook so sabotaged private entries never survive into the next test.
 
 **One measured deviation from the frozen S2 contract.** The ``2p_z`` ``xz``
 slice is *exactly* symmetric in ``u`` but antisymmetric in ``v`` only to one

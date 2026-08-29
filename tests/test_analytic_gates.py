@@ -21,6 +21,7 @@ from scipy.special import roots_legendre
 from scipy.stats import kstest
 
 from quviz.conventions import BasisKind
+from quviz.errors import ScientificComputationError
 from quviz.physics.hydrogenic import (
     cartesian_to_spherical,
     complex_spherical_harmonic,
@@ -433,7 +434,7 @@ def test_expectation_radial_rejects_divergent_power() -> None:
 def test_expectation_radial_reports_an_inadequate_quadrature() -> None:
     # This guard is what catches a too-narrow domain or too few nodes. Without
     # it a truncated integral silently returns a plausible but wrong value.
-    with pytest.raises(RuntimeError, match="captured norm"):
+    with pytest.raises(ScientificComputationError, match="captured norm"):
         expectation_radial(4, 0, 1, quadrature_nodes=16)
 
 

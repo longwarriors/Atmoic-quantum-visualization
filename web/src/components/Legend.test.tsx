@@ -12,7 +12,7 @@ import { Legend } from './Legend'
 
 function eigenstateMetadata(representation: string, basis: 'real' | 'complex'): OrbitalMetadata {
   return {
-    state: { n: 2, l: 1, m: 0, z: 1, basis },
+    state: { n: 2, l: 1, m: 0, z: 1, a_mu: 1, basis },
     label: 'test eigenstate',
     energy_hartree: -0.125,
     length_unit: 'bohr',

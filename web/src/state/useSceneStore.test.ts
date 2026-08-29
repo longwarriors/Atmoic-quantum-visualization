@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { planSceneRequest } from '../api/capability'
+import { selectSceneRequestInputs } from '../components/sceneRequest'
 import { useSceneStore } from './useSceneStore'
 
 const INITIAL = useSceneStore.getState()
@@ -109,6 +111,14 @@ describe('representation availability', () => {
     expect(read().orbital).toEqual({ n: 4, l: 3, m: 2, z: 1.5, basis: 'complex' })
     expect(read().resolution).toBe(81)
   })
+
+  it('preserves nuclear charge when a catalogue preset omits z', () => {
+    useSceneStore.setState({ orbital: { n: 1, l: 0, m: 0, z: 3, basis: 'real' } })
+
+    read().applyPreset({ n: 3, l: 2, m: 1, basis: 'complex' })
+
+    expect(read().orbital).toEqual({ n: 3, l: 2, m: 1, z: 3, basis: 'complex' })
+  })
 })
 
 describe('superposition state fields', () => {
@@ -196,6 +206,33 @@ describe('orbital normalisation', () => {
  * which reads the matrix, offered a value the store would not keep.
  */
 describe('resolution follows the bound of the representation actually shown', () => {
+  it('clamps a 129-sample slice to the 81-sample isosurface ceiling on representation change', () => {
+    useSceneStore.setState({ representation: 'slice', resolution: 129 })
+
+    read().setRepresentation('isosurface')
+
+    expect(read().representation).toBe('isosurface')
+    expect(read().resolution).toBe(81)
+  })
+
+  it('raises an isosurface grid to the slice floor on representation change', () => {
+    useSceneStore.setState({ representation: 'isosurface', resolution: 49 })
+
+    read().setRepresentation('slice')
+
+    expect(read().representation).toBe('slice')
+    expect(read().resolution).toBe(65)
+  })
+
+  it('clamps resolution when a mode change resolves to a different row', () => {
+    useSceneStore.setState({ mode: 'eigenstate', representation: 'point_cloud', resolution: 129 })
+
+    read().setMode('superposition')
+
+    expect(read().representation).toBe('isosurface')
+    expect(read().resolution).toBe(81)
+  })
+
   it('keeps a 129-sample slice grid instead of snapping it to the isosurface ceiling', () => {
     useSceneStore.setState({ representation: 'slice', resolution: 129 })
 
@@ -219,6 +256,41 @@ describe('resolution follows the bound of the representation actually shown', ()
     read().setOrbital({ n: 5 })
 
     expect(read().resolution).toBe(97)
+  })
+
+  it.each([
+    [4, 97],
+    [5, 141],
+    [6, 193],
+    [7, 251],
+    [8, 319],
+  ] as const)('clamps the first %ss slice request to its physical floor %s', (n, floor) => {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'point_cloud',
+      resolution: 65,
+      orbital: { n: 1, l: 0, m: 0, z: 1, basis: 'real' },
+    })
+
+    read().setOrbital({ n, l: 0, m: 0 })
+    read().setRepresentation('slice')
+
+    expect(read().resolution).toBe(floor)
+    const plan = planSceneRequest(selectSceneRequestInputs(read()))
+    expect(plan).toMatchObject({ status: 'available', params: { resolution: floor } })
+  })
+
+  it('raises the same-n slice when l changes from p to the more demanding s state', () => {
+    useSceneStore.setState({
+      mode: 'eigenstate',
+      representation: 'slice',
+      resolution: 145,
+      orbital: { n: 8, l: 1, m: 0, z: 1, basis: 'real' },
+    })
+
+    read().setOrbital({ l: 0 })
+
+    expect(read().resolution).toBe(319)
   })
 
   it('caps a slice grid at the slice route ceiling', () => {
@@ -259,6 +331,26 @@ describe('resolution follows the bound of the representation actually shown', ()
 
     expect(read().resolution).toBe(49)
   })
+
+  it('atomically lifts the first catalogue mixture slice request to its published floor', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'slice',
+      resolution: 65,
+      superpositionSliceResolutionFloor: 65,
+    })
+
+    read().setSuperposition(
+      '1,0,0,0.7071067811865476;3,2,0,0.7071067811865476',
+      '1s + 3d_z²',
+      103,
+    )
+
+    expect(read().resolution).toBe(103)
+    expect(read().superpositionSliceResolutionFloor).toBe(103)
+    const plan = planSceneRequest(selectSceneRequestInputs(read()))
+    expect(plan).toMatchObject({ status: 'available', params: { resolution: 103 } })
+  })
 })
 
 describe('slice plane and observable', () => {
@@ -290,12 +382,35 @@ describe('scene setters', () => {
 
   it('rewinds the clock when the superposition terms change', () => {
     read().setTimeAu(12)
+    read().setPlaying(true)
 
-    read().setSuperposition('1,0,0,1', '1s')
+    read().setSuperposition('1,0,0,1', '1s', 65)
 
     expect(read().superpositionTerms).toBe('1,0,0,1')
     expect(read().superpositionLabel).toBe('1s')
     expect(read().timeAu).toBe(0)
+    expect(read().playing).toBe(false)
+  })
+
+  it('syncs catalogue capability metadata only for the mixture still selected', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'slice',
+      resolution: 65,
+      superpositionSliceResolutionFloor: 65,
+    })
+    const terms = read().superpositionTerms
+
+    read().syncSuperpositionCapabilities(terms, 103)
+    expect(read().superpositionSliceResolutionFloor).toBe(103)
+    expect(read().resolution).toBe(103)
+
+    read().syncSuperpositionCapabilities(
+      'a mixture selected after this fetch began',
+      201,
+    )
+    expect(read().superpositionSliceResolutionFloor).toBe(103)
+    expect(read().resolution).toBe(103)
   })
 
   it('writes every remaining scalar through its setter', () => {

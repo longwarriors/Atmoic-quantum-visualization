@@ -1,8 +1,8 @@
 .PHONY: sync test lint typecheck docs web web-test web-build api dev refs check links
 
 sync:
-	uv sync --all-groups
-	cd web && npm install
+	uv sync --locked --all-groups
+	cd web && npm ci --no-audit --no-fund
 
 # --group docs is load-bearing: the citation gates import python-markdown
 # plainly and error without it. tests/conftest.py fails the session on any

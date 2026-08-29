@@ -2,22 +2,22 @@
 
 !!! success “Phase 0 可演示基线”
 
-    截至 2026-08-28，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+    截至 2026-08-29，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。2026-08-29 的全面复审又加固了概率流的尺度协变、采样收敛、拓扑与 payload 不变量及 API 资源边界。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
 | 能力 | 实现与验证 | 当前边界 |
 |---|---|---|
 | 氢与类氢解析波函数 | [质量门禁](../reference/quality-gates.md)覆盖归一化、正交性、通式节点数、尺度化 $H\psi-E\psi$、$L^2$/$L_z$、高阶径向矩、约化质量、角度范围与 Condon–Shortley | 解析 Coulomb 单电子态 |
-| 概率密度、相位与定态概率流 | 概率流对照 $\operatorname{Im}(\psi^*\nabla\psi)$、定态连续性残差与 $\pm m$ 反向性测试通过 | 概率流 oracle 测试仅在 $Z=1$ 下验证；含时概率流已随 M1 叠加态交付（见下），数值 TDSE 的概率流属 M2 |
+| 概率密度、相位与定态概率流 | 概率流对照 $\operatorname{Im}(\psi^*\nabla\psi)$、定态连续性残差、$\pm m$ 反向性及 $Z/a_\mu$ 尺度协变测试通过；速度逐值保留 12 位有效数字，$10^{-12}$ 弱相干仍非零 | 含时概率流已随 M1 叠加态交付（见下）；数值 TDSE 的概率流属 M2 |
 | 分离逆 CDF 点采样 | 径向/极角/方位角 KS 检验、三维矩、seed 重现测试通过；marker 统一权重 | 单一可分离氢样态，不是一般线性组合 sampler |
-| 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像与轴上遮罩测试通过；弧长、播种 cutoff、连续性探针和差分步长均按 $n/Z/a_\mu$ 尺度化；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 定态播种仍利用方位对称性；叠加态按三维网格密度排序；scene 连续性审计最多接收 8 个 active terms，并采用每个不同能隙四相位采样而非完整 Fourier 分解 |
-| 解析含时叠加态（M1） | 单态退化一致性、范数/$\langle H\rangle$ 守恒、1s–2p 偶极闭式、简并 negative control、转折点非空洞连续性审计与有限盒/网格 alias 分离测试通过；`/api/superposition/*` 与前端时间轴 | 叠加态点云采样属 M5；等值面仍限 $n\le4$ |
-| 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性、按面计数的绕向一致率和法向朝外测试通过 | API 保守限制为 $n\le4$；拓扑回归覆盖 1s、2p、3p 与复 2p，并未穷举全部轨道 |
-| $\psi$/相位平面切片 representation | 逐位反对称采样轴（换回 `np.linspace` 即变红）、右手 $(u,v,n)$ 标架含 `xz` 的 $-\hat y$、行主序布局、导出并报告的 extent、参照 $L_{\mathrm{ref}}^{-3/2}$ 的相位遮罩六项报告、逐字节黄金 payload 与 OpenAPI→TS 生成链测试通过；`/api/orbitals/slice`、`/api/superposition/slice` | 相位遮罩是低振幅 / 相位未定义区域，**不是节点证书**；没有节面几何；`resolution` 上限 513，路由 $n\le12$ |
+| 概率流线 representation | RK4 弧长积分器：柱半径/高度守恒、解析周期闭合、$\pm m$ 镜像、轴上遮罩及批次拆分/重排不变性测试通过；弧长、播种 cutoff、连续性探针和差分步长均按 $n/Z/a_\mu$ 尺度化；API 按真实 RK4 五阶段与输出点双预算预检，seed 上限为本征 96 / 叠加 40；`/api/orbitals/current-field` 与前端 Probability flow 视图 | 定态播种仍利用方位对称性；叠加态按三维网格密度排序；scene 连续性审计最多接收 8 个 active terms，并采用每个不同能隙四相位采样而非完整 Fourier 分解 |
+| 解析含时叠加态（M1） | 单态退化一致性、范数/$\langle H\rangle$ 守恒、1s–2p 偶极闭式、简并 negative control、转折点非空洞连续性审计、有限盒/网格 alias 分离及激发 s 多网格拓扑门禁通过；`/api/superposition/*` 与前端时间轴 | 叠加态点云采样属 M5；等值面仍限 $n\le4$；不含激发 s 的一般多项态尚无拓扑证书 |
+| 固定目标质量等值面 | 径向 CDF 计算域、奇数网格、Simpson 质量、节点连通性、按面计数的绕向一致率和法向朝外测试通过；含节点单一 s 态使用径向 topology oracle；含非零激发 s 的多项态要求最细 129/137 两级的逐分量 Euler 特征、level 与质量稳定 | API 保守限制为 $n\le4$；单态内部解析 cap 129，多项通用收敛 cap 137；无法在上限解析就明确拒绝，其他一般多项态仍无拓扑证明 |
+| $\psi$/相位平面切片 representation | 逐位反对称采样轴（换回 `np.linspace` 即变红）、右手 $(u,v,n)$ 标架含 `xz` 的 $-\hat y$、行主序布局、导出并报告的 extent、参照 $L_{\mathrm{ref}}^{-3/2}$ 的相位遮罩六项报告、精确径向节点特征下限、逐字节黄金 payload 与 OpenAPI→TS 生成链测试通过；`/api/orbitals/slice`、`/api/superposition/slice` | 相位遮罩是低振幅 / 相位未定义区域，**不是节点证书**；没有节面几何；`resolution` 上限 513，路由 $n\le12$ 但 12s 等无法解析的状态会 fail-closed |
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
-| HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过 | 点云 binary 与 metadata 使用同参数 sidecar 请求 |
+| HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过；QVPC float32 边界、科学数值失败统一 422 与意外编程错误仍为 500 均有负控 | 点云 binary 与 metadata 使用同参数 sidecar 请求；极端正尺度仍受各 representation 的可表示域约束 |
 | React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（32 个 spec 文件、870 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；PR-8A 起覆盖范围为 `src/**` 下全部 `.ts`/`.tsx`，共 29 个门禁模块（`src/api/types.ts` 与 `src/api/schema.gen.ts` 是仅有的两个排除项，且“仅含类型”由守卫解析强制）；PR-8C 起 `web/e2e/` 的 Playwright 截图套件与 `ci.yml` 的 `web-visual` job 已接线并被 `tests/test_check_script.py` 钉住，五张 Linux/SwiftShader PNG 基线已入树；2pz、3dz² 浏览器视觉复核通过；WebUI 已完成中文主述、领域记法保留的平面化重构，桌面 canvas 与 panel 内容高度解耦 | 截图门禁只代表固定的 Linux/Chromium/SwiftShader 软件栅格环境，不代表真实 GPU 与多浏览器矩阵；Windows 开发机按设计不能更新或执行该门禁；主 bundle 1,239.75 kB（gzip 341.17 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
@@ -125,7 +125,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 本轮冻结并实现的契约如下；所有回归均先由旧实现真实变红，再修复为绿，未放宽既有数值容差：
 
-1. 长度真源是 $a_\mu/Z$。流线默认 `arc_step` 为最紧致 active term 的 $0.03n^2a_\mu/Z$；显式 override 必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$，下界绑定 4096 点预算，上界使一个支撑尺度半径的圆周仍约有 50 步，超界 API 请求返回 422；播种阈值满足 $\rho_{\min}(\max n^2a_\mu/Z)^3=10^{-4}$；探针覆盖每个 active shell 的 $n^2a_\mu/Z$ 支撑尺度，梯度/散度差分分别为 $10^{-5}$ 与 $10^{-3}$ 倍的 $\min(na_\mu/Z)$；
+1. 长度真源是 $a_\mu/Z$。流线默认 `arc_step` 为最紧致 active term 的 $0.03n^2a_\mu/Z$；显式 override 必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$，下界绑定单路径 4096 点硬上限，上界使一个支撑尺度半径的圆周仍约有 50 步，超界 API 请求返回 422；请求还必须满足 `active_terms × seed_count × [1+5(max_points−1)] ≤ 2,000,000` 与 `seed_count × max_points ≤ 100,000`；播种阈值满足 $\rho_{\min}(\max n^2a_\mu/Z)^3=10^{-4}$；探针覆盖每个 active shell 的 $n^2a_\mu/Z$ 支撑尺度，梯度/散度差分分别为 $10^{-5}$ 与 $10^{-3}$ 倍的 $\min(na_\mu/Z)$；
 2. 非定态连续性分母改为时间无关的 transition-coherence 平方和开根参照尺度：相同能隙的 $2\omega(c_a\phi_a)^*c_b\phi_b$ 先相干相加，不同能隙作二范数组合；它是明确的 reference，不冒充多频瞬时和的上包络。builder 另对每个不同能隙取四个辅助相位的最大残差，故转折点不再只靠“非零分母”装成有效检查；真正 stationary 的非零流改用 $\max|\mathbf j|/L_d$，实基共相位或复基 $c_m=\kappa(-1)^mc_{-m}^*$ 的解析零流单独标识并跳过数值积分；
 3. render-grid Gram matrix 与真实有限 cube 分开报告。每个径向尾部由 Laguerre 多项式平方后的有限不完全-Gamma 级数解析计算；奇偶性与 Cauchy–Schwarz 给出有限盒真实质量变化上界，同能隙离散交叉项先相干求和，再由反三角不等式给 grid alias 的变化下界。单个网格不能证明 boundary flux，因此 schema 没有这类状态；
 4. 每个 term 先校验量子数与系数有限性；state 随后剔除**精确零**（不按容差吞掉小系数），再依次检查全零、active duplicate、归一化。因而零系数 duplicate 不报错，全零报错，$10^{-12}$ 乃至 $10^{-200}$ active term 保留；极小 coherence 用 `hypot` 组合避免平方下溢，无法得到非零参照时失效安全报错；
@@ -197,9 +197,9 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 | 路由 | 预热 | 三次互异请求 | 中位数 | 末次响应 |
 |---|---|---|---|---|
 | `GET /api/superposition/isosurface`（`resolution=65`，`probability_mass=0.90`） | 137 ms | 120 / 145 / 145 ms | **145 ms** | 420,458 B，2626 个顶点 |
-| `GET /api/superposition/current-field`（`seed_count=48`） | 2442 ms | 2690 / 2669 / 2667 ms | **2669 ms** | 754,906 B，48 条流线 |
+| `GET /api/superposition/current-field`（`seed_count=48`，**预算上线前历史请求**） | 2442 ms | 2690 / 2669 / 2667 ms | **2669 ms** | 754,906 B，48 条流线 |
 
-两点需如实说明：其一，**重复同一条 query 会命中服务端缓存**，同样的请求第二次分别是 15.7 ms 与 6.5 ms，所以“3 ms / 20 ms”这类数字只描述缓存命中，不是这两条路由的计算成本——上表刻意用互异的 $t$ 测量。其二，默认态在 $t=0$ 处概率流是**解析零流**，`current-field` 返回 0 条流线（`density_rate_scale = 0`，`continuity_scale_kind = transition_coherence`），因此 $t=0$ 不能用来代表这条路由的耗时。`capability.ts` 里 `latency: 'slow'` 的标注与这两个数量级一致，但它是**成本分级**，不是实测预算。
+三点需如实说明：其一，**重复同一条 query 会命中服务端缓存**，同样的请求第二次分别是 15.7 ms 与 6.5 ms，所以“3 ms / 20 ms”这类数字只描述缓存命中，不是这两条路由的计算成本——上表刻意用互异的 $t$ 测量。其二，默认态在 $t=0$ 处概率流是**解析零流**，`current-field` 返回 0 条流线（`density_rate_scale = 0`，`continuity_scale_kind = transition_coherence`），因此 $t=0$ 不能用来代表这条路由的耗时。其三，表中的 48-seed 数据是资源预算上线前的历史测量；当前叠加态请求上限是 40，不能把这些耗时/字节数改名后当作 40-seed 实测。`capability.ts` 里的 `latency: 'slow'` 是成本分级，不是实测预算。
 
 ### PR-8B 切片科学资产与 API 契约：2026-08-27
 
@@ -210,10 +210,10 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 - **相位遮罩参照状态，不参照平面**：一张恰好具有节面对称性的平面上，算出来的振幅不是零而是数值残渣——实基 $2p_z$ 在 `xy` 平面上的 $\max\lvert\psi\rvert$ 实测为 $4.4874712\times10^{-18}$。若以切片自身最大值定阈值，阈值会重新标定到这点残渣上，交回一整面毫无意义的相位。阈值因此是 $\texttt{relative}\times L_{\mathrm{ref}}^{-3/2}$（$L_{\mathrm{ref}}=n^2a_\mu/Z$，叠加态取 $\max_k$），$\texttt{relative}=10^{-6}$，另设数值地板 $64\varepsilon\max_{\text{plane}}\lvert\psi\rvert$，二者取大后**严格**大于才算有效。六个分项（relative、amplitude scale、threshold、numeric floor、平面最大模、masked fraction）全部随 payload 报告，读者能看出是哪一项在决定边界。同一张 $2p_z$ 的 `xy` 相位切片实测 threshold $1.25\times10^{-7}$、floor $6.3770801\times10^{-32}$、`phase_masked_fraction = 1.0`（由 threshold 决定）。
 - **遮罩的措辞是契约的一部分**：被遮罩的样本只表示该平面上 $\lvert\psi\rvert\leq$ threshold，这个集合既包含节面也包含指数尾部，它标记的是低振幅 / 相位未定义区域，**不是节点证书**。上面那个 `1.0` 恰好确实落在 $2p_z$ 的节面上，但同一个 `1.0` 也可以由一张完全落在指数尾部的切片产生，所以遮罩本身不是那个结论的证据；这句话同时写进 `scene-contract.md`、payload docstring 与 metadata warning。
 - **extent 是导出并报告的，不是参数**；masked 样本携带有限哨兵 `0.0`，因此忽略遮罩的客户端画出确定占位值，payload 也能通过严格 JSON 解析器——这与既有的非有限数门禁同源：模型在字段仍可归因时拒绝 `NaN` / `±Infinity`；锁定版本的 Starlette `JSONResponse` 也以 `allow_nan=False` 拒绝它们，而不是把裸 token 写上线路。
-- **resolution 下限与等值面的 $n\le4$ 上限不是同一回事**：等值面的限制是关于 marching cubes 的，切片不抽取任何网格，只在 $R^2$ 个点上求值并报告数字，所以高 $n$ 花的是采样数而不是有效性。下限 $\max(65,16n+17)$ 随 $n$ 线性增长（$n-\ell$ 个径向腹点、extent 按 $n^2$ 增长），路由把 $n$ 开到 12。实测：$n=6$ 传 `resolution=65` 返回 422 且报错点名 `resolution must be at least 113 for n=6`，传 113 返回 200；传偶数 66 返回 422 `resolution must be odd so the origin lies on the grid`；64 与 515 则由签名层的 `Query` 边界拒绝。
+- **resolution 下限与等值面的 $n\le4$ 上限不是同一回事**：等值面的限制是关于 marching cubes；切片虽然只在 $R^2$ 个点上求值，仍必须解析状态自身最紧致的径向特征。PR-8B 最初只使用 $\max(65,16n+17)$ 的 shell-count floor；2026-08-29 的复审已将它收紧为该 floor 与精确 Laguerre 径向节点/紧致分量 floor 的较大者。当前实测 4s 在 81 拒绝、97 接受；12s 以及 1s+12s 即使在 513 上限仍明确 fail-closed。路由仍允许表达 $n\le12$，但这不是对每个该范围内状态都承诺成功生成 uniform full-extent slice。
 - **`a_mu` 的不对称是刻意的**：`/api/orbitals/slice` 是唯一暴露 `a_mu` 的本征态路由，因为切片是约化质量长度唯一直接可读的地方——它同时改变导出的 extent 与遮罩参照的振幅尺度，两者都逐字出现在 payload 里。
 - **黄金 fixture**：`tests/fixtures/slice_golden.json`（81,998 B）是 1s 在 `xy` 平面、`observable=phase`、`resolution=65` 的整份序列化 `SlicePayload`，由 `scripts/write_slice_golden.py` 以 canonical dump（`sort_keys=True`、`indent=2`、`allow_nan=False`）写出、`tests/test_slice_contract.py` 重建后逐字节比对，因此客户端收到的数字一旦变化就必须以一份有人读的 diff 出现，而不是整套测试跟着重新推导、于是一致同意。
-- **类型代码生成**：`routes -> tests/fixtures/openapi.json -> web/src/api/schema.gen.ts` 是一条端到端生成、两端都受检的链——`scripts/write_openapi.py` 从活的 app 写出 fixture（63,053 B），`tests/test_openapi_contract.py` 比对它与今天服务的 schema；`web/scripts/generate-api-types.mjs`（`npm run codegen`）以该 fixture 而非某台运行中的服务器为输入生成类型，`web/src/api/schema.gen.test.ts` 比对生成结果与提交进树的文件，链上没有无人看管的一环。`schema.gen.ts` 与 `types.ts` 一样是覆盖率门禁的“仅含类型”排除项（`pragmaScanned` 27 = `coverageGated` 25 + 这两个），新增的 `src/api/sliceContract.ts` 则进入门禁模块。
+- **类型代码生成**：`routes -> tests/fixtures/openapi.json -> web/src/api/schema.gen.ts` 是一条端到端生成、两端都受检的链——`scripts/write_openapi.py` 从活的 app 写出 committed fixture，`tests/test_openapi_contract.py` 比对它与今天服务的 schema；`web/scripts/generate-api-types.mjs`（`npm run codegen`）以该 fixture 而非某台运行中的服务器为输入生成类型，`web/src/api/schema.gen.test.ts` 比对生成结果与提交进树的文件，链上没有无人看管的一环。`schema.gen.ts` 与 `types.ts` 一样是覆盖率门禁的“仅含类型”排除项（当前 `pragmaScanned` 31 = `coverageGated` 29 + 这两个），新增的生产模块自动进入同一清单审计。
 
 定向实测（2026-08-27，Windows 11、CPython 3.12.10，同一工作树；`uv run pytest <file> -q --no-cov`）：
 
@@ -246,19 +246,19 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 - **`web-visual` job 本身被钉住**，理由与 PR-6 钉住 `web` job 时相同：删掉一个 job 比击败它里面任何一条断言都便宜，而在此之前没有任何东西读它。`tests/test_check_script.py` 新增 6 项，按 YAML 结构钉住 job 的存在、runner、工作目录、两条安装命令的逐字拼写、gate 步骤及其必须排在浏览器安装之后、与 `web` job 同一个 Node 版本，以及“除失败上传外任何步骤都不得带 `if:`，上传的 `if:` 必须恰好是 `failure()`“。四种改法逐一实测变红：删掉整个 job（6 项全红）、给 gate 步骤加 `if: success()`、把上传的 `if:` 改成 `always()`、把浏览器安装的 `--no-install` 去掉。`--no-install` 是这条里唯一新增的理由：浏览器二进制按 Playwright 版本绑定，没有它时 npx 会去 registry 取一个 lockfile 没有钉的 Playwright，于是拿一个从未参与渲染的 Chromium 去比对基线。
 - **零 skip 扫描扩到 `web/e2e/`**：那些 spec 不在 `test.include` 里，vitest 从不收集，`allowOnly: false` 与 `assert-no-skips.mjs` 都看不见它们（后者的期望清单由 `src/` 推导，从未期望过的文件不会被“漏掉”）。扫描前先用 TypeScript 解析器把注释涂白：那些 spec 的正文要解释“为什么这里断言而不是 skip”并因此写出了那个调用，实测直接扫原文会在 `webgl.spec.ts:13` 命中一段散文。字符串字面量**不**涂白，所以 `runner['sk' + 'ip']` 这类拼写仍然可见；注释范围取自真解析器而不是正则，因为正则字面量里可以有 `//`。负控制实测：往 `web/e2e/` 放一个带真 `skip` 的临时 spec 立刻变红并点名行号（随即删除）；把 `E2E_ROOT` 指向一个没有 spec 的目录时，“扫描确实够到了那棵树”这条断言变红——它存在正是因为空清单会让整个扫描静默地无事可做。
 - **基线在 PR-8C 当时尚未存在，随后已经完成 bootstrap**：`updateSnapshots: 'none'` 让缺失基线成为失败，而不是被静默写入的答案键（Playwright 默认的 `'missing'` 会把新断言的第一次运行变成它自己的答案键，包括 bug）。第一次 CI 运行因此按设计失败，人工检查 `test-results/<test>/<name>-actual.png` 后，五张 Linux/SwiftShader PNG 已提交到 `web/e2e/__screenshots__/slice.spec.ts/`。bootstrap 期间发现的相机竞态并未被 `prefers-reduced-motion` 消除；真正的修复是在 `aimCamera` 前调用 `bounds.refresh()`，清空 drei `Bounds` 仍会晚着陆的 fit goal。后续运行仍必须在相同 CI 环境对基线验证，不能在开发机上重写答案键。
-- **fixture 而不是服务器**：`web/e2e/fixtures.ts` 把六份切片 payload 与两份 catalog 逐字节取自 `tests/fixtures/visual/`（`scripts/write_visual_fixtures.py` 写、`tests/test_visual_fixtures.py` 重建并比对，27 项），所以一次像素 diff 只能是关于渲染的，不会变成关于服务器今天返回了什么的争论。**比对方式按 fixture 分成两类，这是实测逼出来的**：两份 catalog 全是 `routes.py` 里的字面量，不经任何算术，逐字节比对；六份切片按结构比对——键集、类型、列表长度、字符串、整数与 `valid_mask` 的每一位都必须精确相等，只有浮点样本允许 `1e-12` 的相对偏差。理由是 fixture 在 Windows（UCRT）生成而 CI 在 Linux（glibc）重建，`arccos`/`atan2`/`cos`/`exp` 这条链两边的末位舍入不同，十进制表示因此不同：CI run 33085530468 就是这样在六份切片上全红，每份只差 4225 个样本中的一个，而 payload 本身没有任何变化（同一原因此前把 `test_slice_science.py` 的 S2 界放宽到 4 ulp）。放弃的只有“换一个平台重建后逐位相同”这一条——送进浏览器的仍然是 committed 的那份字节；允许量则比任何截图能显示的最小变化低十个数量级，并由两侧的负控制钉住：单个样本改动 `1e-9` 仍然变红，而一份把每个样本走三个 ulp、并把节线上 64 个 `cos(arccos(z/r))` 残差整个换掉的“Linux 重建”仍然变绿。
+- **fixture 而不是服务器**：`web/e2e/fixtures.ts` 把六份切片 payload 与两份 catalog 逐字节取自 `tests/fixtures/visual/`（`scripts/write_visual_fixtures.py` 写、`tests/test_visual_fixtures.py` 重建并比对，27 项），所以一次像素 diff 只能是关于渲染的，不会变成关于服务器今天返回了什么的争论。**比对方式按 fixture 分成两类，这是实测逼出来的**：两份 catalog 的 route-owned 字符串与标量具有确定性；其中 superposition 的 `period_au` 有意由固定氢样能级差和 `math.tau` 计算，不经过切片样本那条平台敏感的 libm 链，因此逐字节比对。六份切片按结构比对——键集、类型、列表长度、字符串、整数与 `valid_mask` 的每一位都必须精确相等，只有浮点样本允许 `1e-12` 的相对偏差。理由是 fixture 在 Windows（UCRT）生成而 CI 在 Linux（glibc）重建，`arccos`/`atan2`/`cos`/`exp` 这条链两边的末位舍入不同，十进制表示因此不同：CI run 33085530468 就是这样在六份切片上全红，每份只差 4225 个样本中的一个，而 payload 本身没有任何变化（同一原因此前把 `test_slice_science.py` 的 S2 界放宽到 4 ulp）。放弃的只有“换一个平台重建后逐位相同”这一条——送进浏览器的仍然是 committed 的那份字节；允许量则比任何截图能显示的最小变化低十个数量级，并由两侧的负控制钉住：单个样本改动 `1e-9` 仍然变红，而一份把每个样本走三个 ulp、并把节线上 64 个 `cos(arccos(z/r))` 残差整个换掉的“Linux 重建”仍然变绿。
 - **每条截图声明都另有一条与平台无关的断言**，图片只多出“固定的 SwiftShader WebGL 管线确实把它光栅化成了这些像素”这一句：行主序与 texel 字节偏移在 `sliceTexture.test.ts`（23 项），色标与遮罩着色在 `sliceColor.test.ts`（19 项），右手标架与哨兵读作 `null` 在 `sliceContract.test.ts`（47 项），四项纹理决定与三张平面的朝向在 `SliceField.test.tsx`（8 项），视点在 `camera.test.ts`（10 项）。反过来读同样成立：一张绿的截图不能替代其中任何一条，也不能证明真实 GPU 或其他浏览器的行为。
 
-本树实测（2026-08-28，Windows 11、Node 24、CPython 3.12.10，同一工作树）：
+本树实测（2026-08-29，Windows 11、Node 24、CPython 3.12.10，同一工作树）：
 
 | 门禁 | 结果 |
 |---|---|
-| `npm run test` | 32 个 spec 文件、870 项全部通过，0 skipped、0 todo；报告列出 29 个门禁模块，与 `coverage-scope.json` 完全一致，29 个全部达标 |
+| `npm run test` | 32 个 spec 文件、939 项全部通过，0 skipped、0 todo；总语句覆盖率 99.88%，报告列出 29 个门禁模块，与 `coverage-scope.json` 完全一致，29 个全部达标 |
 | `npm run typecheck` | `tsc -b --pretty false` exit 0 |
-| `npm run build` | 通过；`index-*.js` 1,239.75 kB（gzip 341.17 kB）；仍有 chunk > 500 kB 警告 |
-| `uv run pytest`（含覆盖率） | 1066 passed，0 skipped；总覆盖率 92.69%，门槛 85% |
-| `uv run mypy`（strict） | 33 个源码文件无问题 |
-| `uv run ruff check .` / `ruff format --check .` | 通过；116 个文件已格式化 |
+| `npm run build` | 通过；`index-*.js` 1,247.16 kB（gzip 343.47 kB）；仍有 chunk > 500 kB 警告 |
+| `uv run pytest`（含覆盖率） | 1242 passed，0 skipped；总覆盖率 91.93%，门槛 85% |
+| `uv run mypy`（strict） | 34 个源码文件无问题 |
+| `uv run ruff check .` / `ruff format --check .` | 通过；118 个文件已格式化 |
 | `uv run --group docs mkdocs build --strict` | 通过 |
 | `npx vitest run src/guards.test.ts` | 134 项 |
 | `npx vitest run src/visualGate.test.ts` | 89 项 |
@@ -277,5 +277,18 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 - 点云和等值面的相位调色板明确以 sRGB 定义，送入 GPU 前统一解码到 Linear-sRGB；等值面改为未照明材质且不接收/投射阴影，两种表示都关闭 fog、tone mapping，并绕过全帧 Bloom/Vignette。点云 shader 移除 fog / tone-mapping chunks，保留输出色彩空间转换。相位图例 CSS 的六段色轮与两个端点色由测试逐字节对照 `phaseToRgb`，不再使用近似品牌色。
 - Scene Contract 在模型边界拒绝 frame 向量、extent 与 spacing 中的 NaN / $\pm\infty$；文档与脚本同步按锁定版 Starlette 的 `allow_nan=False` 描述线路行为。
 - 视觉门禁收紧正向像素阈值并加入阈值关系守卫，又用 2% 平面尺寸变异覆盖 `includeAA=false` 下的轮廓/几何检出；报告审计现在钉住 8 个必需测试标题，TypeScript AST 审计钉住 10 条截图与 3 条 WebGL 断言，删掉负控不能再靠同文件里的其他绿测试蒙混。当前 Windows 工作树已通过平台无关门禁，但 PNG 比对只由 Linux/SwiftShader CI 作证。
+
+### 全面复审收口：2026-08-29
+
+- **物理与数值**：量子数、$Z$、$a_\mu$ 和质量参数在模型入口（包括解析零流早退）拒绝布尔值、非整数及非有限值；径向节点改由 Laguerre 根精确给出。含径向节点的单一 s 态等值面以解析拓扑为 oracle；含任意非零激发 s 分量的多项态不按系数容差降格，而要求 129/137 最细两级的逐分量 Euler 特征、density level 与质量稳定，失败就拒绝。点云径向与角向 CDF 都以嵌套网格收敛判定；QVPC float32 同时检查上溢、长度尺度下溢及 cast 后非零样本塌缩。概率流每条线固定自己的速度参照，向量长度使用抗上/下溢 `hypot` 归约，速度以 12 位有效数字序列化，$10^{-12}$ 弱相干及 $Z=a_\mu=10^{-160}$ 的可表示流仍保持非零。
+- **契约与架构**：网格索引、法向、流线点/速度、metadata 互易尺度和 term identity 都在 Pydantic 边界做形状、有限性与语义校验。叠加态 `terms` 使用严格语法，限制编码长度、最多 8 个 active terms；等值面把网格构建、可能的重建、实际参与判决的最细两个自适应拓扑网格及最终质量诊断逐次计入 term-voxel 预算，且 estimator 与真实 builder 的逐 term 完整网格求值记录直接互校；典型 129/137 门禁允许两项态进入 builder，三项及以上仍在 16M 上限前 fail-closed。概率流按 RK4 五阶段和序列化点数执行双预算。本征态和叠加态 slice 只在私有 builder 保留一层 LRU，public builder deep copy，HTTP route 不重复缓存大数组。只有 `ValueError`、`ScientificComputationError`、`FloatingPointError` 与 `OverflowError` 这组可归因于请求的科学失败统一为有原因的 422；`RecursionError` 等意外运行时错误仍为 500。前端请求规划集中在一个选择器，模式/表示法切换原子化，4s–8s 切片楼层与 Python builder 机械互校，叠加态物理周期按 $a_\mu/Z^2$ 缩放。真实浏览器逐项选择 4s–8s 时滑条分别落在 97/141/193/251/319，五个首次 slice 请求均为 200；非简并叠加态显示物理周期 `16.7552 a.u.`，播放时间保持在 0.2 a.u. 网格。
+- **仍未实现或未普适证明**：一般叠加态点云采样（M5）、显式节面几何、不含激发 s 分量的一般叠加态拓扑证明、数值 TISE/TDSE（M2+）、完整点群/SALC 与多电子/分子能力仍属路线图；视觉结论仍只对既有 Linux/Chromium/SwiftShader 基线和本次 Windows 单浏览器实测负责，尚无真实 GPU/多浏览器矩阵；主 bundle 仍待拆分，上述上游 `THREE.Clock` 弃用 warning 也待依赖栈迁移后消除。
+
+### 第二轮对抗审计收口：2026-08-29
+
+- **第三方科学异常边界**：只在 `skimage.measure.marching_cubes` 调用点把其精确 `RuntimeError` 包装成 `ScientificComputationError`；合法的 `1s, Z=1e-20` 等值面塌缩现以含 “No surface found” 的 422 返回，`RecursionError` 子类仍保留为 500。径向归一化、径向节点和 density floor 保留普通输入的原算术，仅在直接结果接近 float64 边界或已经溢出/下溢时以 100 位十进制复算；最大有限值和最小次正规数四个反例均按精确二进制输入正确舍入。径向自变量同样能在 `Z=a_mu=1e308` 时先安全约去共同尺度，返回解析值而非静默零；NumPy 标量不会在兜底中泄漏 `TypeError`。普通切片 golden 未变化。
+- **工作量与测试耦合**：含激发 s 分量的多项态只构建并计费真正参与判决的最细两级网格与最终诊断网格；典型两项态成本为 14,578,790 term-voxel，小于 16M 上限，三项态为 21,868,185 并在 builder 前拒绝。测试同时记录 `physics.superposition` 与 `physics.finite_box` 两个真实波函数别名的完整三维求值，逐项对照 estimator，恢复未读取的粗网格或令估算漂移都会变红。
+- **叠加目录能力与前端契约**：`/api/superposition/catalog` 发布由实际 slice builder 共用函数计算的 `slice_resolution_floor`；`1s + 3d_z²` 的切片 101 拒绝、103 接受。该字段经生成 OpenAPI 类型、严格 parser、store、能力矩阵、ControlPanel 和首个 request planner 全链路采用；切换预设与迟到 catalog 同步都原子提升当前分辨率。Z 边界已进入七条 route 的 OpenAPI 机械互校；3s/4s 等值面在 UI 静态标明全部公开网格均不可服务。播放周期测试推进到首个能区分物理周期与旧 39.6 常数的第 5 帧；简并播放保留可聚焦的 `aria-disabled` 控件，并由 `aria-describedby` 指向持续可见的物理说明。
+- **变异盲区**：payload 的 face 上下界、顶点/法向/phase 长度、seed 数、speed 行列和 max-speed 双侧全部直接钉扎；phase-mask 两个互斥分支、Euler 分量多重集、probe-score 平局索引以及径向表 131,073 精确上界均有删除或边界变异负控制。
 
 后续科学能力顺序见[开发路线图](roadmap.md)。

@@ -109,7 +109,7 @@ function goldenBuffer(): ArrayBuffer {
 }
 
 const orbitalMetadata: OrbitalMetadata = {
-  state: { n: 2, l: 1, m: 1, z: 1, basis: 'complex' },
+  state: { n: 2, l: 1, m: 1, z: 1, a_mu: 1, basis: 'complex' },
   label: '2p(+1)',
   energy_hartree: -0.125,
   length_unit: 'bohr',
@@ -781,6 +781,28 @@ describe('executeSceneRequest', () => {
       expect(calls.some((call) => call.url.startsWith(plan.endpoint))).toBe(true)
     }
   })
+
+  it.each([
+    ['isosurface', '/api/superposition/isosurface'],
+    ['streamlines', '/api/superposition/current-field'],
+  ] as const)(
+    'sends the planned, clamped a_mu to the superposition %s route',
+    async (representation, endpoint) => {
+      const inputs: SceneAssetInputs = {
+        ...superpositionInputs,
+        representation,
+        aMu: 100,
+      }
+      const plan = planSceneRequest(inputs)
+      if (plan.status !== 'available') throw new Error(`expected a plan for ${representation}`)
+
+      void executeSceneRequest(plan, inputs, new AbortController().signal).catch(() => undefined)
+
+      expect(calls).toHaveLength(1)
+      expect(calls[0].url.startsWith(endpoint)).toBe(true)
+      expect(queryValue(calls[0].url, 'a_mu')).toBe('20')
+    },
+  )
 
   it('refuses an endpoint no client fetcher serves', async () => {
     await expect(

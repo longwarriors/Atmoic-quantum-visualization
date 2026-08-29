@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type { SceneIdentityInputs } from './sceneRequest'
-import { createFetchCoordinator, nextTimeAu, sceneIdentityKey } from './sceneRequest'
+import {
+  createFetchCoordinator,
+  nextTimeAu,
+  sceneIdentityKey,
+  selectSceneRequestInputs,
+} from './sceneRequest'
 
 const baseInputs: SceneIdentityInputs = {
   mode: 'superposition',
@@ -31,6 +36,31 @@ const snapshot = (patch: Partial<StoreSnapshot> = {}): StoreSnapshot => ({
   ...baseInputs,
   timeAu: 0,
   ...patch,
+})
+
+describe('selectSceneRequestInputs', () => {
+  const source = {
+    ...snapshot(),
+    superpositionBasis: 'complex' as const,
+    superpositionSliceResolutionFloor: 65,
+    superpositionZ: 4,
+    plane: 'xz' as const,
+    sliceObservable: 'probability_density' as const,
+  }
+
+  it('substitutes the superposition charge in the one shared request view', () => {
+    const selected = selectSceneRequestInputs(source)
+
+    expect(selected.orbital).toEqual({ ...source.orbital, z: 4 })
+    expect(selected.superpositionBasis).toBe('complex')
+    expect(selected.timeAu).toBe(0)
+  })
+
+  it('leaves the eigenstate charge untouched', () => {
+    const selected = selectSceneRequestInputs({ ...source, mode: 'eigenstate' })
+
+    expect(selected.orbital.z).toBe(source.orbital.z)
+  })
 })
 
 describe('sceneIdentityKey', () => {
@@ -188,6 +218,42 @@ describe('nextTimeAu', () => {
       time = nextTimeAu(time)
     }
     expect(seen.size).toBe(FRAMES)
+  })
+
+  it('closes exactly on a catalogue beat period instead of jumping at 39.6 a.u.', () => {
+    const period = (2 * Math.PI) / 0.375
+    const frames = Math.ceil(period / STEP)
+    const seen = new Set<number>()
+    let time = 0
+
+    for (let frame = 0; frame < frames; frame += 1) {
+      seen.add(time)
+      time = nextTimeAu(time, period)
+    }
+
+    expect(frames).toBe(28)
+    expect(seen.size).toBe(frames)
+    expect(time).toBe(0)
+  })
+
+  it.each([12.1, (2 * Math.PI) / 0.375])(
+    'snaps every frame of period %s to the visible 0.2-a.u. lattice',
+    (period) => {
+      const frames = Math.ceil(period / STEP)
+      let time = 0
+      for (let frame = 0; frame < frames; frame += 1) {
+        expect(time / 0.2).toBeCloseTo(Math.round(time / 0.2), 12)
+        expect(String(time)).toMatch(/^\d+(?:\.\d)?$/)
+        time = nextTimeAu(time, period)
+      }
+      expect(time).toBe(0)
+    },
+  )
+
+  it('keeps a degenerate preset stationary and fails closed for a bad period', () => {
+    expect(nextTimeAu(12, 0)).toBe(0)
+    expect(nextTimeAu(12, Number.NaN)).toBe(0)
+    expect(nextTimeAu(Number.NaN, 12)).toBe(0)
   })
 })
 

@@ -7,7 +7,7 @@ import { Inspector } from './Inspector'
 
 function eigenstateMetadata(energyHartree: number): OrbitalMetadata {
   return {
-    state: { n: 2, l: 1, m: 0, z: 1, basis: 'complex' },
+    state: { n: 2, l: 1, m: 0, z: 1, a_mu: 1, basis: 'complex' },
     label: 'test eigenstate',
     energy_hartree: energyHartree,
     length_unit: 'bohr',

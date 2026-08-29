@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { executeSceneRequest } from '../components/useSceneAsset'
 import {
+  CAPABILITY_ROUTE_CONSTRAINTS,
   type Capability,
   type SceneKind,
   type SceneRequestInputs,
@@ -106,8 +107,8 @@ describe('capabilityFor: superposition x streamlines', () => {
       }),
     )
     expect(capability.endpoint).toBe('/api/superposition/current-field')
-    // The eigenstate route allows 256 seeds; this one allows 128 (routes.py).
-    expect(capability.parameters.seedCount).toEqual({ min: 1, max: 128, step: 1 })
+    // The eigenstate route allows 96 seeds; this one allows 40 (routes.py).
+    expect(capability.parameters.seedCount).toEqual({ min: 1, max: 40, step: 1 })
     expect(capability.latency).toBe('slow')
   })
 })
@@ -171,7 +172,7 @@ describe('capabilityFor: eigenstate x streamlines', () => {
       }),
     )
     expect(capability.endpoint).toBe('/api/orbitals/current-field')
-    expect(capability.parameters.seedCount).toEqual({ min: 1, max: 256, step: 1 })
+    expect(capability.parameters.seedCount).toEqual({ min: 1, max: 96, step: 1 })
   })
 })
 
@@ -213,6 +214,19 @@ describe('capabilityFor: eigenstate x isosurface', () => {
     expect(capability.reason).toContain('n ≤ 4')
   })
 
+  it.each([3, 4])('refuses %ss because every public grid exceeds the topology cap', (n) => {
+    const capability = capabilityFor({
+      mode: 'eigenstate',
+      orbital: orbital({ n, l: 0, m: 0 }),
+      representation: 'isosurface',
+    })
+    expect(capability.status).toBe('unsupported')
+    if (capability.status === 'available') throw new Error('unreachable')
+    expect(capability.reason).toContain(`${n}s`)
+    expect(capability.reason).toContain('全部公开 resolution')
+    expect(capability.reason).toContain('切片')
+  })
+
   it('refuses l > 3 and |m| > 3 even if some caller hands it n <= 4', () => {
     const highL = capabilityFor({
       mode: 'eigenstate',
@@ -229,6 +243,38 @@ describe('capabilityFor: eigenstate x isosurface', () => {
     })
     if (highM.status === 'available') throw new Error('unreachable')
     expect(highM.reason).toContain('|m| ≤ 3')
+  })
+})
+
+describe('server numerical validation metadata', () => {
+  it.each([
+    ['eigenstate', 'isosurface'],
+    ['eigenstate', 'slice'],
+    ['superposition', 'isosurface'],
+    ['superposition', 'slice'],
+  ] as const)('%s / %s stays requestable but declares its numerical gate', (mode, representation) => {
+    const capability = available(capabilityFor({ mode, orbital: orbital(), representation }))
+    expect(capability.serverValidation?.reason).toContain('服务端')
+    expect(capability.serverValidation?.reason).toContain('fail-closed')
+  })
+
+  it.each([
+    ['eigenstate', 'point_cloud'],
+    ['eigenstate', 'streamlines'],
+    ['superposition', 'streamlines'],
+  ] as const)('%s / %s makes no numerical-validation promise', (mode, representation) => {
+    const state =
+      representation === 'streamlines' && mode === 'eigenstate'
+        ? orbital({ n: 2, l: 1, m: 1, basis: 'complex' })
+        : orbital()
+    const capability = available(
+      capabilityFor({
+        mode,
+        orbital: state,
+        representation,
+      }),
+    )
+    expect(capability.serverValidation).toBeUndefined()
   })
 })
 
@@ -378,6 +424,20 @@ describe('planSceneRequest: eigenstate', () => {
 })
 
 describe('planSceneRequest: every value it sends is inside the declared bound', () => {
+  it.each(['eigenstate', 'superposition'] as const)(
+    'clamps %s charge through the OpenAPI-checked fixed constraint',
+    (mode) => {
+      const representation = mode === 'superposition' ? 'isosurface' : 'point_cloud'
+      const low = planSceneRequest(inputs({ mode, representation, orbital: orbital({ z: -2 }) }))
+      const high = planSceneRequest(inputs({ mode, representation, orbital: orbital({ z: 200 }) }))
+      if (low.status !== 'available' || high.status !== 'available') {
+        throw new Error('unreachable')
+      }
+      expect(low.params.z).toBe(0.1)
+      expect(high.params.z).toBe(20)
+    },
+  )
+
   it('clamps the eigenstate sampler parameters', () => {
     const low = planSceneRequest(inputs({ samples: 12, seed: -5 }))
     if (low.status !== 'available') throw new Error('unreachable')
@@ -410,7 +470,7 @@ describe('planSceneRequest: every value it sends is inside the declared bound', 
     expect(plan.params.probability_mass).toBe(0.99)
   })
 
-  it('clamps the superposition seed count to 128 and the clock to the route window', () => {
+  it('clamps the superposition seed count to 40 and the clock to the route window', () => {
     const plan = planSceneRequest(
       inputs({
         mode: 'superposition',
@@ -420,7 +480,7 @@ describe('planSceneRequest: every value it sends is inside the declared bound', 
       }),
     )
     if (plan.status !== 'available') throw new Error('unreachable')
-    expect(plan.params.seed_count).toBe(128)
+    expect(plan.params.seed_count).toBe(40)
     expect(plan.params.time).toBe(1000)
   })
 
@@ -468,8 +528,8 @@ describe('capabilityFor: eigenstate x slice', () => {
   })
 
   it('transcribes the slice resolution window with the floor n forces', () => {
-    // slices.py: ge=65, le=513, and `slice_resolution_floor` is max(65, 16n+17)
-    // -- the same 16n + 17 the isosurface row uses, over a different floor.
+    // The route's outer window is 65..513; state-specific numerical floors are
+    // layered on top. These two non-s states exercise the shell-count branch.
     const low = available(
       capabilityFor({
         mode: 'eigenstate',
@@ -486,8 +546,26 @@ describe('capabilityFor: eigenstate x slice', () => {
         representation: 'slice',
       }),
     )
-    // 16 * 8 + 17 = 145, well above the shared floor of 65.
+    // 16 * 8 + 17 = 145; l=7 has no narrower radial-node requirement.
     expect(high.parameters.resolution).toEqual({ min: 145, max: 513, step: 2 })
+  })
+
+  it.each([
+    [4, 97],
+    [5, 141],
+    [6, 193],
+    [7, 251],
+    [8, 319],
+  ] as const)('derives the state-specific %ss floor as %s', (n, floor) => {
+    const capability = available(
+      capabilityFor({
+        mode: 'eigenstate',
+        orbital: orbital({ n, l: 0, m: 0 }),
+        representation: 'slice',
+      }),
+    )
+
+    expect(capability.parameters.resolution).toEqual({ min: floor, max: 513, step: 2 })
   })
 
   it('declares a_mu, the one eigenstate route that reads it', () => {
@@ -545,11 +623,10 @@ describe('capabilityFor: superposition x slice', () => {
     ])
   })
 
-  it('allows the whole 65..513 range, because the floor is a per-state rule', () => {
-    // The builder's floor is max(65, 16n + 17) of the LARGEST term, and this
-    // module does not parse `terms`. Declaring the eigenstate floor of the
-    // panel's n here would refuse grids the route accepts; the builder's own
-    // refusal arrives as a 422 that names the shell demanding more samples.
+  it('falls back to 65..513 when a non-catalogue caller supplies no published floor', () => {
+    // The matrix never parses terms or reimplements radial numerics. A caller
+    // outside the curated catalogue still gets the route's outer range, with
+    // serverValidation explaining that a builder 422 remains possible.
     for (const n of [1, 4, 8]) {
       const capability = available(
         capabilityFor({
@@ -560,6 +637,30 @@ describe('capabilityFor: superposition x slice', () => {
       )
       expect(capability.parameters.resolution).toEqual({ min: 65, max: 513, step: 2 })
     }
+  })
+
+  it('uses the builder floor published for the selected catalogue mixture', () => {
+    const capability = available(
+      capabilityFor({
+        mode: 'superposition',
+        orbital: orbital(),
+        representation: 'slice',
+        superpositionSliceResolutionFloor: 103,
+      }),
+    )
+    expect(capability.parameters.resolution).toEqual({ min: 103, max: 513, step: 2 })
+
+    const plan = planSceneRequest(
+      inputs({
+        mode: 'superposition',
+        representation: 'slice',
+        superpositionTerms: '1,0,0,0.7071067811865476;3,2,0,0.7071067811865476',
+        superpositionSliceResolutionFloor: 103,
+        resolution: 65,
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.resolution).toBe(103)
   })
 })
 
@@ -681,12 +782,102 @@ describe('planSceneRequest: slice', () => {
     expect(plan.params.resolution).toBe(145)
   })
 
+  it.each([
+    [4, 97],
+    [5, 141],
+    [6, 193],
+    [7, 251],
+    [8, 319],
+  ] as const)('never plans the first %ss request below %s', (n, floor) => {
+    const plan = planSceneRequest(
+      inputs({
+        representation: 'slice',
+        orbital: orbital({ n, l: 0, m: 0 }),
+        resolution: 65,
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.resolution).toBe(floor)
+  })
+
   it('never spells a plane onto a row that declares none', () => {
     for (const representation of ['point_cloud', 'isosurface'] as const) {
       const plan = planSceneRequest(inputs({ representation }))
       if (plan.status !== 'available') throw new Error('unreachable')
       expect('plane' in plan.params, representation).toBe(false)
       expect('observable' in plan.params, representation).toBe(false)
+    }
+  })
+})
+
+interface OpenApiParameter {
+  in: string
+  name: string
+  schema: {
+    minimum?: number
+    exclusiveMinimum?: number
+    maximum?: number
+  }
+}
+
+interface OpenApiDocument {
+  paths: Record<string, { get?: { parameters?: OpenApiParameter[] } }>
+}
+
+const OPENAPI_FIXTURE = fileURLToPath(
+  new URL('../../../tests/fixtures/openapi.json', import.meta.url),
+)
+
+function queryParameter(
+  document: OpenApiDocument,
+  endpoint: string,
+  wireName: string,
+): OpenApiParameter {
+  const parameter = document.paths[endpoint]?.get?.parameters?.find(
+    (candidate) => candidate.in === 'query' && candidate.name === wireName,
+  )
+  if (parameter === undefined) {
+    throw new Error(`${endpoint} has no OpenAPI query parameter ${wireName}`)
+  }
+  return parameter
+}
+
+describe('capability route constraints cannot drift from OpenAPI', () => {
+  const document = JSON.parse(readFileSync(OPENAPI_FIXTURE, 'utf-8')) as OpenApiDocument
+
+  it('mechanically matches every numeric capability bound to its route schema', () => {
+    for (const route of Object.values(CAPABILITY_ROUTE_CONSTRAINTS)) {
+      for (const constraint of [
+        ...Object.values(route.parameters),
+        ...Object.values(route.fixedParameters),
+      ]) {
+        const parameter = queryParameter(document, route.endpoint, constraint.wireName)
+        expect(parameter.schema.maximum, `${route.endpoint} ${constraint.wireName} max`).toBe(
+          constraint.uiBound.max,
+        )
+        if ('serverExclusiveMinimum' in constraint) {
+          expect(
+            parameter.schema.exclusiveMinimum,
+            `${route.endpoint} ${constraint.wireName} exclusive min`,
+          ).toBe(constraint.serverExclusiveMinimum)
+        } else {
+          expect(parameter.schema.minimum, `${route.endpoint} ${constraint.wireName} min`).toBe(
+            constraint.uiBound.min,
+          )
+        }
+      }
+    }
+  })
+
+  it('mechanically matches every eigenstate route ceiling used by capability refusals', () => {
+    for (const route of Object.values(CAPABILITY_ROUTE_CONSTRAINTS)) {
+      if (!('state' in route)) continue
+      const state = route.state
+      expect(queryParameter(document, route.endpoint, 'n').schema.maximum).toBe(state.nMax)
+      expect(queryParameter(document, route.endpoint, 'l').schema.maximum).toBe(state.lMax)
+      const m = queryParameter(document, route.endpoint, 'm').schema
+      expect(m.minimum).toBe(-state.absoluteMMax)
+      expect(m.maximum).toBe(state.absoluteMMax)
     }
   })
 })

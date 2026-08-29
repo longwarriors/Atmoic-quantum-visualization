@@ -495,6 +495,27 @@ export interface components {
             values: number[];
         };
         /**
+         * SuperpositionCatalogEntry
+         * @description One client-ready preset, including its builder-derived capabilities.
+         */
+        SuperpositionCatalogEntry: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string;
+            /** Period Au */
+            period_au: number;
+            /**
+             * Slice Resolution Floor
+             * @description First odd uniform grid accepted by the superposition slice builder for this preset; independent of Z and a_mu because all relevant lengths scale together.
+             */
+            slice_resolution_floor: number;
+            /** Terms */
+            terms: string;
+        };
+        /**
          * SuperpositionCurrentPayload
          * @description Probability-flow streamlines of a superposition at one instant.
          *
@@ -1017,9 +1038,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["SuperpositionCatalogEntry"][];
                 };
             };
         };
@@ -1027,6 +1046,7 @@ export interface operations {
     superposition_current_field_api_superposition_current_field_get: {
         parameters: {
             query?: {
+                /** @description semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678' */
                 terms?: string;
                 time?: number;
                 basis?: components["schemas"]["BasisKind"];
@@ -1064,6 +1084,7 @@ export interface operations {
     superposition_isosurface_api_superposition_isosurface_get: {
         parameters: {
             query?: {
+                /** @description semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678' */
                 terms?: string;
                 time?: number;
                 basis?: components["schemas"]["BasisKind"];
@@ -1101,6 +1122,7 @@ export interface operations {
     superposition_slice_api_superposition_slice_get: {
         parameters: {
             query?: {
+                /** @description semicolon-separated terms 'n,l,m,re[,im]', e.g. '1,0,0,0.70710678;2,1,0,0.70710678' */
                 terms?: string;
                 time?: number;
                 basis?: components["schemas"]["BasisKind"];

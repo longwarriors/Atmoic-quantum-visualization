@@ -18,8 +18,10 @@ with mutated-copy negative controls proving the comparison can fail, and a
 directory census proving no stale fixture survives a rename to go on feeding a
 screenshot nothing rebuilds.
 
-The two catalogs are compared byte-for-byte: they are literal tables, so every
-difference in them is a real one. The six slices are compared *structurally* --
+The two catalogs are compared byte-for-byte: their route-owned strings and
+scalars are deterministic, including the superposition periods derived from
+fixed hydrogenic energy gaps, so every difference in them is a real contract
+change. The six slices are compared *structurally* --
 key sets, types, list lengths, strings, integers and every ``valid_mask``
 boolean exactly; float samples within :data:`FLOAT_RELATIVE_TOLERANCE` -- and
 the reason is measured rather than defensive. These fixtures were generated on
@@ -105,9 +107,11 @@ FIXTURE_NAMES: Final[tuple[str, ...]] = tuple(
     sorted(fixture.name for fixture in write_visual_fixtures.FIXTURES)
 )
 
-#: The fixtures held to their exact bytes: the two preset catalogs. Every field
-#: in them is a literal in ``quviz.api.routes`` -- no arithmetic reaches them,
-#: so they carry no platform-dependent digit and any difference at all is real.
+#: The fixtures held to their exact bytes: the two preset catalogs. Their data
+#: is route-owned and deterministic. In particular, superposition ``period_au``
+#: is intentionally derived from fixed hydrogenic energies and ``math.tau``;
+#: it does not traverse the platform-sensitive libm chain used by slice samples.
+#: Any byte difference is therefore a real catalog-contract change.
 #: Their non-ASCII labels (``2pₓ``, ``3d_z²``) also make them the fixtures that
 #: pin ``ensure_ascii=False``, which only a comparison on the text can see.
 CATALOG_NAMES: Final[tuple[str, ...]] = ("catalog-orbitals", "catalog-superposition")
@@ -389,7 +393,7 @@ def _assert_fixture_is_where_the_script_puts_it(name: str) -> None:
 
 @pytest.mark.parametrize("name", CATALOG_NAMES)
 def test_the_builders_reproduce_the_committed_catalog_bytes(name: str) -> None:
-    """The catalogs are literal tables, so they are held to their exact bytes."""
+    """Deterministic catalog data, including derived periods, is held to exact bytes."""
 
     _assert_fixture_is_where_the_script_puts_it(name)
     rebuilt = write_visual_fixtures.canonical(write_visual_fixtures.fixture_named(name).build())
@@ -430,9 +434,9 @@ def test_the_builders_reproduce_the_committed_slice_payloads(name: str) -> None:
 def _mutated(name: str, **update: Any) -> str:
     """The fixture's own payload, copied with ``update`` applied, serialised.
 
-    ``model_copy`` rather than assignment: both builders are ``lru_cache``d, so
-    the payload they hand back is shared and mutating it in place would corrupt
-    every later caller in this process. ``model_copy`` also skips validation,
+    ``model_copy`` rather than assignment keeps the sabotage local. Both public
+    builders wrap private LRUs and return deep copies, so callers cannot corrupt
+    cached payloads. ``model_copy`` also skips validation,
     which is what lets a mask bit be flipped without the payload's own
     "masked values equal the sentinel" rule rejecting the sabotage first.
     """

@@ -169,6 +169,8 @@ def test_amplitude_scale_is_covariant_when_the_nuclear_charge_doubles() -> None:
 
     with pytest.raises(ValueError, match="positive"):
         amplitude_scale(0.0)
+    with pytest.raises(ValueError, match="cannot be represented"):
+        amplitude_scale(1e-300)
 
 
 def test_phase_mask_thresholds_report_every_frozen_field() -> None:

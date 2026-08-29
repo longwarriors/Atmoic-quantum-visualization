@@ -18,6 +18,7 @@ from quviz.conventions import (
     RepresentationKind,
     SliceObservable,
 )
+from quviz.errors import ScientificComputationError
 from quviz.physics.continuity import (
     continuity_audit_times,
     continuity_probe_candidates,
@@ -54,7 +55,11 @@ from quviz.scene.models import (
     SuperpositionMetadata,
     SuperpositionTermSpec,
 )
-from quviz.scene.streamlines import hydrogenic_flow_velocity, integrate_streamlines
+from quviz.scene.streamlines import (
+    hydrogenic_flow_velocity,
+    integrate_streamlines,
+    stable_vector_magnitudes,
+)
 
 _STREAMLINE_ARC_FRACTION = 0.03
 _STREAMLINE_MAX_POINTS = 4_096
@@ -63,6 +68,18 @@ _STREAMLINE_MAX_ARC_FRACTION = 1.0 / 8.0
 _SEED_DENSITY_SCALED_FLOOR = 1e-4
 _CONTINUITY_PROBE_COUNT = 8
 _REALITY_RELATION_TOLERANCE = 64.0 * np.finfo(np.float64).eps
+_RADIAL_TOPOLOGY_SAMPLES = 32_769
+_RADIAL_GAP_SPACING_FRACTION = 0.8
+_MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION = 129
+_MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION = 137
+_GENERAL_TOPOLOGY_LEVEL_RELATIVE_TOLERANCE = 0.02
+_GENERAL_TOPOLOGY_MASS_TOLERANCE = 0.002
+_GENERAL_TOPOLOGY_CAPTURED_MASS_TOLERANCE = 5e-4
+_PAYLOAD_DIMENSIONLESS_DECIMALS = 6
+_PAYLOAD_SPEED_SIGNIFICANT_DIGITS = 12
+_RK4_VELOCITY_EVALUATIONS_PER_STEP = 5
+_MINIMUM_CURRENT_COULOMB_SCALE = float(np.finfo(np.float64).tiny ** 0.25)
+_MAXIMUM_CURRENT_COULOMB_SCALE = float(np.finfo(np.float64).max ** 0.25)
 
 
 _SLICE_FIELD_WORDS: dict[SliceObservable, str] = {
@@ -87,6 +104,67 @@ _SLICE_COLOR_WORDS: dict[SliceObservable, str] = {
         "phase-undefined region and are not a certificate of a node"
     ),
 }
+
+
+def _validate_current_numeric_scale(*, z: float, a_mu: float) -> None:
+    """Require the current's fourth-power scale to remain representable."""
+
+    if z <= 0.0 or not np.isfinite(z):
+        raise ValueError("z must be positive and finite")
+    if a_mu <= 0.0 or not np.isfinite(a_mu):
+        raise ValueError("a_mu must be positive and finite")
+    log_scale = float(np.log(z) - np.log(a_mu))
+    minimum_log = float(np.log(_MINIMUM_CURRENT_COULOMB_SCALE))
+    maximum_log = float(np.log(_MAXIMUM_CURRENT_COULOMB_SCALE))
+    if not minimum_log <= log_scale <= maximum_log:
+        raise ValueError(
+            "z / a_mu is outside the finite float64 probability-current range "
+            f"[{_MINIMUM_CURRENT_COULOMB_SCALE:.6g}, "
+            f"{_MAXIMUM_CURRENT_COULOMB_SCALE:.6g}]"
+        )
+
+
+def _quantize_scaled_values(values: np.ndarray, *, physical_scale: float) -> np.ndarray:
+    """Quantize coordinates in dimensionless units, then restore their scale.
+
+    Fixed decimal places in ordinary Bohr would erase contracted-state detail.
+    Dividing by the exact Coulomb length before rounding preserves the existing
+    ``Z=1, a_mu=1`` representation while making coordinate serialization
+    covariant under ``r -> (a_mu/Z) r``.
+    """
+
+    if physical_scale <= 0.0 or not np.isfinite(physical_scale):
+        raise ValueError("payload physical scale must be positive and finite")
+    array = np.asarray(values, dtype=np.float64)
+    return np.asarray(
+        np.round(array / physical_scale, _PAYLOAD_DIMENSIONLESS_DECIMALS) * physical_scale,
+        dtype=np.float64,
+    )
+
+
+def _serialize_scaled_speeds(values: np.ndarray, *, physical_scale: float) -> np.ndarray:
+    """Keep weak non-zero flow using per-value significant-digit rounding.
+
+    A fixed number of decimal places is appropriate for coordinates because
+    their integration spacing has a fixed dimensionless lower bound.  It is
+    not appropriate for speed: a physically active coherence can be many
+    decades below one without being zero.  Formatting each dimensionless value
+    to significant digits is deterministic, scale-covariant, and independent
+    of what other streamlines happened to share the batch.
+    """
+
+    if physical_scale <= 0.0 or not np.isfinite(physical_scale):
+        raise ValueError("payload physical scale must be positive and finite")
+    dimensionless = np.asarray(values, dtype=np.float64) / physical_scale
+    serialized = np.fromiter(
+        (
+            float(format(float(value), f".{_PAYLOAD_SPEED_SIGNIFICANT_DIGITS}g"))
+            for value in dimensionless.flat
+        ),
+        dtype=np.float64,
+        count=dimensionless.size,
+    ).reshape(dimensionless.shape)
+    return np.asarray(serialized * physical_scale, dtype=np.float64)
 
 
 def _validate_slice_detail(
@@ -213,7 +291,7 @@ def radial_extent_for_mass(
             quantile = float(np.interp(target_mass, absolute_cdf, radius))
             return max(1.05 * quantile, 4.0 * a_mu / z)
         r_max *= 1.7
-    raise RuntimeError(
+    raise ScientificComputationError(
         f"radial extent search captured only {captured:.8f}; increase expansion budget"
     )
 
@@ -269,6 +347,155 @@ class _MeshResult:
     spacing: float
 
 
+def _odd_resolution_for_spacing(extent: float, maximum_spacing: float) -> int:
+    """Return the smallest odd grid size whose cubic-axis spacing is small enough."""
+
+    intervals = int(np.ceil(2.0 * extent / maximum_spacing))
+    if intervals % 2 != 0:
+        intervals += 1
+    return intervals + 1
+
+
+def _s_radial_superlevel_topology(
+    n: int,
+    *,
+    z: float,
+    a_mu: float,
+    extent: float,
+    level: float,
+) -> tuple[int, float | None]:
+    """Return the exact radial topology sampled on a fine one-dimensional oracle.
+
+    For an s orbital, ``|psi|^2`` is radial.  Every crossing of the requested
+    density level is therefore one concentric boundary component.  The narrow
+    below-level intervals around radial nodes are the feature that a Cartesian
+    marching-cubes grid must not skip.
+    """
+
+    radius = np.linspace(0.0, extent, _RADIAL_TOPOLOGY_SAMPLES, dtype=np.float64)
+    radial = radial_wavefunction(n, 0, radius, z=z, a_mu=a_mu)
+    density = radial * radial / (4.0 * pi)
+    above = density >= level
+    if not bool(above[0]) or bool(above[-1]):
+        raise ScientificComputationError(
+            "s-orbital radial topology oracle does not bracket the level set"
+        )
+
+    transition_indices = np.flatnonzero(above[1:] != above[:-1])
+    crossings: list[float] = []
+    for index in transition_indices:
+        left_value = float(density[index] - level)
+        right_value = float(density[index + 1] - level)
+        denominator = right_value - left_value
+        fraction = 0.5 if denominator == 0.0 else -left_value / denominator
+        crossings.append(float(radius[index] + fraction * (radius[index + 1] - radius[index])))
+
+    # Starting above the level, pairs (falling, rising) delimit the low-density
+    # gap around each radial node.  The final unpaired crossing bounds the tail.
+    nodal_gaps = [
+        crossings[index + 1] - crossings[index] for index in range(0, len(crossings) - 1, 2)
+    ]
+    return len(crossings), min(nodal_gaps) if nodal_gaps else None
+
+
+def _s_isosurface_resolution_requirement(
+    n: int,
+    *,
+    z: float,
+    a_mu: float,
+    extent: float,
+    probability_mass: float,
+) -> tuple[int, int]:
+    """Estimate the grid required to separate every radial-node boundary."""
+
+    radius = np.linspace(0.0, extent, _RADIAL_TOPOLOGY_SAMPLES, dtype=np.float64)
+    spacing = float(radius[1] - radius[0])
+    radial = radial_wavefunction(n, 0, radius, z=z, a_mu=a_mu)
+    density = radial * radial / (4.0 * pi)
+    weights = np.ones(_RADIAL_TOPOLOGY_SAMPLES, dtype=np.float64)
+    weights[1:-1:2] = 4.0
+    weights[2:-1:2] = 2.0
+    weights *= spacing / 3.0
+    spherical_volume_weights = 4.0 * pi * radius * radius * weights
+    level, _, _ = _density_threshold_for_mass(density, spherical_volume_weights, probability_mass)
+    expected_components, narrowest_gap = _s_radial_superlevel_topology(
+        n,
+        z=z,
+        a_mu=a_mu,
+        extent=extent,
+        level=level,
+    )
+    if narrowest_gap is None:
+        return 3, expected_components
+    required = _odd_resolution_for_spacing(extent, _RADIAL_GAP_SPACING_FRACTION * narrowest_gap)
+    return required, expected_components
+
+
+def _mesh_component_euler_characteristics(faces: np.ndarray) -> tuple[int, ...]:
+    """Return a sorted Euler-characteristic multiset, one value per component."""
+
+    face_array = np.asarray(faces, dtype=np.int64)
+    parent = np.arange(int(np.max(face_array)) + 1, dtype=np.int64)
+
+    def root(vertex: int) -> int:
+        while parent[vertex] != vertex:
+            parent[vertex] = parent[parent[vertex]]
+            vertex = int(parent[vertex])
+        return vertex
+
+    for first, second, third in face_array:
+        for left, right in ((first, second), (second, third)):
+            left_root = root(int(left))
+            right_root = root(int(right))
+            if left_root != right_root:
+                parent[right_root] = left_root
+    face_roots = np.asarray([root(int(face[0])) for face in face_array], dtype=np.int64)
+    return tuple(
+        sorted(
+            _mesh_euler_characteristic(face_array[face_roots == component_root])
+            for component_root in np.unique(face_roots)
+        )
+    )
+
+
+def _mesh_component_count(faces: np.ndarray) -> int:
+    """Count connected triangle components without depending on mesh tooling."""
+
+    return len(_mesh_component_euler_characteristics(faces))
+
+
+def _mesh_euler_characteristic(faces: np.ndarray) -> int:
+    """Return V-E+F for the indexed triangular surface."""
+
+    face_array = np.asarray(faces, dtype=np.int64)
+    edges = np.vstack(
+        (
+            face_array[:, (0, 1)],
+            face_array[:, (1, 2)],
+            face_array[:, (2, 0)],
+        )
+    )
+    edges.sort(axis=1)
+    vertex_count = np.unique(face_array).size
+    edge_count = np.unique(edges, axis=0).shape[0]
+    return int(vertex_count - edge_count + face_array.shape[0])
+
+
+def _general_meshes_have_stable_topology(coarse: _MeshResult, fine: _MeshResult) -> bool:
+    """Empirical two-grid gate for a non-radial superposition mesh."""
+
+    coarse_signature = _mesh_component_euler_characteristics(coarse.faces)
+    fine_signature = _mesh_component_euler_characteristics(fine.faces)
+    level_scale = max(abs(coarse.level), abs(fine.level), np.finfo(np.float64).tiny)
+    return (
+        coarse_signature == fine_signature
+        and abs(coarse.level - fine.level) / level_scale
+        <= _GENERAL_TOPOLOGY_LEVEL_RELATIVE_TOLERANCE
+        and abs(coarse.integrated_mass - fine.integrated_mass) <= _GENERAL_TOPOLOGY_MASS_TOLERANCE
+        and abs(coarse.captured - fine.captured) <= _GENERAL_TOPOLOGY_CAPTURED_MASS_TOLERANCE
+    )
+
+
 def _build_density_mesh(
     evaluate: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray],
     *,
@@ -293,14 +520,25 @@ def _build_density_mesh(
         density, integration_weights, probability_mass
     )
     if not float(np.min(density)) < level < float(np.max(density)):
-        raise RuntimeError("computed isosurface level is outside the density range")
+        raise ScientificComputationError("computed isosurface level is outside the density range")
 
-    vertices, faces, normals, _ = marching_cubes(  # type: ignore[no-untyped-call]
-        density.astype(np.float32),
-        level=level,
-        spacing=(spacing, spacing, spacing),
-        allow_degenerate=False,
-    )
+    try:
+        vertices, faces, normals, _ = marching_cubes(  # type: ignore[no-untyped-call]
+            density.astype(np.float32),
+            level=level,
+            spacing=(spacing, spacing, spacing),
+            allow_degenerate=False,
+        )
+    except RuntimeError as exc:
+        if type(exc) is not RuntimeError:
+            raise
+        # scikit-image raises RuntimeError when float32 conversion leaves no
+        # representable crossing at an otherwise valid float64 density level.
+        # Translate only this third-party computation boundary; unrelated
+        # RuntimeError subclasses must still surface as programming failures.
+        raise ScientificComputationError(
+            f"isosurface extraction failed at the computed density level: {exc}"
+        ) from exc
     vertices += np.asarray([axis[0], axis[0], axis[0]], dtype=np.float32)
     face_normals = np.cross(
         vertices[faces[:, 1]] - vertices[faces[:, 0]],
@@ -322,6 +560,92 @@ def _build_density_mesh(
         integrated_mass=integrated_mass,
         spacing=spacing,
     )
+
+
+def _build_eigenstate_density_mesh(
+    evaluate: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray],
+    *,
+    n: int,
+    l: int,
+    z: float,
+    a_mu: float,
+    extent: float,
+    requested_resolution: int,
+    probability_mass: float,
+) -> tuple[_MeshResult, int]:
+    """Build an eigenstate mesh, adapting or failing closed for compact s-state nodes."""
+
+    effective_resolution = requested_resolution
+    expected_components: int | None = None
+    if l == 0 and n > 1:
+        required, expected_components = _s_isosurface_resolution_requirement(
+            n,
+            z=z,
+            a_mu=a_mu,
+            extent=extent,
+            probability_mass=probability_mass,
+        )
+        if required > _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION:
+            raise ValueError(
+                f"the {n}s radial-node topology at probability_mass={probability_mass:.6g} "
+                f"requires an estimated odd grid resolution of at least {required}, exceeding "
+                f"the validated adaptive cap {_MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION}"
+            )
+        effective_resolution = max(effective_resolution, required)
+
+    mesh = _build_density_mesh(
+        evaluate,
+        extent=extent,
+        resolution=effective_resolution,
+        probability_mass=probability_mass,
+    )
+    if expected_components is None:
+        return mesh, effective_resolution
+
+    # Re-evaluate the oracle at the level actually selected by the 3-D Simpson
+    # grid.  This closes the small gap between the radial preflight threshold
+    # and the final cubic-grid threshold instead of trusting the estimate.
+    actual_expected, actual_gap = _s_radial_superlevel_topology(
+        n,
+        z=z,
+        a_mu=a_mu,
+        extent=extent,
+        level=mesh.level,
+    )
+    if actual_gap is not None:
+        actual_required = _odd_resolution_for_spacing(
+            extent, _RADIAL_GAP_SPACING_FRACTION * actual_gap
+        )
+        if actual_required > _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION:
+            raise ValueError(
+                f"the {n}s radial-node topology at the selected density level requires an "
+                f"estimated odd grid resolution of at least {actual_required}, exceeding the "
+                f"validated adaptive cap {_MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION}"
+            )
+        if actual_required > effective_resolution:
+            effective_resolution = actual_required
+            mesh = _build_density_mesh(
+                evaluate,
+                extent=extent,
+                resolution=effective_resolution,
+                probability_mass=probability_mass,
+            )
+            actual_expected, _ = _s_radial_superlevel_topology(
+                n,
+                z=z,
+                a_mu=a_mu,
+                extent=extent,
+                level=mesh.level,
+            )
+
+    observed_components = _mesh_component_count(mesh.faces)
+    if observed_components != actual_expected:
+        raise ValueError(
+            f"the {n}s isosurface did not converge to its radial topology at resolution "
+            f"{effective_resolution}: expected {actual_expected} concentric boundary components, "
+            f"observed {observed_components}"
+        )
+    return mesh, effective_resolution
 
 
 def build_isosurface(
@@ -356,10 +680,14 @@ def build_isosurface(
     basis_kind = BasisKind(basis)
 
     extent = radial_extent_for_mass(n, l, z)
-    mesh = _build_density_mesh(
+    mesh, effective_resolution = _build_eigenstate_density_mesh(
         lambda r, th, ph: hydrogenic_wavefunction(n, l, m, r, th, ph, z=z, basis=basis_kind),
+        n=n,
+        l=l,
+        z=z,
+        a_mu=1.0,
         extent=extent,
-        resolution=resolution,
+        requested_resolution=resolution,
         probability_mass=probability_mass,
     )
     vertices, faces, normals = mesh.vertices, mesh.faces, mesh.normals
@@ -371,6 +699,11 @@ def build_isosurface(
     if abs(integrated_mass - 1.0) > 0.002:
         warnings.append(
             f"finite-grid density integral is {integrated_mass:.6f}; increase resolution"
+        )
+    if effective_resolution != resolution:
+        warnings.append(
+            f"grid resolution was increased from {resolution} to {effective_resolution} to "
+            "resolve the radial-node topology"
         )
     if basis_kind is BasisKind.COMPLEX and m != 0:
         warnings.append("surface geometry represents density; color carries wavefunction phase")
@@ -395,7 +728,7 @@ def build_isosurface(
         requested_probability_mass=probability_mass,
         captured_probability_mass=captured,
         finite_grid_density_integral=integrated_mass,
-        grid_resolution=resolution,
+        grid_resolution=effective_resolution,
         grid_spacing_bohr=spacing,
         extent_bohr=extent,
     )
@@ -438,7 +771,7 @@ def _stationary_continuity_diagnostic(
             density_floor=0.0,
         )
 
-    candidate_magnitude = np.linalg.norm(current_at(candidates), axis=1)
+    candidate_magnitude = stable_vector_magnitudes(current_at(candidates))
     keep = np.argsort(candidate_magnitude)[::-1][:_CONTINUITY_PROBE_COUNT]
     probes = np.asarray(candidates[keep], dtype=np.float64)
     step = 1e-4 * differential_length
@@ -451,9 +784,11 @@ def _stationary_continuity_diagnostic(
         divergence += (forward - backward) / (2.0 * step)
 
     absolute = float(np.max(np.abs(divergence)))
-    scale = float(np.max(np.linalg.norm(current_at(probes), axis=1)) / differential_length)
+    scale = float(np.max(stable_vector_magnitudes(current_at(probes))) / differential_length)
     if scale <= 0.0:
-        raise RuntimeError("non-zero stationary current had no resolvable diagnostic scale")
+        raise ScientificComputationError(
+            "non-zero stationary current had no resolvable diagnostic scale"
+        )
     return absolute / scale, absolute, scale, "stationary_current", probes.shape[0]
 
 
@@ -479,6 +814,90 @@ def _streamline_point_budget(path_length: float, arc_step: float) -> int:
     return int(path_length / arc_step) + 8
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentFieldWorkEstimate:
+    """Conservative integration and serialization cost for a current field.
+
+    ``max_points_per_line`` bounds the number of vertices retained for each
+    requested seed.  A batched RK4 advance evaluates the velocity four times
+    for the stages and once more at the candidate point, in addition to the
+    initial seed evaluation.  Multiplying that count by the number of active
+    hydrogenic terms therefore tracks the expensive wavefunction work rather
+    than merely counting seeds.
+    """
+
+    active_terms: int
+    requested_seeds: int
+    max_points_per_line: int
+
+    @property
+    def serialized_path_samples(self) -> int:
+        return self.requested_seeds * self.max_points_per_line
+
+    @property
+    def velocity_evaluations_per_term(self) -> int:
+        if self.max_points_per_line == 0:
+            return 0
+        stages_per_seed = 1 + _RK4_VELOCITY_EVALUATIONS_PER_STEP * (self.max_points_per_line - 1)
+        return self.requested_seeds * stages_per_seed
+
+    @property
+    def term_velocity_evaluations(self) -> int:
+        return self.active_terms * self.velocity_evaluations_per_term
+
+
+def estimate_current_field_workload(
+    n: int,
+    l: int,
+    m: int,
+    *,
+    z: float = 1.0,
+    basis: BasisKind | str = BasisKind.COMPLEX,
+    seed_count: int = 48,
+    arc_step: float | None = None,
+) -> CurrentFieldWorkEstimate:
+    """Bound RK4 work and output size before building an eigenstate field."""
+
+    validate_quantum_numbers(n, l, m)
+    _validate_current_numeric_scale(z=z, a_mu=1.0)
+    if seed_count < 1:
+        raise ValueError("seed_count must be positive")
+    support_length = n * n / z
+    resolved_arc_step = _resolve_arc_step(arc_step, support_length)
+    basis_kind = BasisKind(basis)
+    if basis_kind is BasisKind.REAL or m == 0:
+        return CurrentFieldWorkEstimate(1, seed_count, 0)
+
+    # The builder uses the widest retained cylindrical seed.  No retained seed
+    # can be wider than the finite-box extent, so this is conservative without
+    # repeating its density lattice just for preflight.
+    extent = radial_extent_for_mass(n, l, z)
+    max_points = _streamline_point_budget(2.0 * pi * extent, resolved_arc_step)
+    return CurrentFieldWorkEstimate(1, seed_count, max_points)
+
+
+def estimate_superposition_current_workload(
+    state: SuperpositionState,
+    *,
+    seed_count: int = 48,
+    arc_step: float | None = None,
+) -> CurrentFieldWorkEstimate:
+    """Bound RK4 work and output size before building a superposition field."""
+
+    if seed_count < 1:
+        raise ValueError("seed_count must be positive")
+    if len(state.terms) > 8:
+        raise ValueError("current-field diagnostics support at most 8 active terms")
+    _validate_current_numeric_scale(z=state.z, a_mu=state.a_mu)
+    _, compact_support, _ = state_support_lengths(state)
+    resolved_arc_step = _resolve_arc_step(arc_step, compact_support)
+    if _has_analytic_zero_stationary_current(state):
+        return CurrentFieldWorkEstimate(len(state.terms), seed_count, 0)
+
+    max_points = _streamline_point_budget(4.0 * superposition_extent(state), resolved_arc_step)
+    return CurrentFieldWorkEstimate(len(state.terms), seed_count, max_points)
+
+
 def build_current_field(
     n: int,
     l: int,
@@ -501,14 +920,13 @@ def build_current_field(
 
     That seeding exploits the azimuthal symmetry of a *stationary* state, where
     every flow line is a circle of constant :math:`s` and :math:`z` and so one
-    azimuth already enumerates all distinct lines. Time-dependent states in M1
-    break that symmetry and will need density-weighted seeding in three
-    dimensions; the integrator itself makes no such assumption.
+    azimuth already enumerates all distinct lines. Time-dependent M1 states
+    break that symmetry, so their separate builder uses density-ranked seeds in
+    three dimensions; the integrator itself makes no seeding assumption.
     """
 
     validate_quantum_numbers(n, l, m)
-    if z <= 0.0:
-        raise ValueError("z must be positive")
+    _validate_current_numeric_scale(z=z, a_mu=1.0)
     if seed_count < 1:
         raise ValueError("seed_count must be positive")
     support_length = n * n / z
@@ -529,6 +947,8 @@ def build_current_field(
     speeds: list[list[float]] = []
     max_speed = 0.0
     density_floor = _SEED_DENSITY_SCALED_FLOOR / support_length**3
+    length_serialization_scale = 1.0 / z
+    speed_serialization_scale = z
 
     if basis_kind is BasisKind.COMPLEX and m != 0:
         lattice = max(8, int(np.sqrt(seed_count * 4)))
@@ -570,9 +990,16 @@ def build_current_field(
             ):
                 if line.vertices.shape[0] < 4:
                     continue
-                lines.append(np.round(line.vertices, 6).tolist())
-                speeds.append(np.round(line.speed, 6).tolist())
-                max_speed = max(max_speed, float(np.max(line.speed)))
+                quantized_speed = _serialize_scaled_speeds(
+                    line.speed, physical_scale=speed_serialization_scale
+                )
+                lines.append(
+                    _quantize_scaled_values(
+                        line.vertices, physical_scale=length_serialization_scale
+                    ).tolist()
+                )
+                speeds.append(quantized_speed.tolist())
+                max_speed = max(max_speed, float(np.max(quantized_speed)))
 
     metadata = orbital_metadata(
         n,
@@ -672,6 +1099,133 @@ def superposition_extent(state: SuperpositionState) -> float:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SuperpositionIsosurfaceWorkEstimate:
+    """Conservative full-grid work bound for one superposition isosurface.
+
+    ``resolutions`` contains one entry for every full cubic-grid pass covered
+    by the request budget; each pass evaluates all ``active_terms`` once.
+    Repeated entries are intentional: every completed payload runs the finite-
+    grid mass diagnostic once more at its final mesh resolution.  A single
+    excited-s state can also rebuild its mesh after the selected density level
+    tightens the radial oracle, so that possible pass is bounded separately.
+
+    ``general_topology_resolutions`` is the actual finest-two mesh schedule for
+    a multi-term state containing an excited-s component.  Keeping it separate
+    prevents repeated diagnostic work from being mistaken for evidence that a
+    general topology-convergence gate is required, and prevents unused coarse
+    probes from being built or charged to the request.
+
+    This is not an exact total-compute estimate.  In particular, the number of
+    marching-cubes vertices whose wavefunction phase is evaluated depends on
+    the generated surface rather than only on the request parameters.
+    """
+
+    active_terms: int
+    resolutions: tuple[int, ...]
+    general_topology_resolutions: tuple[int, ...]
+    uses_adaptive_isosurface_budget: bool
+
+    @property
+    def term_voxel_evaluations(self) -> int:
+        return self.active_terms * sum(resolution**3 for resolution in self.resolutions)
+
+    @property
+    def requires_general_topology_convergence(self) -> bool:
+        return bool(self.general_topology_resolutions)
+
+
+def estimate_superposition_isosurface_workload(
+    state: SuperpositionState,
+    *,
+    resolution: int,
+    probability_mass: float,
+) -> SuperpositionIsosurfaceWorkEstimate:
+    """Bound every predictable full-grid term evaluation before mesh building.
+
+    An active excited-s component can contain narrow radial-node gaps, but a
+    multi-term state is not radial and must never be classified as a pure s
+    state by a coefficient tolerance.  Its pure-component oracle is used only
+    to choose the coarser member of the finest-two check when that requirement
+    lies above 129; acceptance is based on independent topology and mass
+    convergence against the validated 137 cap.  The returned budget also
+    includes the final finite-grid mass diagnostic and the possible selected-
+    level rebuild of a single excited-s state.
+    """
+
+    excited_s_terms = [term for term in state.terms if term.n > 1 and term.l == 0]
+    if not excited_s_terms:
+        return SuperpositionIsosurfaceWorkEstimate(
+            active_terms=len(state.terms),
+            resolutions=(resolution, resolution),
+            general_topology_resolutions=(),
+            uses_adaptive_isosurface_budget=False,
+        )
+
+    extent = superposition_extent(state)
+    suggested_resolution = max(
+        _s_isosurface_resolution_requirement(
+            term.n,
+            z=state.z,
+            a_mu=state.a_mu,
+            extent=extent,
+            probability_mass=probability_mass,
+        )[0]
+        for term in excited_s_terms
+    )
+    if len(state.terms) == 1:
+        if suggested_resolution > _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION:
+            term = excited_s_terms[0]
+            raise ValueError(
+                f"the {term.n}s radial-node topology at probability_mass={probability_mass:.6g} "
+                f"requires an estimated odd grid resolution of at least {suggested_resolution}, "
+                f"exceeding the validated adaptive cap "
+                f"{_MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION}"
+            )
+        first_resolution = max(resolution, suggested_resolution)
+        full_grid_resolutions = (
+            (first_resolution, first_resolution)
+            if first_resolution == _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION
+            else (
+                first_resolution,
+                _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION,
+                _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION,
+            )
+        )
+        return SuperpositionIsosurfaceWorkEstimate(
+            active_terms=1,
+            resolutions=full_grid_resolutions,
+            general_topology_resolutions=(),
+            uses_adaptive_isosurface_budget=True,
+        )
+
+    if suggested_resolution > _MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION:
+        raise ValueError(
+            "the active excited-s component requires general superposition topology "
+            f"convergence beyond the validated grid cap {_MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION} "
+            f"at probability_mass={probability_mass:.6g}"
+        )
+
+    # The acceptance gate below compares only the finest two meshes.  Earlier
+    # versions constructed a 16-point ladder from the requested/analytic floor
+    # even though no result except ``[-2]`` and ``[-1]`` was ever inspected.
+    # Build and budget exactly the evidence that can affect the verdict.
+    coarse_resolution = (
+        suggested_resolution
+        if _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION
+        < suggested_resolution
+        < _MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION
+        else _MAXIMUM_ADAPTIVE_ISOSURFACE_RESOLUTION
+    )
+    topology_schedule = (coarse_resolution, _MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION)
+    return SuperpositionIsosurfaceWorkEstimate(
+        active_terms=len(state.terms),
+        resolutions=(*topology_schedule, topology_schedule[-1]),
+        general_topology_resolutions=topology_schedule,
+        uses_adaptive_isosurface_budget=True,
+    )
+
+
 def _has_analytic_zero_stationary_current(state: SuperpositionState) -> bool:
     """Return true for a stationary real spatial combination up to one phase."""
 
@@ -728,20 +1282,79 @@ def build_superposition_isosurface(
         raise ValueError("probability_mass must be between 0.50 and 0.99")
 
     extent = superposition_extent(state)
-    mesh = _build_density_mesh(
-        lambda r, th, ph: state.evaluate(r, th, ph, time=time),
-        extent=extent,
-        resolution=resolution,
-        probability_mass=probability_mass,
-    )
+
+    def evaluate(r: np.ndarray, th: np.ndarray, ph: np.ndarray) -> np.ndarray:
+        return state.evaluate(r, th, ph, time=time)
+
+    topology_convergence_note: str | None = None
+    mesh: _MeshResult | None = None
+    effective_resolution = resolution
+    if len(state.terms) == 1:
+        term = state.terms[0]
+        eigenstate_mesh, effective_resolution = _build_eigenstate_density_mesh(
+            evaluate,
+            n=term.n,
+            l=term.l,
+            z=state.z,
+            a_mu=state.a_mu,
+            extent=extent,
+            requested_resolution=resolution,
+            probability_mass=probability_mass,
+        )
+        mesh = eigenstate_mesh
+    else:
+        work_estimate = estimate_superposition_isosurface_workload(
+            state,
+            resolution=resolution,
+            probability_mass=probability_mass,
+        )
+        mesh_resolutions = work_estimate.general_topology_resolutions or (resolution,)
+        scheduled_meshes: list[tuple[int, _MeshResult]] = []
+        for candidate_resolution in mesh_resolutions:
+            candidate_mesh = _build_density_mesh(
+                evaluate,
+                extent=extent,
+                resolution=candidate_resolution,
+                probability_mass=probability_mass,
+            )
+            scheduled_meshes.append((candidate_resolution, candidate_mesh))
+
+        if len(scheduled_meshes) == 1:
+            effective_resolution, mesh = scheduled_meshes[0]
+        else:
+            coarse_resolution, coarse_mesh = scheduled_meshes[-2]
+            fine_resolution, fine_mesh = scheduled_meshes[-1]
+            if not _general_meshes_have_stable_topology(coarse_mesh, fine_mesh):
+                raise ValueError(
+                    "the general superposition isosurface topology did not converge in per-component "
+                    "Euler characteristic, density level, and mass on the finest two grids before "
+                    f"the validated grid cap {_MAXIMUM_GENERAL_ISOSURFACE_RESOLUTION}"
+                )
+            mesh = fine_mesh
+            effective_resolution = fine_resolution
+            topology_convergence_note = (
+                "general superposition topology passed an empirical finest-two-grid convergence "
+                f"gate at resolutions {coarse_resolution} and {fine_resolution}; this is numerical "
+                "convergence evidence, not a radial analytic proof"
+            )
+
+    if mesh is None:  # pragma: no cover - all branches either assign or raise
+        raise ScientificComputationError("isosurface mesh construction produced no result")
 
     mass_diagnostic = finite_grid_mass_diagnostic(
         state,
         extent=extent,
-        resolution=resolution,
+        resolution=effective_resolution,
         integrated_mass=mesh.integrated_mass,
     )
     warnings: list[str] = []
+    if topology_convergence_note is not None:
+        warnings.append(topology_convergence_note)
+    if effective_resolution != resolution:
+        warnings.append(
+            f"grid resolution was increased from {resolution} to {effective_resolution} to "
+            "resolve the radial-node topology"
+        )
     shells = {term.n for term in state.terms}
     if mass_diagnostic.status == "phase_dependent_quadrature_error":
         warnings.append(
@@ -785,7 +1398,7 @@ def build_superposition_isosurface(
         requested_probability_mass=probability_mass,
         captured_probability_mass=mesh.captured,
         finite_grid_density_integral=mesh.integrated_mass,
-        grid_resolution=resolution,
+        grid_resolution=effective_resolution,
         grid_spacing_bohr=mesh.spacing,
         extent_bohr=extent,
         finite_box_tail_mass_upper_bound=mass_diagnostic.tail_mass_upper_bound,
@@ -819,6 +1432,7 @@ def build_superposition_current_field(
         raise ValueError("seed_count must be positive")
     if len(state.terms) > 8:
         raise ValueError("current-field diagnostics support at most 8 active terms")
+    _validate_current_numeric_scale(z=state.z, a_mu=state.a_mu)
     analytic_zero_current = _has_analytic_zero_stationary_current(state)
     differential_length, compact_support, wide_support = state_support_lengths(state)
     resolved_arc_step = _resolve_arc_step(arc_step, compact_support)
@@ -833,22 +1447,25 @@ def build_superposition_current_field(
     density = probability_density(state.evaluate(radius, polar, azimuth, time=time))
     density_floor = _SEED_DENSITY_SCALED_FLOOR / wide_support**3
     keep = np.flatnonzero(density > density_floor)
-    keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
 
     lines: list[list[list[float]]] = []
     speeds: list[list[float]] = []
     max_speed = 0.0
+    length_serialization_scale = state.a_mu / state.z
+    speed_serialization_scale = state.z
+
+    def velocity(points: np.ndarray) -> np.ndarray:
+        spherical = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
+        rho = probability_density(state.evaluate(*spherical, time=time))
+        current = superposition_current(state, points, time=time)
+        result = np.zeros_like(current)
+        live = rho > density_floor
+        np.divide(current, rho[:, None], out=result, where=live[:, None])
+        return result
+
+    keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
+
     if keep.size and not analytic_zero_current:
-
-        def velocity(points: np.ndarray) -> np.ndarray:
-            spherical = cartesian_to_spherical(points[:, 0], points[:, 1], points[:, 2])
-            rho = probability_density(state.evaluate(*spherical, time=time))
-            current = superposition_current(state, points, time=time)
-            result = np.zeros_like(current)
-            live = rho > density_floor
-            np.divide(current, rho[:, None], out=result, where=live[:, None])
-            return result
-
         for line in integrate_streamlines(
             velocity,
             candidates[keep],
@@ -858,16 +1475,23 @@ def build_superposition_current_field(
         ):
             if line.vertices.shape[0] < 4:
                 continue
-            lines.append(np.round(line.vertices, 6).tolist())
-            speeds.append(np.round(line.speed, 6).tolist())
-            max_speed = max(max_speed, float(np.max(line.speed)))
+            quantized_speed = _serialize_scaled_speeds(
+                line.speed, physical_scale=speed_serialization_scale
+            )
+            lines.append(
+                _quantize_scaled_values(
+                    line.vertices, physical_scale=length_serialization_scale
+                ).tolist()
+            )
+            speeds.append(quantized_speed.tolist())
+            max_speed = max(max_speed, float(np.max(quantized_speed)))
 
     if analytic_zero_current:
         probes = np.empty((0, 3), dtype=np.float64)
     elif state.is_stationary:
         probe_candidates = continuity_probe_candidates(state)
         probe_current = superposition_current(state, probe_candidates, time=time)
-        current_magnitude = np.linalg.norm(probe_current, axis=1)
+        current_magnitude = stable_vector_magnitudes(probe_current)
         probe_keep = np.argsort(current_magnitude)[::-1][:_CONTINUITY_PROBE_COUNT]
         probes = np.asarray(probe_candidates[probe_keep], dtype=np.float64)
     else:
@@ -889,9 +1513,11 @@ def build_superposition_current_field(
 
     if state.is_stationary and not analytic_zero_current:
         current = superposition_current(state, probes, time=time)
-        continuity_scale = float(np.max(np.linalg.norm(current, axis=1)) / differential_length)
+        continuity_scale = float(np.max(stable_vector_magnitudes(current)) / differential_length)
         if continuity_scale <= 0.0:
-            raise RuntimeError("stationary current had no resolvable diagnostic scale")
+            raise ScientificComputationError(
+                "stationary current had no resolvable diagnostic scale"
+            )
         scale_kind: Literal[
             "transition_coherence", "stationary_current", "analytic_zero_current"
         ] = "stationary_current"
@@ -902,7 +1528,9 @@ def build_superposition_current_field(
         continuity_scale = transition_scale
         scale_kind = "transition_coherence"
         if continuity_scale <= 0.0:
-            raise RuntimeError("non-stationary state had no resolvable transition scale")
+            raise ScientificComputationError(
+                "non-stationary state had no resolvable transition scale"
+            )
     normalized = absolute / continuity_scale if continuity_scale > 0.0 else 0.0
 
     return SuperpositionCurrentPayload(

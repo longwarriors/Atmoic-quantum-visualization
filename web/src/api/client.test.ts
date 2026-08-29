@@ -55,7 +55,7 @@ function goldenBuffer(): ArrayBuffer {
 const params: OrbitalParameters = { n: 3, l: 2, m: -1, z: 2, basis: 'complex' }
 
 const metadata: OrbitalMetadata = {
-  state: { ...params },
+  state: { ...params, a_mu: 1 },
   label: '3d(-1)',
   energy_hartree: -0.2222,
   length_unit: 'bohr',
@@ -101,10 +101,8 @@ const jsonResponse = (body: unknown, status = 200): Response =>
 const errorResponse = (text: string, status = 500): Response => new Response(text, { status })
 
 /**
- * The rejection an HTTP error must surface as: an Error whose message *is* the
- * response body. Matched by equality, not substring -- V8's `JSON.parse`
- * error quotes the offending text (`"catalog offline" is not valid JSON`), so
- * a substring match passed even with the `response.ok` check deleted.
+ * The rejection a non-JSON HTTP error must surface as. Matched by equality,
+ * not substring, so deleting the `response.ok` check cannot pass accidentally.
  */
 const serverError = (body: string): Error => new Error(body)
 
@@ -256,15 +254,13 @@ describe('fetchPointCloud', () => {
     )
   })
 
-  it('rejects with the server error body on an HTTP error from the point-cloud route', async () => {
+  it('unwraps a FastAPI detail on an HTTP error from the point-cloud route', async () => {
     routeFetch({
       '/api/orbitals/point-cloud': () => errorResponse('{"detail":"l must be < n"}', 422),
       '/api/orbitals/metadata': () => jsonResponse(metadata),
     })
 
-    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow(
-      serverError('{"detail":"l must be < n"}'),
-    )
+    await expect(fetchPointCloud(params, 4, 0)).rejects.toThrow(serverError('l must be < n'))
   })
 
   it('rejects with the server error body on an HTTP error from the metadata route', async () => {
@@ -310,6 +306,64 @@ describe('fetchIsosurface', () => {
   it('rejects with the server error body on an HTTP error', async () => {
     routeFetch({ '/api/orbitals/isosurface': () => errorResponse('grid too large', 422) })
     await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow(serverError('grid too large'))
+  })
+
+  it('formats FastAPI validation-detail arrays with their query location', async () => {
+    routeFetch({
+      '/api/orbitals/isosurface': () =>
+        jsonResponse(
+          {
+            detail: [
+              {
+                type: 'less_than_equal',
+                loc: ['query', 'resolution'],
+                msg: 'Input should be less than or equal to 81',
+              },
+            ],
+          },
+          422,
+        ),
+    })
+
+    await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow(
+      serverError('query.resolution: Input should be less than or equal to 81'),
+    )
+  })
+
+  it.each([
+    {
+      name: 'mixed detail entries without a location',
+      body: JSON.stringify({ detail: [' first ', '', null, { msg: 'second' }, { nope: true }] }),
+      expected: 'first; second',
+    },
+    {
+      name: 'an empty detail list',
+      body: JSON.stringify({ detail: [] }),
+      expected: '{"detail":[]}',
+    },
+    {
+      name: 'a JSON string body',
+      body: JSON.stringify(' proxy message '),
+      expected: 'proxy message',
+    },
+    {
+      name: 'a JSON scalar body',
+      body: '17',
+      expected: '17',
+    },
+  ])('preserves useful HTTP error text for $name', async ({ body, expected }) => {
+    routeFetch({ '/api/orbitals/isosurface': () => errorResponse(body, 422) })
+    await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow(serverError(expected))
+  })
+
+  it('names an empty HTTP response by status and status text', async () => {
+    routeFetch({
+      '/api/orbitals/isosurface': () =>
+        new Response('', { status: 503, statusText: 'Service Unavailable' }),
+    })
+    await expect(fetchIsosurface(params, 512, 0.9)).rejects.toThrow(
+      serverError('Request failed with HTTP 503 Service Unavailable.'),
+    )
   })
 
   it('propagates a network failure unchanged', async () => {
@@ -382,7 +436,7 @@ describe('fetchMetadata', () => {
 })
 
 describe('fetchCatalog', () => {
-  const presets = [{ id: '1s', label: '1s', n: 1, l: 0, m: 0, z: 1, basis: 'real' }]
+  const presets = [{ id: '1s', label: '1s', n: 1, l: 0, m: 0, basis: 'real' }]
 
   it('requests the orbital catalog with no query', async () => {
     routeFetch({ '/api/orbitals/catalog': () => jsonResponse(presets) })
@@ -401,6 +455,48 @@ describe('fetchCatalog', () => {
     await expect(fetchCatalog()).rejects.toThrow(serverError('catalog offline'))
   })
 
+  it('rejects a malformed catalogue at the wire boundary instead of casting it', async () => {
+    routeFetch({
+      '/api/orbitals/catalog': () =>
+        jsonResponse([{ id: 'bad', label: 'bad', n: 2, l: 1, m: 1, basis: 'quaternion' }]),
+    })
+
+    await expect(fetchCatalog()).rejects.toThrow(
+      serverError('orbital catalog[0].basis must be "real" or "complex"'),
+    )
+  })
+
+  it('accepts and preserves a finite positive charge supplied by the catalogue', async () => {
+    const charged = [{ ...presets[0], z: 2 }]
+    routeFetch({ '/api/orbitals/catalog': () => jsonResponse(charged) })
+    await expect(fetchCatalog()).resolves.toEqual(charged)
+  })
+
+  it('rejects a non-array catalogue envelope', async () => {
+    routeFetch({ '/api/orbitals/catalog': () => jsonResponse({ presets }) })
+    await expect(fetchCatalog()).rejects.toThrow(serverError('orbital catalog must be an array'))
+  })
+
+  it.each([
+    { value: null, message: ' must be an object' },
+    { value: { ...presets[0], id: ' ' }, message: '.id must be a string' },
+    { value: { ...presets[0], label: null }, message: '.label must be a string' },
+    { value: { ...presets[0], n: 1.5 }, message: '.n must be a positive integer' },
+    { value: { ...presets[0], l: 1 }, message: '.l must be an integer in 0..n-1' },
+    { value: { ...presets[0], m: 1 }, message: '.m must be an integer with |m| <= l' },
+    {
+      value: { ...presets[0], z: Number.NaN },
+      message: '.z must be a positive finite number when present',
+    },
+    {
+      value: { ...presets[0], z: 0 },
+      message: '.z must be a positive finite number when present',
+    },
+  ])('rejects an invalid orbital preset: $message', async ({ value, message }) => {
+    routeFetch({ '/api/orbitals/catalog': () => jsonResponse([value]) })
+    await expect(fetchCatalog()).rejects.toThrow(serverError(`orbital catalog[0]${message}`))
+  })
+
   it('propagates a network failure unchanged', async () => {
     const failure = new TypeError('fetch failed')
     fetchMock.mockRejectedValue(failure)
@@ -409,7 +505,16 @@ describe('fetchCatalog', () => {
 })
 
 describe('fetchSuperpositionCatalog', () => {
-  const presets = [{ id: 'sp', label: 'sp', terms: '2,0,0:1+0j;2,1,0:1+0j', period_au: 1, note: '' }]
+  const presets = [
+    {
+      id: 'sp',
+      label: 'sp',
+      terms: '2,0,0:1+0j;2,1,0:1+0j',
+      period_au: 1,
+      note: '',
+      slice_resolution_floor: 65,
+    },
+  ]
 
   it('requests the superposition catalog with no query', async () => {
     routeFetch({ '/api/superposition/catalog': () => jsonResponse(presets) })
@@ -427,6 +532,20 @@ describe('fetchSuperpositionCatalog', () => {
     routeFetch({ '/api/superposition/catalog': () => errorResponse('catalog offline', 500) })
     await expect(fetchSuperpositionCatalog()).rejects.toThrow(serverError('catalog offline'))
   })
+
+  it.each([64, 66, 514, 103.5])(
+    'rejects a catalogue slice floor that is not an accepted odd grid: %s',
+    async (slice_resolution_floor) => {
+      routeFetch({
+        '/api/superposition/catalog': () =>
+          jsonResponse([{ ...presets[0], slice_resolution_floor }]),
+      })
+
+      await expect(fetchSuperpositionCatalog()).rejects.toThrow(
+        /slice_resolution_floor must be an odd integer in 65\.\.513/,
+      )
+    },
+  )
 
   it('propagates a network failure unchanged', async () => {
     const failure = new TypeError('fetch failed')
@@ -514,20 +633,20 @@ describe('fetchSuperpositionCurrentField', () => {
     routeFetch({ '/api/superposition/current-field': () => jsonResponse(payload) })
     const controller = new AbortController()
 
-    const result = await fetchSuperpositionCurrentField(terms, 1.25, 48, 'real', 2, 1.5, controller.signal)
+    const result = await fetchSuperpositionCurrentField(terms, 1.25, 40, 'real', 2, 1.5, controller.signal)
 
     const { url, init } = requestTo('/api/superposition/current-field')
     expect(url.searchParams.get('terms')).toBe(terms)
     expect(Object.fromEntries(url.searchParams)).toEqual({
       terms,
       time: '1.25',
-      seed_count: '48',
+      seed_count: '40',
       basis: 'real',
       z: '2',
       a_mu: '1.5',
     })
     expect(url.search).toBe(
-      `?terms=${encodedTerms}&time=1.25&seed_count=48&basis=real&z=2&a_mu=1.5`,
+      `?terms=${encodedTerms}&time=1.25&seed_count=40&basis=real&z=2&a_mu=1.5`,
     )
     expect(init).toEqual({ signal: controller.signal })
     expect(result).toEqual(payload)

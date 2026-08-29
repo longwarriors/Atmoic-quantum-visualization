@@ -15,6 +15,10 @@
 
 PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与右手 $(u,v,n)$ 标架，前端把它上传成一张 `DataTexture` 贴在一块按同一标架旋转的 quad 上（`src/scene/SliceField.tsx`）。
 
+叠加态播放同样消费服务端 catalog 的 `period_au`，并按当前 $a_\mu/Z^2$ 能量尺度换算周期；每圈把真实周期分成整数帧后从帧号重建时间，既不会在旧的 39.6 a.u. 人工边界发生相位跳变，也能在后续圈生成逐位相同的缓存键。`period_au=0` 的简并态不执行播放，但控件仍可用键盘聚焦：它使用 `aria-disabled`，并通过 `aria-describedby` 指向页面内持续可见的“能量简并、概率密度不随时间变化”说明，而不是把唯一解释藏在 disabled 按钮的鼠标 tooltip 中。
+
+同一 catalog 还发布每个预设的 `slice_resolution_floor`，由服务端 slice builder 的实际 extent / 径向特征楼层函数生成。选择预设与 store 更新在一次原子写入中完成，因此 `1s + 3d_z²` 的第一份切片 plan 已是 103，不会先发一个确定性 422 再回退。typed runtime parser、能力矩阵、滑条和 request planner 全部消费该字段，不在 TypeScript 重算径向数值。Z 的前端数值范围也来自能力约束表；该约束与所有七个科学 route 的 committed OpenAPI 逐项互校，number input、store clamp 和 query planner 共用同一组 0.1–20 UI 边界。
+
 截图回归的接线已经进 CI（`web/e2e/`、`npm run test:visual`、`ci.yml` 的 `web-visual` job），五张经人工检查、只由 Linux/SwiftShader 产生的 PNG 基线已经提交，见[质量门禁](../reference/quality-gates.md)。这套端到端回归覆盖切片主路径，不代表真实 GPU、多浏览器或其余表示法；主 bundle 也仍需拆分。完整边界见[当前状态](../project/status.md)。
 
 ## 界面语言与视觉层级

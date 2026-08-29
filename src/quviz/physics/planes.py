@@ -171,7 +171,19 @@ def amplitude_scale(length_scale: float) -> float:
 
     if not np.isfinite(length_scale) or length_scale <= 0.0:
         raise ValueError("length_scale must be positive and finite")
-    return float(length_scale**-1.5)
+    try:
+        scale = float(length_scale**-1.5)
+    except OverflowError as exc:
+        raise ValueError(
+            "wavefunction amplitude scale cannot be represented in float64 for "
+            f"reference_length={length_scale:.6g}"
+        ) from exc
+    if not np.isfinite(scale):
+        raise ValueError(
+            "wavefunction amplitude scale cannot be represented in float64 for "
+            f"reference_length={length_scale:.6g}"
+        )
+    return scale
 
 
 @dataclass(frozen=True, slots=True)

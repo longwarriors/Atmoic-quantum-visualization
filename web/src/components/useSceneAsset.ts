@@ -204,7 +204,7 @@ export async function executeSceneRequest(
           requireNumber(plan, RESOLUTION_PARAM),
           inputs.superpositionBasis,
           inputs.orbital.z,
-          inputs.aMu,
+          requireNumber(plan, A_MU_PARAM),
           requireNumber(plan, PROBABILITY_MASS_PARAM),
           signal,
         ),
@@ -233,7 +233,7 @@ export async function executeSceneRequest(
           requireNumber(plan, SEED_COUNT_PARAM),
           inputs.superpositionBasis,
           inputs.orbital.z,
-          inputs.aMu,
+          requireNumber(plan, A_MU_PARAM),
           signal,
         ),
       }

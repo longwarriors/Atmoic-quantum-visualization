@@ -70,6 +70,16 @@ export interface AvailableCapability {
   parameters: Partial<Record<ParameterId, ParameterBound>>
   latency: Latency
   /**
+   * This route accepts the request, but only the server's numerical builder
+   * can decide whether the requested finite grid is honest for this state.
+   *
+   * Presence is deliberately different from a refusal: callers may issue the
+   * request, and a fail-closed 422 remains a valid, user-visible outcome.
+   */
+  serverValidation?: {
+    reason: string
+  }
+  /**
    * The principal planes this cell can be cut on, present only on the rows
    * whose route reads a `plane`. A row that declares none sends none: the
    * enumerated choices are part of what the cell can do, exactly as the
@@ -100,6 +110,8 @@ export interface CapabilityInputs {
   mode: SceneKind
   orbital: OrbitalParameters
   representation: RepresentationKind
+  /** Builder-derived floor supplied by the selected superposition catalogue entry. */
+  superpositionSliceResolutionFloor?: number
 }
 
 export interface SceneRequestInputs extends CapabilityInputs {
@@ -149,25 +161,157 @@ export interface ScenePlan {
  */
 export type ScenePlanResult = ScenePlan | Refusal
 
-const POINT_CLOUD_ENDPOINT = '/api/orbitals/point-cloud'
-const ISOSURFACE_ENDPOINT = '/api/orbitals/isosurface'
-const CURRENT_FIELD_ENDPOINT = '/api/orbitals/current-field'
-const SUPERPOSITION_ISOSURFACE_ENDPOINT = '/api/superposition/isosurface'
-const SUPERPOSITION_CURRENT_FIELD_ENDPOINT = '/api/superposition/current-field'
-const SLICE_ENDPOINT = '/api/orbitals/slice'
-const SUPERPOSITION_SLICE_ENDPOINT = '/api/superposition/slice'
+export interface RouteParameterConstraint {
+  /** Query-string spelling in the OpenAPI document. */
+  wireName: string
+  /** Range presented by the UI; `step` is client-side, never a server bound. */
+  uiBound: ParameterBound
+  /** Present only when the server uses an open lower bound such as `gt=0`. */
+  serverExclusiveMinimum?: number
+}
 
-/** routes.py: `probability_mass: float = Query(0.90, ge=0.50, le=0.99)`, both routes. */
-const PROBABILITY_MASS_BOUND: ParameterBound = { min: 0.5, max: 0.99, step: 0.01 }
+interface RouteStateConstraint {
+  nMax: number
+  lMax: number
+  absoluteMMax: number
+}
+
+interface RouteConstraint {
+  endpoint: string
+  parameters: Partial<Record<ParameterId, RouteParameterConstraint>>
+  /** Sent on every request for this route, but not rendered as a generic slider. */
+  fixedParameters: Record<string, RouteParameterConstraint>
+  state?: RouteStateConstraint
+}
+
+/** Client lattice for the continuous server-side `time` parameter. */
+export const TIME_GRID_STEP_AU = 0.2
+
+const A_MU_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'a_mu',
+  uiBound: { min: 0.005, max: 20, step: 0.005 },
+  serverExclusiveMinimum: 0,
+}
+export const Z_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'z',
+  uiBound: { min: 0.1, max: 20, step: 0.1 },
+  serverExclusiveMinimum: 0,
+}
+const TIME_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'time',
+  uiBound: { min: -1000, max: 1000, step: TIME_GRID_STEP_AU },
+}
+const ISOSURFACE_RESOLUTION_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'resolution',
+  uiBound: { min: 49, max: 81, step: 2 },
+}
+const SLICE_RESOLUTION_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'resolution',
+  uiBound: { min: MINIMUM_SLICE_RESOLUTION, max: MAXIMUM_SLICE_RESOLUTION, step: 2 },
+}
+const PROBABILITY_MASS_CONSTRAINT: RouteParameterConstraint = {
+  wireName: 'probability_mass',
+  uiBound: { min: 0.5, max: 0.99, step: 0.01 },
+}
+
 /**
- * routes.py: `time: float = Query(0.0, ge=-1_000.0, le=1_000.0)`, both
- * superposition routes. The step shares the `min`-based range grid with the
- * initial t = 0, the t = 8.4 visual anchor and every 0.6 a.u. playback frame.
+ * The numeric route contract in one machine-checkable table.
+ *
+ * `capabilityFor` derives every public bound below from this table, and the
+ * OpenAPI drift test compares every entry with the committed schema. Store
+ * clamping then reads `capabilityFor`, leaving a single route-range authority
+ * from schema gate to slider to query planner.
  */
-const TIME_BOUND: ParameterBound = { min: -1000, max: 1000, step: 0.2 }
-/** routes.py: `resolution: int = Query(65, ge=49, le=81)`, both isosurface routes. */
-const RESOLUTION_MAX = 81
-const RESOLUTION_MIN = 49
+export const CAPABILITY_ROUTE_CONSTRAINTS = {
+  pointCloud: {
+    endpoint: '/api/orbitals/point-cloud',
+    state: { nMax: 12, lMax: 11, absoluteMMax: 11 },
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      samples: { wireName: 'samples', uiBound: { min: 1000, max: 120000, step: 1000 } },
+      seed: { wireName: 'seed', uiBound: { min: 0, max: 2147483647, step: 1 } },
+    },
+  },
+  eigenstateIsosurface: {
+    endpoint: '/api/orbitals/isosurface',
+    state: { nMax: 4, lMax: 3, absoluteMMax: 3 },
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      resolution: ISOSURFACE_RESOLUTION_CONSTRAINT,
+      probabilityMass: PROBABILITY_MASS_CONSTRAINT,
+    },
+  },
+  eigenstateCurrent: {
+    endpoint: '/api/orbitals/current-field',
+    state: { nMax: 6, lMax: 5, absoluteMMax: 5 },
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      seedCount: { wireName: 'seed_count', uiBound: { min: 1, max: 96, step: 1 } },
+    },
+  },
+  eigenstateSlice: {
+    endpoint: '/api/orbitals/slice',
+    state: { nMax: 12, lMax: 11, absoluteMMax: 11 },
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: { resolution: SLICE_RESOLUTION_CONSTRAINT, aMu: A_MU_CONSTRAINT },
+  },
+  superpositionIsosurface: {
+    endpoint: '/api/superposition/isosurface',
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      resolution: ISOSURFACE_RESOLUTION_CONSTRAINT,
+      probabilityMass: PROBABILITY_MASS_CONSTRAINT,
+      timeAu: TIME_CONSTRAINT,
+      aMu: A_MU_CONSTRAINT,
+    },
+  },
+  superpositionCurrent: {
+    endpoint: '/api/superposition/current-field',
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      seedCount: { wireName: 'seed_count', uiBound: { min: 1, max: 40, step: 1 } },
+      timeAu: TIME_CONSTRAINT,
+      aMu: A_MU_CONSTRAINT,
+    },
+  },
+  superpositionSlice: {
+    endpoint: '/api/superposition/slice',
+    fixedParameters: { z: Z_CONSTRAINT },
+    parameters: {
+      resolution: SLICE_RESOLUTION_CONSTRAINT,
+      timeAu: TIME_CONSTRAINT,
+      aMu: A_MU_CONSTRAINT,
+    },
+  },
+} as const satisfies Record<string, RouteConstraint>
+
+const POINT_CLOUD_ENDPOINT = CAPABILITY_ROUTE_CONSTRAINTS.pointCloud.endpoint
+const ISOSURFACE_ENDPOINT = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateIsosurface.endpoint
+const CURRENT_FIELD_ENDPOINT = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateCurrent.endpoint
+const SUPERPOSITION_ISOSURFACE_ENDPOINT =
+  CAPABILITY_ROUTE_CONSTRAINTS.superpositionIsosurface.endpoint
+const SUPERPOSITION_CURRENT_FIELD_ENDPOINT =
+  CAPABILITY_ROUTE_CONSTRAINTS.superpositionCurrent.endpoint
+const SLICE_ENDPOINT = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateSlice.endpoint
+const SUPERPOSITION_SLICE_ENDPOINT = CAPABILITY_ROUTE_CONSTRAINTS.superpositionSlice.endpoint
+
+const PROBABILITY_MASS_BOUND = PROBABILITY_MASS_CONSTRAINT.uiBound
+/**
+ * The server accepts every finite `time` inside -1000..1000. `step=0.2` is a
+ * client lattice shared by the slider and playback, not a FastAPI constraint.
+ */
+const TIME_BOUND = TIME_CONSTRAINT.uiBound
+const RESOLUTION_MIN = ISOSURFACE_RESOLUTION_CONSTRAINT.uiBound.min
+
+const ISOSURFACE_SERVER_VALIDATION = {
+  reason:
+    '等值面的有限网格可生成性与已实现的数值诊断需由服务端按当前态、概率质量和网格验证；公开参数范围不是物理正确性证书，失败时会 fail-closed 并返回原因。',
+} as const
+
+const SLICE_SERVER_VALIDATION = {
+  reason:
+    '切片分辨率需由服务端结合当前各项的径向节点、紧致尺度和 extent 做数值验证；即使参数位于公开范围内，也可能 fail-closed 并返回原因。',
+} as const
 
 /**
  * routes.py: `a_mu: float = Query(1.0, gt=0.0, le=20.0)` on all four routes
@@ -183,7 +327,7 @@ const RESOLUTION_MIN = 49
  * end of the range stays reachable. `max` and the openness at zero are the
  * route's; the floor is ours, and it never widens what the route accepts.
  */
-const A_MU_BOUND: ParameterBound = { min: 0.005, max: 20, step: 0.005 }
+const A_MU_BOUND = A_MU_CONSTRAINT.uiBound
 
 /**
  * The finest grid an eigenstate of this n needs before its outer lobes stop
@@ -195,53 +339,94 @@ function minimumSurfaceResolution(n: number): number {
   return Math.max(RESOLUTION_MIN, 16 * n + 17)
 }
 
+export const EIGENSTATE_S_SLICE_FLOORS = {
+  4: 97,
+  5: 141,
+  6: 193,
+  7: 251,
+  8: 319,
+} as const
+
 /**
- * The same 16n + 17 rule over the slice's own floor.
+ * State-specific slice floor for every eigenstate the panel can reach.
  *
- * `quviz.scene.slices.slice_resolution_floor` is `max(65, 16 * n + 17)`, and
- * unlike the isosurface's floor this one is the SERVER's: `build_slice` raises
- * below it and the refusal arrives as a 422. Expressed here the way the
- * isosurface row expresses its floor, over MINIMUM_SLICE_RESOLUTION instead of
- * RESOLUTION_MIN, because the two grids are different objects: a slice samples
- * `resolution**2` points and reports them, so samples are all it has to buy.
+ * Python derives the physical floor from its padded 0.9999 radial-mass extent,
+ * exact associated-Laguerre nodes and the requirement of at least 1.5 grid
+ * intervals across the smallest radial feature. Reimplementing either solver
+ * in the browser would create a second numerical authority, so this table pins
+ * only the five resulting exceptions to the shell-count rule. A Python gate
+ * derives the values afresh from the production builder and compares them with
+ * this exported table; the TypeScript tests then carry each value through the
+ * capability, request planner and real store. Both relevant lengths scale as
+ * a_mu/Z, so the floors are independent of charge and reduced mass. For l>0
+ * and n<=8 the shell-count floor dominates; only 4s..8s need an exception.
  */
-function minimumSliceResolution(n: number): number {
-  return Math.max(MINIMUM_SLICE_RESOLUTION, 16 * n + 17)
+function minimumSliceResolution(orbital: OrbitalParameters): number {
+  const shellFloor = Math.max(MINIMUM_SLICE_RESOLUTION, 16 * orbital.n + 17)
+  if (orbital.l !== 0) return shellFloor
+
+  const physicalFloor =
+    EIGENSTATE_S_SLICE_FLOORS[orbital.n as keyof typeof EIGENSTATE_S_SLICE_FLOORS]
+  return physicalFloor === undefined ? shellFloor : Math.max(shellFloor, physicalFloor)
 }
 
 /**
  * The grid bound a slice row declares, given its floor.
  *
  * `step: 2` keeps a slider on the odd lattice the builder requires (the origin
- * has to be a sample), which every floor here starts on: 65 is odd and so is
- * 16n + 17.
+ * has to be a sample), and every shell/state-specific floor above is odd.
  */
 const sliceResolutionBound = (min: number): ParameterBound => ({
   min,
-  max: MAXIMUM_SLICE_RESOLUTION,
-  step: 2,
+  max: SLICE_RESOLUTION_CONSTRAINT.uiBound.max,
+  step: SLICE_RESOLUTION_CONSTRAINT.uiBound.step,
 })
 
+function catalogSliceResolutionFloor(value: number | undefined): number {
+  if (
+    value === undefined ||
+    !Number.isInteger(value) ||
+    value < MINIMUM_SLICE_RESOLUTION ||
+    value > MAXIMUM_SLICE_RESOLUTION ||
+    value % 2 === 0
+  ) {
+    return MINIMUM_SLICE_RESOLUTION
+  }
+  return value
+}
+
 function eigenstateIsosurface(orbital: OrbitalParameters): Capability {
+  const stateLimit = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateIsosurface.state
   // routes.py `isosurface`: n le=4, l le=3, m ge=-3 le=3.
-  if (orbital.n > 4) {
+  if (orbital.n > stateLimit.nMax) {
     return {
       status: 'unsupported',
       reason:
-        `${ISOSURFACE_ENDPOINT} 仅接受 n ≤ 4；更高 n 的 level set 尚未验证。` +
+        `${ISOSURFACE_ENDPOINT} 仅接受 n ≤ ${stateLimit.nMax}；更高 n 的 level set 尚未验证。` +
         `当前态 n = ${orbital.n}。`,
     }
   }
-  if (orbital.l > 3) {
+  if (orbital.l > stateLimit.lMax) {
     return {
       status: 'unsupported',
-      reason: `${ISOSURFACE_ENDPOINT} 仅接受 l ≤ 3；当前态 l = ${orbital.l}。`,
+      reason: `${ISOSURFACE_ENDPOINT} 仅接受 l ≤ ${stateLimit.lMax}；当前态 l = ${orbital.l}。`,
     }
   }
-  if (Math.abs(orbital.m) > 3) {
+  if (Math.abs(orbital.m) > stateLimit.absoluteMMax) {
     return {
       status: 'unsupported',
-      reason: `${ISOSURFACE_ENDPOINT} 仅接受 |m| ≤ 3；当前态 m = ${orbital.m}。`,
+      reason:
+        `${ISOSURFACE_ENDPOINT} 仅接受 |m| ≤ ${stateLimit.absoluteMMax}；` +
+      `当前态 m = ${orbital.m}。`,
+    }
+  }
+  if (orbital.l === 0 && orbital.n >= 3) {
+    return {
+      status: 'unsupported',
+      reason:
+        `${orbital.n}s 的径向节点拓扑需要超过当前内部自适应网格上限；` +
+        `${ISOSURFACE_ENDPOINT} 对该态的全部公开 resolution 都会 fail-closed。` +
+        '请改用切片查看径向节点。',
     }
   }
   return {
@@ -250,16 +435,18 @@ function eigenstateIsosurface(orbital: OrbitalParameters): Capability {
     parameters: {
       resolution: {
         min: minimumSurfaceResolution(orbital.n),
-        max: RESOLUTION_MAX,
-        step: 2,
+        max: ISOSURFACE_RESOLUTION_CONSTRAINT.uiBound.max,
+        step: ISOSURFACE_RESOLUTION_CONSTRAINT.uiBound.step,
       },
       probabilityMass: PROBABILITY_MASS_BOUND,
     },
     latency: 'slow',
+    serverValidation: ISOSURFACE_SERVER_VALIDATION,
   }
 }
 
 function eigenstateStreamlines(orbital: OrbitalParameters): Capability {
+  const stateLimit = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateCurrent.state
   // Physics first: these two are true of the state, whatever the server would
   // do with the request.
   if (orbital.basis !== 'complex') {
@@ -281,29 +468,33 @@ function eigenstateStreamlines(orbital: OrbitalParameters): Capability {
   // Then the route's own range: n le=6, l le=5, m ge=-5 le=5. The old UI
   // predicate stopped at the two physics tests above and asked the server for
   // states it rejects.
-  if (orbital.n > 6) {
+  if (orbital.n > stateLimit.nMax) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 n ≤ 6；当前态 n = ${orbital.n}。`,
+      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 n ≤ ${stateLimit.nMax}；当前态 n = ${orbital.n}。`,
     }
   }
-  if (orbital.l > 5) {
+  if (orbital.l > stateLimit.lMax) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 l ≤ 5；当前态 l = ${orbital.l}。`,
+      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 l ≤ ${stateLimit.lMax}；当前态 l = ${orbital.l}。`,
     }
   }
-  if (Math.abs(orbital.m) > 5) {
+  if (Math.abs(orbital.m) > stateLimit.absoluteMMax) {
     return {
       status: 'unsupported',
-      reason: `${CURRENT_FIELD_ENDPOINT} 仅接受 |m| ≤ 5；当前态 m = ${orbital.m}。`,
+      reason:
+        `${CURRENT_FIELD_ENDPOINT} 仅接受 |m| ≤ ${stateLimit.absoluteMMax}；` +
+        `当前态 m = ${orbital.m}。`,
     }
   }
   return {
     status: 'available',
     endpoint: CURRENT_FIELD_ENDPOINT,
-    // routes.py: `seed_count: int = Query(48, ge=1, le=256)`.
-    parameters: { seedCount: { min: 1, max: 256, step: 1 } },
+    // routes.py: `seed_count: int = Query(48, ge=1, le=96)`.
+    parameters: {
+      seedCount: CAPABILITY_ROUTE_CONSTRAINTS.eigenstateCurrent.parameters.seedCount.uiBound,
+    },
     latency: 'slow',
   }
 }
@@ -329,7 +520,7 @@ function eigenstateSlice(orbital: OrbitalParameters): Capability {
     status: 'available',
     endpoint: SLICE_ENDPOINT,
     parameters: {
-      resolution: sliceResolutionBound(minimumSliceResolution(orbital.n)),
+      resolution: sliceResolutionBound(minimumSliceResolution(orbital)),
       aMu: A_MU_BOUND,
     },
     planes: PRINCIPAL_PLANES,
@@ -338,6 +529,7 @@ function eigenstateSlice(orbital: OrbitalParameters): Capability {
     // same order as the 65^3 isosurface grid, and the cost class is a property
     // of the cell rather than of the value the slider happens to hold.
     latency: 'slow',
+    serverValidation: SLICE_SERVER_VALIDATION,
   }
 }
 
@@ -359,8 +551,8 @@ function eigenstateCapability(
         endpoint: POINT_CLOUD_ENDPOINT,
         // routes.py: `samples` ge=1_000 le=120_000, `seed` ge=0 le=2_147_483_647.
         parameters: {
-          samples: { min: 1000, max: 120000, step: 1000 },
-          seed: { min: 0, max: 2147483647, step: 1 },
+          samples: CAPABILITY_ROUTE_CONSTRAINTS.pointCloud.parameters.samples.uiBound,
+          seed: CAPABILITY_ROUTE_CONSTRAINTS.pointCloud.parameters.seed.uiBound,
         },
         latency: 'fast',
       }
@@ -380,7 +572,10 @@ function eigenstateCapability(
   }
 }
 
-function superpositionCapability(representation: RepresentationKind): Capability {
+function superpositionCapability(
+  representation: RepresentationKind,
+  sliceResolutionFloor?: number,
+): Capability {
   switch (representation) {
     case 'point_cloud':
       return {
@@ -395,46 +590,49 @@ function superpositionCapability(representation: RepresentationKind): Capability
         endpoint: SUPERPOSITION_ISOSURFACE_ENDPOINT,
         parameters: {
           // The route's own range, unconditional: no single n, so no 16n + 17.
-          resolution: { min: RESOLUTION_MIN, max: RESOLUTION_MAX, step: 2 },
+          resolution: CAPABILITY_ROUTE_CONSTRAINTS.superpositionIsosurface.parameters.resolution
+            .uiBound,
           probabilityMass: PROBABILITY_MASS_BOUND,
           timeAu: TIME_BOUND,
           aMu: A_MU_BOUND,
         },
         latency: 'slow',
+        serverValidation: ISOSURFACE_SERVER_VALIDATION,
       }
     case 'slice':
       return {
         status: 'available',
         endpoint: SUPERPOSITION_SLICE_ENDPOINT,
         parameters: {
-          // The route's own outer range. The builder's floor is 16n + 17 of the
-          // LARGEST term, and this module does not parse `terms`, so applying
-          // the panel's own n here would refuse grids the route accepts --
-          // the same reason the superposition isosurface row carries no floor.
-          // A grid too coarse for the highest shell comes back as a 422 that
-          // names it.
-          resolution: sliceResolutionBound(MINIMUM_SLICE_RESOLUTION),
+          // The server catalogue derives this floor through the exact builder
+          // calculation (extent CDF + every term's compact radial feature).
+          // The browser consumes the published value and never reimplements
+          // those numerics. A non-catalogue caller still falls back to the
+          // route's outer floor and remains covered by serverValidation.
+          resolution: sliceResolutionBound(
+            catalogSliceResolutionFloor(sliceResolutionFloor),
+          ),
           timeAu: TIME_BOUND,
           aMu: A_MU_BOUND,
         },
         planes: PRINCIPAL_PLANES,
         observables: SLICE_OBSERVABLES,
         latency: 'slow',
+        serverValidation: SLICE_SERVER_VALIDATION,
       }
-    case 'streamlines':
+    case 'streamlines': {
       return {
         status: 'available',
         endpoint: SUPERPOSITION_CURRENT_FIELD_ENDPOINT,
-        // routes.py: `seed_count: int = Query(24, ge=1, le=128)` -- half the
-        // eigenstate route's ceiling, because every seed is re-integrated at
-        // every instant of the clock.
         parameters: {
-          seedCount: { min: 1, max: 128, step: 1 },
+          seedCount:
+            CAPABILITY_ROUTE_CONSTRAINTS.superpositionCurrent.parameters.seedCount.uiBound,
           timeAu: TIME_BOUND,
           aMu: A_MU_BOUND,
         },
         latency: 'slow',
       }
+    }
     default: {
       const _never: never = representation
       throw new Error(
@@ -446,21 +644,28 @@ function superpositionCapability(representation: RepresentationKind): Capability
 }
 
 /** What this state-kind x representation cell can do, and at what cost. */
-export function capabilityFor({ mode, orbital, representation }: CapabilityInputs): Capability {
+export function capabilityFor({
+  mode,
+  orbital,
+  representation,
+  superpositionSliceResolutionFloor,
+}: CapabilityInputs): Capability {
   return mode === 'superposition'
-    ? superpositionCapability(representation)
+    ? superpositionCapability(representation, superpositionSliceResolutionFloor)
     : eigenstateCapability(orbital, representation)
 }
 
 /** Query-parameter name for each tunable, as the routes spell it. */
 const WIRE_NAME: Record<ParameterId, string> = {
-  samples: 'samples',
-  seed: 'seed',
-  resolution: 'resolution',
-  probabilityMass: 'probability_mass',
-  seedCount: 'seed_count',
-  timeAu: 'time',
-  aMu: 'a_mu',
+  samples: CAPABILITY_ROUTE_CONSTRAINTS.pointCloud.parameters.samples.wireName,
+  seed: CAPABILITY_ROUTE_CONSTRAINTS.pointCloud.parameters.seed.wireName,
+  resolution:
+    CAPABILITY_ROUTE_CONSTRAINTS.eigenstateIsosurface.parameters.resolution.wireName,
+  probabilityMass:
+    CAPABILITY_ROUTE_CONSTRAINTS.eigenstateIsosurface.parameters.probabilityMass.wireName,
+  seedCount: CAPABILITY_ROUTE_CONSTRAINTS.eigenstateCurrent.parameters.seedCount.wireName,
+  timeAu: CAPABILITY_ROUTE_CONSTRAINTS.superpositionIsosurface.parameters.timeAu.wireName,
+  aMu: CAPABILITY_ROUTE_CONSTRAINTS.eigenstateSlice.parameters.aMu.wireName,
 }
 
 /** Query-parameter names for the enumerated choices the slice routes read. */
@@ -537,15 +742,17 @@ export function planSceneRequest(inputs: SceneRequestInputs): ScenePlanResult {
       ? {
           terms: inputs.superpositionTerms,
           basis: inputs.superpositionBasis,
-          z: orbital.z,
         }
       : {
           n: orbital.n,
           l: orbital.l,
           m: orbital.m,
-          z: orbital.z,
           basis: orbital.basis,
         }
+  // Charge is present on every scene route but is not a generic slider. Its
+  // UI range still comes from the route table and is checked against OpenAPI,
+  // so the number input and planner cannot drift into different contracts.
+  params[Z_CONSTRAINT.wireName] = clampParameter(Z_CONSTRAINT.uiBound, orbital.z)
   for (const [id, bound] of Object.entries(capability.parameters) as [
     ParameterId,
     ParameterBound,

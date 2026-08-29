@@ -16,9 +16,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   capabilityFor,
   planSceneRequest,
+  Z_CONSTRAINT,
   type ParameterBound,
   type ParameterId,
-  type SceneRequestInputs,
 } from '../api/capability'
 import { fetchCatalog, fetchSuperpositionCatalog } from '../api/client'
 import type {
@@ -29,7 +29,7 @@ import type {
   SuperpositionPreset,
 } from '../api/types'
 import { useSceneStore } from '../state/useSceneStore'
-import { nextTimeAu } from './sceneRequest'
+import { nextTimeAu, selectSceneRequestInputs } from './sceneRequest'
 import { REPRESENTATION_LABELS } from './sceneStatus'
 
 /**
@@ -57,6 +57,10 @@ function ParameterRow({
   suffix?: string
   onChange: (value: number) => void
 }) {
+  const displayedValue =
+    bound.step === undefined
+      ? String(value)
+      : String(Number(value.toFixed(Math.min(12, Math.max(0, -Math.floor(Math.log10(bound.step)))))))
   return (
     <label className="range-row">
       <span className="control-label">{label}</span>
@@ -69,7 +73,7 @@ function ParameterRow({
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <span className="control-value">{value}{suffix ?? ''}</span>
+      <span className="control-value">{displayedValue}{suffix ?? ''}</span>
     </label>
   )
 }
@@ -286,31 +290,28 @@ export function ControlPanel() {
     const controller = new AbortController()
     fetchCatalog(controller.signal).then(setPresets).catch(() => setPresets([]))
     fetchSuperpositionCatalog(controller.signal)
-      .then(setMixtures)
+      .then((catalogue) => {
+        setMixtures(catalogue)
+        const terms = useSceneStore.getState().superpositionTerms
+        const selected = catalogue.find((mixture) => mixture.terms === terms)
+        if (selected !== undefined) {
+          useSceneStore
+            .getState()
+            .syncSuperpositionCapabilities(
+              selected.terms,
+              selected.slice_resolution_floor,
+            )
+        }
+      })
       .catch(() => setMixtures([]))
     return () => controller.abort()
   }, [])
 
-  const { mode, orbital, playing } = store
+  const { mode, playing } = store
 
   // Exactly the inputs `useSceneAsset` plans from, so the panel and the fetch
   // layer cannot describe two different requests.
-  const requestInputs: SceneRequestInputs = {
-    mode,
-    orbital,
-    representation: store.representation,
-    samples: store.samples,
-    seed: store.seed,
-    resolution: store.resolution,
-    probabilityMass: store.probabilityMass,
-    seedCount: store.seedCount,
-    superpositionTerms: store.superpositionTerms,
-    superpositionBasis: store.superpositionBasis,
-    aMu: store.aMu,
-    timeAu: store.timeAu,
-    plane: store.plane,
-    sliceObservable: store.sliceObservable,
-  }
+  const requestInputs = selectSceneRequestInputs(store)
 
   const current = capabilityFor(requestInputs)
   const bounds = current.status === 'available' ? current.parameters : {}
@@ -323,6 +324,8 @@ export function ControlPanel() {
   const observables = current.status === 'available' ? current.observables : undefined
   /** What the request will actually carry, or a refusal that carries nothing. */
   const plan = planSceneRequest(requestInputs)
+  const currentServerValidation =
+    current.status === 'available' ? current.serverValidation : undefined
 
   const parameterValue: Record<ParameterId, number> = {
     samples: store.samples,
@@ -354,6 +357,30 @@ export function ControlPanel() {
    * the same query on every tick.
    */
   const hasClock = bounds.timeAu !== undefined
+  const selectedMixture = mixtures.find(
+    (mixture) => mixture.terms === store.superpositionTerms,
+  )
+  const plannedZ =
+    plan.status === 'available' && typeof plan.params.z === 'number' ? plan.params.z : null
+  const plannedAMu =
+    plan.status === 'available' && typeof plan.params.a_mu === 'number'
+      ? plan.params.a_mu
+      : null
+  const playbackPeriodAu =
+    selectedMixture === undefined
+      ? null
+      : selectedMixture.period_au === 0
+        ? 0
+        : plannedZ === null || plannedAMu === null
+          ? null
+          : (selectedMixture.period_au * plannedAMu) / plannedZ ** 2
+  const canPlay = hasClock && playbackPeriodAu !== null && playbackPeriodAu > 0
+  const playbackUnavailableReason =
+    playbackPeriodAu === 0
+      ? '该叠加态的能量简并，概率密度严格不随时间变化。'
+      : canPlay
+        ? null
+        : '等待叠加态目录提供物理周期。'
 
   // Stepping time re-requests the asset. A round trip slower than the interval
   // does not pile requests up: the canvas keeps only the newest pending time.
@@ -365,13 +392,13 @@ export function ControlPanel() {
   // every unrelated store write -- time stopped advancing for as long as the
   // user held any slider, and each tick restarted the interval it ran in.
   useEffect(() => {
-    if (!playing || !hasClock) return undefined
+    if (!playing || !canPlay || playbackPeriodAu === null) return undefined
     const timer = window.setInterval(() => {
       const state = useSceneStore.getState()
-      state.setTimeAu(nextTimeAu(state.timeAu))
+      state.setTimeAu(nextTimeAu(state.timeAu, playbackPeriodAu))
     }, 420)
     return () => window.clearInterval(timer)
-  }, [playing, hasClock])
+  }, [playing, canPlay, playbackPeriodAu])
 
   return (
     <aside className="panel controls-panel">
@@ -437,9 +464,9 @@ export function ControlPanel() {
             <span>Z</span>
             <input
               type="number"
-              min={0.1}
-              max={20}
-              step={0.1}
+              min={Z_CONSTRAINT.uiBound.min}
+              max={Z_CONSTRAINT.uiBound.max}
+              step={Z_CONSTRAINT.uiBound.step}
               value={store.orbital.z}
               onChange={(event) => store.setOrbital({ z: Number(event.target.value) })}
             />
@@ -492,7 +519,13 @@ export function ControlPanel() {
                   title={MIXTURE_COPY[mixture.id]?.note ?? mixture.note}
                   className={`preset${store.superpositionTerms === mixture.terms ? ' active' : ''}`}
                   aria-pressed={store.superpositionTerms === mixture.terms}
-                  onClick={() => store.setSuperposition(mixture.terms, mixture.label)}
+                  onClick={() =>
+                    store.setSuperposition(
+                      mixture.terms,
+                      mixture.label,
+                      mixture.slice_resolution_floor,
+                    )
+                  }
                 >
                   {MIXTURE_COPY[mixture.id]?.label ?? mixture.label}
                 </button>
@@ -529,12 +562,31 @@ export function ControlPanel() {
             className="toggle-row"
             data-control="playback"
             aria-pressed={store.playing}
-            onClick={() => store.setPlaying(!store.playing)}
+            aria-disabled={!canPlay}
+            aria-describedby={!canPlay ? 'playback-availability-notice' : undefined}
+            title={
+              canPlay
+                ? `按物理周期 ${playbackPeriodAu?.toPrecision(6)} a.u. 循环`
+                : (playbackUnavailableReason ?? undefined)
+            }
+            onClick={() => {
+              if (canPlay) store.setPlaying(!store.playing)
+            }}
           >
             {store.playing ? <Pause size={15} /> : <Play size={15} />}
             <span>随 t 演化</span>
             <span className={store.playing ? 'switch on' : 'switch'} />
           </button>
+        ) : null}
+        {hasClock && playbackUnavailableReason !== null ? (
+          <p
+            id="playback-availability-notice"
+            className="capability-notice"
+            role="note"
+            data-playback-notice
+          >
+            {playbackUnavailableReason}
+          </p>
         ) : null}
       </section>
 
@@ -542,18 +594,43 @@ export function ControlPanel() {
         <div className="section-title"><Layers3 size={15} /> 表示法</div>
         <div className="representation-switch">
           {REPRESENTATIONS.map(({ id, label, icon: Icon, purpose }) => {
-            const capability = capabilityFor({ mode, orbital, representation: id })
+            const capability = capabilityFor({
+              mode,
+              orbital: requestInputs.orbital,
+              representation: id,
+              superpositionSliceResolutionFloor:
+                requestInputs.superpositionSliceResolutionFloor,
+            })
             const available = capability.status === 'available'
+            const serverValidation = available ? capability.serverValidation : undefined
             return (
               <button
                 type="button"
                 key={id}
                 data-representation={id}
+                data-server-validation={serverValidation === undefined ? undefined : 'required'}
                 className={store.representation === id ? 'active' : ''}
                 aria-pressed={store.representation === id}
                 aria-disabled={!available}
-                aria-label={available ? label : `${label}暂不可用：${capability.reason}`}
-                title={available ? purpose : capability.reason}
+                aria-label={
+                  !available
+                    ? `${label}暂不可用：${capability.reason}`
+                    : serverValidation === undefined
+                      ? label
+                      : `${label}；需服务端数值验证：${serverValidation.reason}`
+                }
+                aria-describedby={
+                  available && store.representation === id && serverValidation !== undefined
+                    ? 'representation-server-validation-notice'
+                    : undefined
+                }
+                title={
+                  !available
+                    ? capability.reason
+                    : serverValidation === undefined
+                      ? purpose
+                      : `${purpose}；需服务端数值验证：${serverValidation.reason}`
+                }
                 onClick={() => {
                   if (available) store.setRepresentation(id)
                 }}
@@ -563,6 +640,18 @@ export function ControlPanel() {
             )
           })}
         </div>
+
+        {currentServerValidation === undefined ? null : (
+          <p
+            id="representation-server-validation-notice"
+            className="capability-notice server-validation-notice"
+            role="note"
+            data-server-validation-notice={store.representation}
+          >
+            <strong>需服务端数值验证：</strong>
+            {currentServerValidation.reason}
+          </p>
+        )}
 
         {planes === undefined ? null : (
           <ChoiceRow

@@ -15,7 +15,9 @@ certificate; the wording gate below keeps that language from drifting.
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,7 +30,7 @@ from quviz.conventions import (
     RepresentationKind,
     SliceObservable,
 )
-from quviz.physics.hydrogenic import hydrogenic_wavefunction
+from quviz.physics.hydrogenic import hydrogenic_wavefunction, radial_node_radii
 from quviz.physics.planes import (
     DEFAULT_PHASE_MASK_RELATIVE,
     amplitude_scale,
@@ -45,9 +47,12 @@ from quviz.scene.slices import (
     build_slice,
     build_superposition_slice,
     slice_resolution_floor,
+    superposition_slice_resolution_floor,
 )
 
 SMALL = 65
+ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_CAPABILITY = ROOT / "web" / "src" / "api" / "capability.ts"
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +117,136 @@ def test_resolution_floor_scales_with_the_principal_quantum_number() -> None:
     with pytest.raises(ValueError, match="resolution must be at most 513"):
         _hydrogen_slice(
             SliceObservable.PROBABILITY_DENSITY, resolution=MAXIMUM_SLICE_RESOLUTION + 2
+        )
+
+
+def test_4s_slice_resolves_its_innermost_radial_feature() -> None:
+    with pytest.raises(ValueError, match=r"resolution must be at least 97.*smallest radial"):
+        _hydrogen_slice(
+            SliceObservable.WAVEFUNCTION_REAL,
+            n=4,
+            l=0,
+            m=0,
+            resolution=81,
+        )
+
+    payload = _hydrogen_slice(
+        SliceObservable.WAVEFUNCTION_REAL,
+        n=4,
+        l=0,
+        m=0,
+        resolution=97,
+    )
+    values = np.asarray(payload.values).reshape(97, 97)
+    positive_radius = values[48, 48:]
+    assert int(np.count_nonzero(np.diff(np.sign(positive_radius)))) == 3
+
+
+@pytest.mark.parametrize(
+    ("n", "resolution_floor"),
+    [(4, 97), (5, 141), (6, 193), (7, 251), (8, 319)],
+)
+def test_frontend_high_s_resolution_floor_is_the_first_accepted_builder_grid(
+    n: int,
+    resolution_floor: int,
+) -> None:
+    """Every grid the panel sends first must clear the production builder."""
+
+    with pytest.raises(ValueError, match=rf"resolution must be at least {resolution_floor}"):
+        _hydrogen_slice(
+            SliceObservable.PROBABILITY_DENSITY,
+            n=n,
+            l=0,
+            m=0,
+            resolution=resolution_floor - 2,
+        )
+
+    payload = _hydrogen_slice(
+        SliceObservable.PROBABILITY_DENSITY,
+        n=n,
+        l=0,
+        m=0,
+        resolution=resolution_floor,
+    )
+    assert payload.resolution == resolution_floor
+    assert len(payload.values) == resolution_floor**2
+
+
+def test_frontend_high_s_floor_table_is_derived_from_the_python_physics() -> None:
+    """Close the otherwise manual Python-to-TypeScript capability link."""
+
+    source = FRONTEND_CAPABILITY.read_text(encoding="utf-8")
+    table_match = re.search(
+        r"export const EIGENSTATE_S_SLICE_FLOORS = \{(?P<body>.*?)\}\s+as const",
+        source,
+        flags=re.DOTALL,
+    )
+    assert table_match is not None, "the frontend high-s floor table is missing"
+    frontend_floors = {
+        int(n): int(floor)
+        for n, floor in re.findall(
+            r"^\s*(\d+):\s*(\d+),\s*$", table_match.group("body"), re.MULTILINE
+        )
+    }
+
+    python_floors: dict[int, int] = {}
+    for n in range(1, 9):
+        shell_floor = slice_resolution_floor(n)
+        for l in range(n):
+            extent = radial_extent_for_mass(n, l, 1.0, a_mu=1.0)
+            physical_floor = slice_module._state_specific_slice_floor(
+                [(n, l)], z=1.0, a_mu=1.0, extent=extent
+            )
+            if l == 0 and physical_floor > shell_floor:
+                python_floors[n] = physical_floor
+            if l > 0:
+                assert physical_floor == shell_floor, (
+                    f"{n}{l} acquired a state-specific slice floor; add it to the shared "
+                    "capability contract instead of letting the browser send a known 422"
+                )
+
+    assert frontend_floors == python_floors
+
+    # Independent scale check: both the extent and the first node scale as
+    # a_mu/Z, so none of the committed floors may be tied to ordinary hydrogen.
+    for n, expected_floor in python_floors.items():
+        extent = radial_extent_for_mass(n, 0, 7.0, a_mu=0.005)
+        first_node = float(radial_node_radii(n, 0, z=7.0, a_mu=0.005)[0])
+        required_intervals = int(np.ceil(3.0 * extent / first_node))
+        if required_intervals % 2:
+            required_intervals += 1
+        assert max(slice_resolution_floor(n), required_intervals + 1) == expected_floor
+
+
+@pytest.mark.parametrize("resolution", [slice_resolution_floor(12), MAXIMUM_SLICE_RESOLUTION])
+def test_12s_uniform_slice_fails_closed_when_its_first_node_exceeds_the_payload_budget(
+    resolution: int,
+) -> None:
+    with pytest.raises(ValueError, match=r"smallest radial feature requires.*exceeding"):
+        _hydrogen_slice(
+            SliceObservable.PROBABILITY_DENSITY,
+            n=12,
+            l=0,
+            m=0,
+            resolution=resolution,
+        )
+
+
+def test_1s_plus_12s_uniform_slice_fails_closed_on_the_compact_1s_scale() -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, 1.0 / np.sqrt(2.0)),
+            SuperpositionTerm(12, 0, 0, 1.0 / np.sqrt(2.0)),
+        ),
+        basis=BasisKind.REAL,
+    )
+    with pytest.raises(ValueError, match=r"smallest radial feature requires.*exceeding"):
+        build_superposition_slice(
+            state,
+            time=0.0,
+            plane=PrincipalPlane.XZ,
+            observable=SliceObservable.PROBABILITY_DENSITY,
+            resolution=MAXIMUM_SLICE_RESOLUTION,
         )
 
 
@@ -268,6 +403,47 @@ def test_slice_values_are_not_rounded() -> None:
     assert any(value != round(value, 6) for value in payload.values)
 
 
+def test_cached_eigenstate_slice_is_isolated_from_caller_mutation() -> None:
+    first = _hydrogen_slice(SliceObservable.PROBABILITY_DENSITY)
+    expected = first.values[0]
+    first.values[0] = 12345.0
+    first.metadata.warnings.append("caller mutation")
+
+    second = _hydrogen_slice(SliceObservable.PROBABILITY_DENSITY)
+
+    assert second is not first
+    assert second.metadata is not first.metadata
+    assert second.values is not first.values
+    assert second.values[0] == expected
+    assert "caller mutation" not in second.metadata.warnings
+
+
+def test_cached_superposition_slice_is_isolated_from_caller_mutation() -> None:
+    state = SuperpositionState(
+        terms=(SuperpositionTerm(1, 0, 0, 1.0),),
+        basis=BasisKind.REAL,
+    )
+    arguments = {
+        "time": 0.0,
+        "plane": PrincipalPlane.XZ,
+        "observable": SliceObservable.PHASE,
+        "resolution": SMALL,
+    }
+    first = build_superposition_slice(state, **arguments)
+    assert first.valid_mask is not None
+    expected = first.valid_mask[0]
+    first.valid_mask[0] = not expected
+    first.metadata.warnings.append("caller mutation")
+
+    second = build_superposition_slice(state, **arguments)
+
+    assert second is not first
+    assert second.valid_mask is not first.valid_mask
+    assert second.valid_mask is not None
+    assert second.valid_mask[0] is expected
+    assert "caller mutation" not in second.metadata.warnings
+
+
 def test_a_plane_with_no_amplitude_is_fully_masked_and_warns_by_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -340,3 +516,18 @@ def test_superposition_resolution_floor_uses_the_largest_shell() -> None:
             observable=SliceObservable.PROBABILITY_DENSITY,
             resolution=65,
         )
+
+
+@pytest.mark.parametrize(("z", "a_mu"), [(1.0, 1.0), (2.0, 0.5), (0.1, 20.0)])
+def test_catalogued_mixture_slice_floor_is_scale_invariant(z: float, a_mu: float) -> None:
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, 1.0 / np.sqrt(2.0)),
+            SuperpositionTerm(3, 2, 0, 1.0 / np.sqrt(2.0)),
+        ),
+        z=z,
+        a_mu=a_mu,
+        basis=BasisKind.COMPLEX,
+    )
+
+    assert superposition_slice_resolution_floor(state) == 103

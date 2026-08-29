@@ -13,7 +13,9 @@ import numpy as np
 import pytest
 
 from quviz.conventions import BasisKind
+from quviz.errors import ScientificComputationError
 from quviz.physics.continuity import (
+    _rank_probe_scores,
     select_continuity_probes,
     transition_coherence_scale,
 )
@@ -109,6 +111,24 @@ def test_superposition_streamline_defaults_resolve_the_compact_term() -> None:
     assert payload.seed_density_floor * 9.0**3 == pytest.approx(1e-4, rel=1e-12)
 
 
+def test_probe_score_ranking_uses_candidate_index_for_numeric_ties() -> None:
+    """Last-bit noise inside the documented tie width must not reorder probes."""
+
+    maximum = 1.0
+    epsilon = np.finfo(np.float64).eps
+    scores = np.asarray(
+        [
+            maximum - 16.0 * epsilon,
+            maximum,
+            0.5,
+            maximum - 32.0 * epsilon,
+            0.75,
+        ]
+    )
+
+    assert _rank_probe_scores(scores).tolist() == [0, 1, 3, 4, 2]
+
+
 def test_superposition_streamline_defaults_and_probes_scale_with_z_and_a_mu() -> None:
     terms = (
         (1, 0, 0, 1.0 / sqrt(2.0)),
@@ -139,6 +159,86 @@ def test_superposition_streamline_defaults_and_probes_scale_with_z_and_a_mu() ->
         reference_payload.continuity_residual,
         rel=0.04,
     )
+
+
+def test_time_dependent_superposition_flow_payload_is_covariant_at_z_point_one() -> None:
+    terms = (
+        (1, 0, 0, 1.0 / sqrt(2.0)),
+        (2, 1, 1, 1.0 / sqrt(2.0)),
+    )
+    reference = build_superposition_current_field(
+        _state(*terms),
+        time=1.0,
+        seed_count=2,
+        arc_step=0.125,
+        lattice=9,
+    )
+    diffuse = build_superposition_current_field(
+        _state(*terms, z=0.1),
+        time=100.0,
+        seed_count=2,
+        arc_step=1.25,
+        lattice=9,
+    )
+
+    assert diffuse.seed_count == reference.seed_count > 0
+    assert diffuse.max_speed == pytest.approx(0.1 * reference.max_speed, rel=1e-10)
+    assert diffuse.seed_density_floor == pytest.approx(
+        0.1**3 * reference.seed_density_floor, rel=2e-15
+    )
+    for reference_line, diffuse_line, reference_speed, diffuse_speed in zip(
+        reference.lines,
+        diffuse.lines,
+        reference.speed,
+        diffuse.speed,
+        strict=True,
+    ):
+        assert np.asarray(diffuse_line) / 10.0 == pytest.approx(
+            np.asarray(reference_line), rel=2e-15, abs=2e-15
+        )
+        assert np.asarray(diffuse_speed) / 0.1 == pytest.approx(
+            np.asarray(reference_speed), rel=1e-9, abs=0.0
+        )
+
+
+def test_time_dependent_superposition_flow_payload_is_covariant_in_a_mu() -> None:
+    terms = (
+        (1, 0, 0, 1.0 / sqrt(2.0)),
+        (2, 1, 1, 1.0 / sqrt(2.0)),
+    )
+    reference = build_superposition_current_field(
+        _state(*terms),
+        time=1.0,
+        seed_count=2,
+        arc_step=0.125,
+        lattice=9,
+    )
+    contracted = build_superposition_current_field(
+        _state(*terms, a_mu=0.1),
+        time=0.1,
+        seed_count=2,
+        arc_step=0.0125,
+        lattice=9,
+    )
+
+    assert contracted.seed_count == reference.seed_count > 0
+    assert contracted.max_speed == pytest.approx(reference.max_speed, rel=1e-10)
+    assert contracted.seed_density_floor == pytest.approx(
+        1_000.0 * reference.seed_density_floor, rel=2e-15
+    )
+    for reference_line, contracted_line, reference_speed, contracted_speed in zip(
+        reference.lines,
+        contracted.lines,
+        reference.speed,
+        contracted.speed,
+        strict=True,
+    ):
+        assert np.asarray(contracted_line) / 0.1 == pytest.approx(
+            np.asarray(reference_line), rel=2e-15, abs=2e-15
+        )
+        assert np.asarray(contracted_speed) == pytest.approx(
+            np.asarray(reference_speed), rel=1e-9, abs=0.0
+        )
 
 
 def test_turning_point_has_a_nonzero_continuity_reference_scale() -> None:
@@ -277,7 +377,7 @@ def test_nonstationary_zero_transition_reference_fails_closed(
         return np.zeros(points.shape[0]), 0.0
 
     monkeypatch.setattr(scene_builders, "continuity_residual", zero_scale)
-    with pytest.raises(RuntimeError, match="no resolvable transition scale"):
+    with pytest.raises(ScientificComputationError, match="no resolvable transition scale"):
         scene_builders.build_superposition_current_field(
             state,
             time=0.0,
@@ -386,13 +486,15 @@ def test_stationary_superposition_with_nonzero_flow_uses_a_current_scale() -> No
 
 
 def test_same_parity_mixed_shell_grid_error_is_classified_as_phase_dependent() -> None:
-    state = _state((1, 0, 0, 1.0 / sqrt(2.0)), (2, 0, 0, 1.0 / sqrt(2.0)))
-    payload = build_superposition_isosurface(state, time=0.0, resolution=49)
+    # Use two p shells so this remains a deliberate coarse-grid diagnostic,
+    # rather than invoking the separate excited-s topology convergence gate.
+    state = _state((2, 1, 0, 1.0 / sqrt(2.0)), (4, 1, 0, 1.0 / sqrt(2.0)))
+    payload = build_superposition_isosurface(state, time=0.0, resolution=81)
 
     assert payload.finite_box_tail_mass_upper_bound < 3e-5
-    one_s_tail = finite_box_tail_mass_upper_bound(_state((1, 0, 0, 1.0)), payload.extent_bohr)
-    two_s_tail = finite_box_tail_mass_upper_bound(_state((2, 0, 0, 1.0)), payload.extent_bohr)
-    expected_variation_bound = 2.0 * sqrt(one_s_tail * two_s_tail)
+    two_p_tail = finite_box_tail_mass_upper_bound(_state((2, 1, 0, 1.0)), payload.extent_bohr)
+    four_p_tail = finite_box_tail_mass_upper_bound(_state((4, 1, 0, 1.0)), payload.extent_bohr)
+    expected_variation_bound = 2.0 * sqrt(two_p_tail * four_p_tail)
     assert payload.finite_box_mass_variation_upper_bound > 0.0
     assert payload.finite_box_mass_variation_upper_bound == pytest.approx(
         expected_variation_bound,
@@ -400,11 +502,10 @@ def test_same_parity_mixed_shell_grid_error_is_classified_as_phase_dependent() -
     )
     assert payload.finite_box_mass_variation_upper_bound < 2e-9
     assert (
-        payload.finite_grid_phase_variation_bound
-        > 1_000.0 * payload.finite_box_tail_mass_upper_bound
+        payload.finite_grid_phase_variation_bound > 100.0 * payload.finite_box_tail_mass_upper_bound
     )
-    assert payload.finite_grid_mass_error_lower_bound > 0.04
-    assert payload.finite_grid_aliasing_variation_lower_bound > 0.019
+    assert payload.finite_grid_mass_error_lower_bound > 0.005
+    assert payload.finite_grid_aliasing_variation_lower_bound > 0.002
     assert (
         payload.finite_grid_aliasing_variation_lower_bound
         > 1_000_000.0 * payload.finite_box_mass_variation_upper_bound
@@ -467,10 +568,10 @@ def test_opposite_parity_mixed_shell_grid_error_is_time_invariant() -> None:
 
 
 def test_same_parity_grid_drift_matches_the_reported_mode_not_boundary_flux() -> None:
-    state = _state((1, 0, 0, 1.0 / sqrt(2.0)), (2, 0, 0, 1.0 / sqrt(2.0)))
-    early = build_superposition_isosurface(state, time=0.0, resolution=49)
+    state = _state((2, 1, 0, 1.0 / sqrt(2.0)), (4, 1, 0, 1.0 / sqrt(2.0)))
+    early = build_superposition_isosurface(state, time=0.0, resolution=81)
     half_period = pi / abs(state.energies[1] - state.energies[0])
-    late = build_superposition_isosurface(state, time=half_period, resolution=49)
+    late = build_superposition_isosurface(state, time=half_period, resolution=81)
     observed = abs(late.finite_grid_density_integral - early.finite_grid_density_integral)
 
     assert observed == pytest.approx(early.finite_grid_phase_variation_bound, rel=2e-13)
