@@ -36,7 +36,7 @@
  * HOW THE BASELINES GET HERE. Read this before changing or adding one.
  *
  * Five Linux/SwiftShader PNGs are committed in `e2e/__screenshots__/`. Every
- * file is 656 x 676 = 443456 pixels, so the 0.001 ratio budget is 443.456
+ * file is 672 x 704 = 473088 pixels, so the 0.001 ratio budget is 473.088
  * pixels. The fixed desktop shell is part of that contract: canvas height no
  * longer follows the intrinsic height of the controls or Inspector, so adding
  * a diagnostic cannot silently change the camera aspect ratio and every pixel.
@@ -178,6 +178,7 @@
  * with the clock merely installed passed, which is what identifies the pause
  * rather than the install as the cause.
  */
+
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import {
@@ -193,7 +194,7 @@ import {
 /**
  * Every test drives a full scene setup and, in the time-dependent cases, a
  * half-period advance against a software rasteriser. Playwright's 30 s default
- * is a budget for a DOM test; these canvases are 656 x 676, with repeated
+ * is a budget for a DOM test; these canvases are 672 x 704, with repeated
  * positive and negative comparisons.
  * Generous rather than tuned: a timeout is a safety net here, not a performance
  * assertion, and a tight one would turn a loaded CI box into a red suite that
@@ -208,8 +209,8 @@ test.describe.configure({ timeout: 120_000 })
  * equal; `maxDiffPixelRatio` is the share of the frame allowed to exceed it.
  * The old content-sized shell produced different frame heights for eigenstates
  * and superpositions; on its taller frame a 0.1 threshold once let the wrong
- * half-period image fit under the spatial budget. On the fixed 656 x 676 frame,
- * the same mutation leaves 6064 differing pixels at 0.02 (13.67x the 443.456
+ * half-period image fit under the spatial budget. On the fixed 672 x 704 frame,
+ * the same mutation leaves 6186 differing pixels at 0.02 (13.08x the 473.088
  * pixel budget). Repeated same-scene captures pass the positive gate. That
  * measured separation is why 0.02 remains the acceptance threshold, not a
  * special setting reserved for `.not`.
@@ -256,24 +257,24 @@ function rejectionComparison<const Threshold extends number>(threshold: Threshol
  * MEASURED, on the two committed baselines, through Playwright's own comparator
  * (`getComparator('image/png')`, i.e. pixelmatch with antialiased pixels
  * excluded, which is what its call site leaves at the default). The frame is
- * 656 x 676, so `maxDiffPixelRatio` 0.001 is a budget of 443.456 pixels and an
+ * 672 x 704, so `maxDiffPixelRatio` 0.001 is a budget of 473.088 pixels and an
  * assertion fires only above it:
  *
  *   threshold   surviving px   x budget
- *   0.2                   17       0.04
- *   0.1                  863       1.95
- *   0.05 (reject)       3190       7.19   <- chosen: harder, with margin
- *   0.03                4635      10.45
- *   0.02 (accept)       6064      13.67   <- positive mutation sensitivity
- *   0.01                8444      19.04
- *   0                  24788      55.90
+ *   0.2                    7       0.01
+ *   0.1                  896       1.89
+ *   0.05 (reject)       3180       6.72   <- chosen: harder, with margin
+ *   0.03                4623       9.77
+ *   0.02 (accept)       6186      13.08   <- positive mutation sensitivity
+ *   0.01                8705      18.40
+ *   0                  25408      53.71
  *
  * 0.05 is higher than the positive 0.02 and is therefore the stronger negated
  * assertion, but the physical displacement still clears its unchanged ratio
- * budget by 7.19x. The transposition control retains the still-harder 0.1 bar
+ * budget by 6.72x. The transposition control retains the still-harder 0.1 bar
  * and the geometry control also uses 0.1: its two-percent
- * scale error moves each edge of the roughly 444-pixel quad by more than four
- * pixels, leaving a solid non-AA band after pixelmatch excludes the one-pixel
+ * scale error moves each edge of the 456-pixel quad by 4.56 pixels, leaving a
+ * solid non-AA band after pixelmatch excludes the one-pixel
  * antialiased fringe. All three share the positive test's timeout and pixel
  * ratio, so none gets a second, looser spatial allowance.
  */
@@ -295,6 +296,15 @@ const GEOMETRY_SCALE = 1.02
  */
 const SETTLE = { timeout: 30_000 } as const
 
+/**
+ * Test-only chrome isolation for the scientific pixel oracle.
+ *
+ * The Observatory's command deck intentionally floats above the viewport. A
+ * locator screenshot captures overlapping siblings too, so leaving the deck
+ * visible would bake DOM text into the WebGL baseline. `visibility:hidden`
+ * keeps the accepted layout and reveals every underlying canvas pixel; masking
+ * the deck would instead discard more than eight percent of the science frame.
+ */
 /** The WebGL surface, which is the only thing any baseline here is of. */
 const canvasOf = (page: Page): Locator => page.locator('canvas')
 
@@ -439,6 +449,15 @@ async function settled(page: Page): Promise<void> {
   await expect(page.locator('span[data-status]')).toHaveAttribute('data-status', 'ready', SETTLE)
 }
 
+async function openControlContext(
+  page: Page,
+  label: '态制备' | '表示法' | '显示',
+): Promise<void> {
+  const context = page.locator('.context-rail button').filter({ hasText: label })
+  await expect(context).toBeVisible()
+  await context.click()
+}
+
 /** Switch to a plane section and remove non-deterministic post-process bloom. */
 async function showPlaneSection(page: Page): Promise<void> {
   await page.locator('button[data-representation="slice"]').click()
@@ -447,17 +466,36 @@ async function showPlaneSection(page: Page): Promise<void> {
   // focused range input is the platform's own minimum gesture, so React sees
   // the same change as a drag instead of an assigned value its tracker may
   // swallow. Disabling the halo keeps the visual gate about the slice itself.
+  // Selecting a representation intentionally opens the representation context;
+  // enter the visible Display context before driving its control. Focusing an
+  // attached-but-hidden range input is a no-op and used to leave bloom at 12.
+  await openControlContext(page, '显示')
   const bloom = page.locator('input[data-display="bloom"]')
+  await expect(bloom).toBeVisible()
   await bloom.focus()
   await page.keyboard.press('Home')
   await expect(bloom).toHaveValue('0')
+
+  // The Observatory command deck is a DOM sibling floating over the canvas.
+  // A locator screenshot includes overlapping siblings, so hide just that
+  // deck while leaving its layout box (and every underlying science pixel)
+  // intact. Masking it would discard more than eight percent of the oracle.
+  await page.locator('.representation-command-switch').evaluate((element) => {
+    ;(element as HTMLElement).style.visibility = 'hidden'
+  })
 }
 
-const chooseObservable = (page: Page, observable: string): Promise<void> =>
-  page.locator(`[data-choice="observable"] button[data-choice-value="${observable}"]`).click()
+async function chooseObservable(page: Page, observable: string): Promise<void> {
+  await openControlContext(page, '表示法')
+  await page
+    .locator(`[data-choice="observable"] button[data-choice-value="${observable}"]`)
+    .click()
+}
 
-const choosePlane = (page: Page, plane: string): Promise<void> =>
-  page.locator(`[data-choice="plane"] button[data-choice-value="${plane}"]`).click()
+async function choosePlane(page: Page, plane: string): Promise<void> {
+  await openControlContext(page, '表示法')
+  await page.locator(`[data-choice="plane"] button[data-choice-value="${plane}"]`).click()
+}
 
 /**
  * Half the 1s + 2p_z Bohr period to within 0.023 a.u., and the instant both
@@ -488,6 +526,7 @@ const timeSlider = (page: Page): Locator => page.locator('input[data-parameter="
  * and it replaces the fourteen-tick walk with one request for one instant.
  */
 async function advanceToHalfPeriod(page: Page, ledger: RequestLedger): Promise<void> {
+  await openControlContext(page, '表示法')
   const status = page.locator('span[data-status]')
   const clock = timeSlider(page)
 
@@ -599,6 +638,7 @@ test('2p_z on xz: the nodal line lies across the plane, not down it', async ({ p
 test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL }) => {
   const ledger = await openApp(page, baseURL)
   await showPlaneSection(page)
+  await openControlContext(page, '态制备')
   await page.locator('.segmented.two button:has-text("复基 · Lz")').click()
   await page.locator('.quantum-grid label:has-text("m") select').selectOption('1')
   await choosePlane(page, 'xy')
@@ -661,6 +701,7 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
   const held = superpositionSliceQuestion({ terms, time: HALF_PERIOD_AU })
   const ledger = await openApp(page, baseURL, { hold: held })
   await showPlaneSection(page)
+  await openControlContext(page, '态制备')
   await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
   await page.locator('.mixture-list button:has-text("2s + 2p_z")').click()
@@ -731,6 +772,7 @@ test('the comparison rejects a two-percent plane-extent error beyond the AA frin
     transform: { 'degenerate-stationary-xz-t8.4': enlargeSliceGeometry },
   })
   await showPlaneSection(page)
+  await openControlContext(page, '态制备')
   await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
   await page.locator('.mixture-list button:has-text("2s + 2p_z")').click()
@@ -768,7 +810,7 @@ test('the comparison rejects a two-percent plane-extent error beyond the AA frin
   // Playwright's pixelmatch keeps includeAA=false internally, and its screenshot
   // options do not expose an override. This assertion therefore does not claim
   // that a one-pixel antialiased fringe is visible. The 2% scale error moves
-  // each edge of this roughly 444px quad by more than four pixels, leaving a
+  // each edge of this 456px quad by 4.56 pixels, leaving a
   // multi-pixel solid band plus displaced interior contours after that fringe
   // is excluded. The 0.1 threshold is five times the positive test's 0.02 and
   // therefore harder under `.not`; the ratio budget remains exactly 0.001.
@@ -782,6 +824,7 @@ test('the comparison rejects a two-percent plane-extent error beyond the AA frin
 test('1s + 2p_z at t=0: the dipole in its first lobe', async ({ page, baseURL }) => {
   const ledger = await openApp(page, baseURL)
   await showPlaneSection(page)
+  await openControlContext(page, '态制备')
   await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
 
@@ -813,6 +856,7 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   })
   const ledger = await openApp(page, baseURL, { hold: held })
   await showPlaneSection(page)
+  await openControlContext(page, '态制备')
   await page.locator('.representation-switch button:has-text("叠加态")').click()
   await settled(page)
   await expect(contractValue(page, 't')).toHaveText('0.00 a.u.')
@@ -834,7 +878,7 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   // is what makes either of them mean anything.
   //
   // The displacement here is a deep-blue lobe crossing a dark ground. At the
-  // 0.05 boundary leaves 3190 pixels, or 7.19x the fixed frame's 443.456-pixel
+  // 0.05 boundary leaves 3180 pixels, or 6.72x the fixed frame's 473.088-pixel
   // budget. HALF_PERIOD_REJECTION uses that measured boundary. It is
   // deliberately higher (harder under `.not`) than the positive tests' 0.02.
   await expect(canvasOf(page)).not.toHaveScreenshot(
@@ -883,8 +927,8 @@ test('the comparison can see a transposed slice: the apparatus is not vacuous', 
 
   // The nodal line is vertical here and horizontal in the baseline. This keeps
   // the original 0.1 bar, which is harder to clear under `.not` than either the
-  // positive 0.02 or half-period 0.05 bar. The committed 656 x 676 baseline
-  // has 443456 pixels and therefore a 443.456-pixel ratio budget. This control
+  // positive 0.02 or half-period 0.05 bar. The committed 672 x 704 baseline
+  // has 473088 pixels and therefore a 473.088-pixel ratio budget. This control
   // clears that budget at threshold 0.1 after antialiased edge pixels are
   // excluded. A lower threshold counts MORE pixels and so makes a `.not`
   // easier to satisfy; on the reject side the tolerant bar is the stronger

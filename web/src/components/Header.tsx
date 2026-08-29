@@ -1,4 +1,6 @@
-import { BookOpen, Camera, Orbit } from 'lucide-react'
+import { BookOpen, Camera, Crosshair, Orbit } from 'lucide-react'
+
+import { useSceneStore } from '../state/useSceneStore'
 
 function saveScreenshot() {
   const canvas = document.querySelector('canvas')
@@ -9,15 +11,32 @@ function saveScreenshot() {
   link.click()
 }
 
-export function Header() {
+export function Header({ stateLabel }: { stateLabel?: string }) {
+  const mode = useSceneStore((state) => state.mode)
+  const orbital = useSceneStore((state) => state.orbital)
+  const superpositionLabel = useSceneStore((state) => state.superpositionLabel)
+  const stateSummary =
+    mode === 'eigenstate'
+      ? `Eigenstate · n=${orbital.n}, ℓ=${orbital.l}, m=${orbital.m}, Z=${orbital.z}`
+      : superpositionLabel
+  const compactStateSummary =
+    stateLabel ?? (mode === 'eigenstate' ? `n${orbital.n} · ℓ${orbital.l} · m${orbital.m}` : '叠加态')
+
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark"><Orbit size={22} /></span>
+        <span className="brand-mark" aria-hidden="true"><Orbit size={23} strokeWidth={1.6} /></span>
         <div>
           <div className="brand-name">QuViz</div>
           <div className="brand-subtitle">量子态 · 可观测量 · 表示法</div>
         </div>
+      </div>
+      <div className="topbar-context" aria-label="当前量子态">
+        <Crosshair size={16} strokeWidth={1.5} aria-hidden="true" />
+        <span className="topbar-context-type">氢原子</span>
+        <span className="topbar-context-divider">/</span>
+        <span className="topbar-context-value">{stateSummary}</span>
+        <span className="topbar-context-compact">{compactStateSummary}</span>
       </div>
       <div className="topbar-actions">
         <a className="icon-button" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" title="查看 OpenAPI" aria-label="查看 OpenAPI">

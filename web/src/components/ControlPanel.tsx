@@ -2,6 +2,7 @@ import {
   Atom,
   Clock,
   Cloud,
+  Eye,
   Grid2x2,
   Layers3,
   Pause,
@@ -9,6 +10,7 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Waves,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -39,7 +41,7 @@ import { REPRESENTATION_LABELS } from './sceneStatus'
  * `ParameterBound` the capability matrix declares for this cell, so a slider
  * cannot offer a value the route rejects and cannot withhold one it accepts.
  * The panel used to spell its own numbers here (`max={160}` for a route that
- * takes 256, `max={40}` for a clock that runs to 1000) and each of those was a
+ * takes 96, `max={40}` for a clock that runs to 1000) and each of those was a
  * second, quieter statement about what the server can do.
  */
 function ParameterRow({
@@ -273,8 +275,35 @@ const PARAMETER_ROWS: {
   { id: 'timeAu', label: 't', suffix: ' a.u.' },
 ]
 
-export function ControlPanel() {
+export type ControlContext = 'state' | 'representation' | 'display'
+
+interface ControlPanelProps {
+  activeContext?: ControlContext
+  onContextChange?: (context: ControlContext) => void
+  mobileOpen?: boolean
+  onRequestClose?: () => void
+}
+
+const CONTROL_CONTEXTS: {
+  id: ControlContext
+  label: string
+  icon: LucideIcon
+}[] = [
+  { id: 'state', label: '态制备', icon: Atom },
+  { id: 'representation', label: '表示法', icon: Waves },
+  { id: 'display', label: '显示', icon: Eye },
+]
+
+export function ControlPanel({
+  activeContext: controlledContext,
+  onContextChange,
+  mobileOpen = true,
+  onRequestClose,
+}: ControlPanelProps) {
   const store = useSceneStore()
+  const [localContext, setLocalContext] = useState<ControlContext>('state')
+  const activeContext = controlledContext ?? localContext
+  const setActiveContext = onContextChange ?? setLocalContext
   const [presets, setPresets] = useState<OrbitalPreset[]>([])
   const [representationNotice, setRepresentationNotice] =
     useState<RepresentationKind | null>(null)
@@ -376,6 +405,10 @@ export function ControlPanel() {
     flowExampleCapability?.status === 'available'
 
   const loadFlowExample = (): void => {
+    // This is deliberately a separate, plainly labelled action. Pressing the
+    // unavailable representation button itself never rewrites the quantum
+    // state. The example is the server catalogue entry, not a second local
+    // copy that could drift from it.
     if (flowExample === undefined) return
     store.applyPreset(flowExample)
     useSceneStore.getState().setRepresentation('streamlines')
@@ -456,25 +489,67 @@ export function ControlPanel() {
   }, [playing, canPlay, playbackPeriodAu])
 
   return (
-    <aside className="panel controls-panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">态制备</span>
-          <h2>轨道与表示设置</h2>
+    <div
+      className={`controls-shell${mobileOpen ? ' mobile-open' : ''}`}
+      data-context={activeContext}
+    >
+      <nav className="context-rail" aria-label="控制上下文">
+        {CONTROL_CONTEXTS.map(({ id, label, icon: Icon }) => (
+          <button
+            type="button"
+            key={id}
+            className={activeContext === id ? 'active' : ''}
+            aria-pressed={activeContext === id}
+            onClick={() => setActiveContext(id)}
+          >
+            <Icon size={21} strokeWidth={1.55} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+      <aside className="panel controls-panel">
+        <div className="mobile-sheet-handle" aria-hidden="true" />
+        <div className="panel-heading">
+          <div>
+            <span className="panel-context-label">
+              {activeContext === 'state' ? '态制备' : activeContext === 'representation' ? '表示法' : '显示'}
+            </span>
+            <h2>
+              {activeContext === 'state'
+                ? '轨道与表示设置'
+                : activeContext === 'representation'
+                  ? '观测映射与采样'
+                  : '场景渲染'}
+            </h2>
+          </div>
+          <div className="panel-heading-actions">
+            {activeContext === 'state' ? (
+              <button
+                type="button"
+                className="round-button reset-state-button"
+                title="恢复 2p_z 默认值"
+                aria-label="恢复 2p_z 默认值"
+                onClick={() => store.applyPreset({ n: 2, l: 1, m: 0, z: 1, basis: 'real' })}
+              >
+                <RotateCcw size={16} />
+              </button>
+            ) : null}
+            {onRequestClose === undefined ? null : (
+              <button
+                type="button"
+                className="round-button mobile-sheet-close"
+                title="关闭控制面板"
+                aria-label="关闭控制面板"
+                onClick={onRequestClose}
+              >
+                <X size={17} />
+              </button>
+            )}
+          </div>
         </div>
-        <button
-          type="button"
-          className="round-button"
-          title="恢复 2p_z 默认值"
-          aria-label="恢复 2p_z 默认值"
-          onClick={() => store.applyPreset({ n: 2, l: 1, m: 0, z: 1, basis: 'real' })}
-        >
-          <RotateCcw size={16} />
-        </button>
-      </div>
 
-      <div className="preset-strip">
-        {presets.slice(0, 6).map((preset) => {
+      <div className="preset-strip state-context-content">
+        {presets.map((preset) => {
           const active =
               preset.n === store.orbital.n &&
               preset.l === store.orbital.l &&
@@ -494,55 +569,57 @@ export function ControlPanel() {
         })}
       </div>
 
-      <section className="control-section">
-        <div className="section-title"><Atom size={15} /> 量子数</div>
-        <div className="quantum-grid">
-          <label>
-            <span>n</span>
-            <select value={store.orbital.n} onChange={(event) => store.setOrbital({ n: Number(event.target.value) })}>
-              {Array.from({ length: 8 }, (_, index) => index + 1).map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>ℓ</span>
-            <select value={store.orbital.l} onChange={(event) => store.setOrbital({ l: Number(event.target.value) })}>
-              {lOptions.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>m</span>
-            <select value={store.orbital.m} onChange={(event) => store.setOrbital({ m: Number(event.target.value) })}>
-              {mOptions.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>Z</span>
-            <input
-              type="number"
-              min={Z_CONSTRAINT.uiBound.min}
-              max={Z_CONSTRAINT.uiBound.max}
-              step={Z_CONSTRAINT.uiBound.step}
-              value={store.orbital.z}
-              onChange={(event) => store.setOrbital({ z: Number(event.target.value) })}
-            />
-          </label>
-        </div>
-        <div className="segmented two">
-          {(['real', 'complex'] as const).map((basis) => (
-            <button
-              type="button"
-              key={basis}
-              className={store.orbital.basis === basis ? 'active' : ''}
-              aria-pressed={store.orbital.basis === basis}
-              onClick={() => store.setOrbital({ basis })}
-            >
-              {basis === 'real' ? '实基 · chemistry' : '复基 · Lz'}
-            </button>
-          ))}
-        </div>
-      </section>
+      {store.mode === 'eigenstate' ? (
+        <section className="control-section state-context-content" data-control-section="eigenstate-quantum-numbers">
+          <div className="section-title"><Atom size={15} /> 量子数</div>
+          <div className="quantum-grid">
+            <label>
+              <span>n</span>
+              <select value={store.orbital.n} onChange={(event) => store.setOrbital({ n: Number(event.target.value) })}>
+                {Array.from({ length: 8 }, (_, index) => index + 1).map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>ℓ</span>
+              <select value={store.orbital.l} onChange={(event) => store.setOrbital({ l: Number(event.target.value) })}>
+                {lOptions.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>m</span>
+              <select value={store.orbital.m} onChange={(event) => store.setOrbital({ m: Number(event.target.value) })}>
+                {mOptions.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Z</span>
+              <input
+                type="number"
+                min={Z_CONSTRAINT.uiBound.min}
+                max={Z_CONSTRAINT.uiBound.max}
+                step={Z_CONSTRAINT.uiBound.step}
+                value={store.orbital.z}
+                onChange={(event) => store.setOrbital({ z: Number(event.target.value) })}
+              />
+            </label>
+          </div>
+          <div className="segmented two">
+            {(['real', 'complex'] as const).map((basis) => (
+              <button
+                type="button"
+                key={basis}
+                className={store.orbital.basis === basis ? 'active' : ''}
+                aria-pressed={store.orbital.basis === basis}
+                onClick={() => store.setOrbital({ basis })}
+              >
+                {basis === 'real' ? '实基 · chemistry' : '复基 · Lz'}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
-      <section className="control-section">
+      <section className="control-section state-context-content state-composition-section">
         <div className="section-title"><Clock size={15} /> 态构成</div>
         <div className="representation-switch">
           <button
@@ -646,9 +723,9 @@ export function ControlPanel() {
         ) : null}
       </section>
 
-      <section className="control-section">
-        <div className="section-title"><Layers3 size={15} /> 表示法</div>
-        <div className="representation-switch">
+      <section className="control-section representation-control-section">
+        <div className="section-title representation-dock-title"><Layers3 size={15} /> 表示法</div>
+        <div className="representation-switch representation-command-switch">
           {REPRESENTATIONS.map(({ id, label, icon: Icon, purpose }) => {
             const capability = capabilityFor({
               mode,
@@ -682,7 +759,7 @@ export function ControlPanel() {
                     ? 'representation-availability-notice'
                     : available && store.representation === id && serverValidation !== undefined
                       ? 'representation-server-validation-notice'
-                      : undefined
+                    : undefined
                 }
                 title={
                   !available
@@ -695,6 +772,7 @@ export function ControlPanel() {
                   if (!available) setRepresentationNotice(id)
                 }}
                 onClick={() => {
+                  setActiveContext('representation')
                   if (available) {
                     setRepresentationNotice(null)
                     store.setRepresentation(id)
@@ -708,6 +786,11 @@ export function ControlPanel() {
             )
           })}
         </div>
+
+        <div className="representation-settings">
+          <div className="section-title representation-settings-title">
+            <SlidersHorizontal size={15} /> 当前表示参数
+          </div>
 
         {representationNoticeText === null ? null : (
           <p
@@ -806,7 +889,7 @@ export function ControlPanel() {
             </div>
           </dl>
         ) : null}
-
+        </div>
       </section>
 
       {/*
@@ -815,7 +898,7 @@ export function ControlPanel() {
         from offering a polished-looking control over nothing. Exposure stays
         internal until the composer path owns an audited tone-mapping policy.
       */}
-      <section className="control-section compact display-section">
+      <section className="control-section compact display-section display-context-content">
         <div className="section-title"><SlidersHorizontal size={15} /> 显示</div>
         {store.representation === 'point_cloud' ? (
           <DisplayRow control="pointSize" label="点尺寸" value={store.pointSize} min={1.5} max={7} step={0.1} onChange={store.setPointSize} />
@@ -850,6 +933,7 @@ export function ControlPanel() {
           <span className={store.showGrid ? 'switch on' : 'switch'} />
         </button>
       </section>
-    </aside>
+      </aside>
+    </div>
   )
 }

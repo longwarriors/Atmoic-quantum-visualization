@@ -1,8 +1,10 @@
-import { createElement } from 'react'
+/** @vitest-environment jsdom */
+import { act, createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { OrbitalMetadata, SceneStatus, SuperpositionMetadata } from '../api/types'
+import { mount } from '../test/mount'
 import { Inspector } from './Inspector'
 
 function eigenstateMetadata(energyHartree: number): OrbitalMetadata {
@@ -29,6 +31,22 @@ function eigenstateStatus(energyHartree: number): SceneStatus {
 
 function render(status: SceneStatus): string {
   return renderToStaticMarkup(createElement(Inspector, { status }))
+}
+
+async function interact(body: () => void): Promise<void> {
+  const scope = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const had = 'IS_REACT_ACT_ENVIRONMENT' in scope
+  const previous = scope.IS_REACT_ACT_ENVIRONMENT
+  scope.IS_REACT_ACT_ENVIRONMENT = true
+  try {
+    await act(async () => body())
+  } finally {
+    if (had) {
+      scope.IS_REACT_ACT_ENVIRONMENT = previous
+    } else {
+      delete scope.IS_REACT_ACT_ENVIRONMENT
+    }
+  }
 }
 
 function superpositionStatus(terms: SuperpositionMetadata['terms']): SceneStatus {
@@ -412,5 +430,109 @@ describe('Inspector reports every measured diagnostic', () => {
     expect(markup).toContain('<dt>核电荷 Z</dt><dd>2.000</dd>')
     expect(markup).toContain('<dt>约化 Bohr 尺度 a_μ</dt><dd>1.250</dd>')
     expect(markup).toContain('<dt>约化质量比 μ/mₑ</dt><dd>0.800</dd>')
+  })
+})
+
+describe('Inspector disclosure', () => {
+  it('associates every tab with its panel and supports the complete roving keyboard pattern', async () => {
+    const onClose = vi.fn()
+    const status = eigenstateStatus(-0.125)
+    status.metadata!.references = ['NIST-hydrogen']
+    const node = createElement(Inspector, { status, onClose })
+    const tree = await mount(node)
+    try {
+      const tabs = Array.from(
+        tree.container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+      )
+      const panels = Array.from(
+        tree.container.querySelectorAll<HTMLElement>('[role="tabpanel"]'),
+      )
+      expect(tabs.map((tab) => tab.textContent)).toEqual(['概览', '场景契约', '引用'])
+      expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1])
+      expect(panels).toHaveLength(3)
+      for (const [index, tab] of tabs.entries()) {
+        expect(tab.getAttribute('aria-controls')).toBe(panels[index].id)
+        expect(panels[index].getAttribute('aria-labelledby')).toBe(tab.id)
+      }
+
+      await interact(() => tabs[1].click())
+      expect(tree.container.querySelector('.contract-panel')?.hasAttribute('hidden')).toBe(false)
+
+      tabs[1].focus()
+      await interact(() => {
+        tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(tabs[2])
+      expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0])
+      expect(tree.container.querySelector('.references-panel')?.hasAttribute('hidden')).toBe(false)
+
+      await interact(() => {
+        tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(tabs[0])
+      expect(tree.container.querySelector('.overview-panel')?.hasAttribute('hidden')).toBe(false)
+
+      await interact(() => {
+        tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(tabs[2])
+
+      await interact(() => {
+        tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(tabs[2])
+
+      await interact(() => tree.container.querySelector<HTMLButtonElement>('.inspector-close')?.click())
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('removes a closed rail from interaction and lets Escape close an open rail', async () => {
+    const onClose = vi.fn()
+    const status = eigenstateStatus(-0.125)
+    const closedNode = createElement(Inspector, { status, open: false, onClose })
+    const tree = await mount(closedNode)
+    try {
+      const inspector = tree.container.querySelector<HTMLElement>('.inspector-panel')
+      expect(inspector?.getAttribute('aria-hidden')).toBe('true')
+      expect(inspector?.hasAttribute('inert')).toBe(true)
+      expect(inspector?.classList.contains('is-open')).toBe(false)
+
+      const openNode = createElement(Inspector, { status, open: true, onClose })
+      await tree.update(openNode)
+      expect(inspector?.getAttribute('aria-hidden')).toBe('false')
+      expect(inspector?.hasAttribute('inert')).toBe(false)
+      expect(inspector?.classList.contains('is-open')).toBe(true)
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+      await interact(() => {
+        tree.container.querySelector<HTMLButtonElement>('[role="tab"]')?.dispatchEvent(escape)
+      })
+      expect(escape.defaultPrevented).toBe(true)
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('treats a requested mobile sheet as visible even when the permanent rail is closed', async () => {
+    const tree = await mount(
+      createElement(Inspector, { status: eigenstateStatus(-0.125), open: false, mobileOpen: true }),
+    )
+    try {
+      const inspector = tree.container.querySelector<HTMLElement>('.inspector-panel')
+      expect(inspector?.classList.contains('mobile-open')).toBe(true)
+      expect(inspector?.classList.contains('is-open')).toBe(true)
+      expect(inspector?.getAttribute('aria-hidden')).toBe('false')
+      expect(inspector?.hasAttribute('inert')).toBe(false)
+    } finally {
+      await tree.unmount()
+    }
   })
 })

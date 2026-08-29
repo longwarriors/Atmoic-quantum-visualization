@@ -2,6 +2,7 @@
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useSceneStore } from '../state/useSceneStore'
 import { mount, type MountedTree } from '../test/mount'
 import { Header } from './Header'
 
@@ -33,10 +34,15 @@ afterEach(() => {
   vi.restoreAllMocks()
   delete canvasPrototype.toDataURL
   document.querySelectorAll('canvas').forEach((canvas) => canvas.remove())
+  useSceneStore.setState({
+    mode: 'eigenstate',
+    orbital: { n: 2, l: 1, m: 0, z: 1, basis: 'real' },
+    superpositionLabel: '1s + 2p_z (Bohr oscillation)',
+  })
 })
 
-async function header(): Promise<MountedTree> {
-  return mount(createElement(Header))
+async function header(stateLabel?: string): Promise<MountedTree> {
+  return mount(createElement(Header, { stateLabel }))
 }
 
 function captureButton(tree: MountedTree): HTMLButtonElement {
@@ -96,6 +102,26 @@ describe('Header capture', () => {
       expect(tree.container.textContent).toContain('量子态 · 可观测量 · 表示法')
       expect(tree.container.textContent).toContain('OpenAPI')
       expect(captureButton(tree).getAttribute('aria-label')).toBe('保存当前画布')
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('uses the arrived asset label for the compact mobile state readout', async () => {
+    const tree = await header('2p_z')
+    try {
+      expect(tree.container.querySelector('.topbar-context-compact')?.textContent).toBe('2p_z')
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('names a superposition in both the full and compact state readouts', async () => {
+    useSceneStore.setState({ mode: 'superposition', superpositionLabel: '1s + 2p_z' })
+    const tree = await header()
+    try {
+      expect(tree.container.querySelector('.topbar-context-value')?.textContent).toBe('1s + 2p_z')
+      expect(tree.container.querySelector('.topbar-context-compact')?.textContent).toBe('叠加态')
     } finally {
       await tree.unmount()
     }

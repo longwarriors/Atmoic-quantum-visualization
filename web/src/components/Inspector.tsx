@@ -1,10 +1,14 @@
-import { AlertTriangle, Box, Database, Gauge, Sigma } from 'lucide-react'
+import { AlertTriangle, Box, Database, Gauge, Sigma, X } from 'lucide-react'
+import { type KeyboardEvent, useId, useRef, useState } from 'react'
 
 import type { SceneStatus } from '../api/types'
 import { observableLabel, representationLabel } from './sceneStatus'
 
 interface InspectorProps {
   status: SceneStatus
+  open?: boolean
+  mobileOpen?: boolean
+  onClose?: () => void
 }
 
 /** What a non-finite (or absent) number is displayed as. Never "NaN"/"Infinity". */
@@ -103,7 +107,24 @@ function formatFiniteGridMassStatus(status: NonNullable<SceneStatus['finiteGridM
   return labels[status]
 }
 
-export function Inspector({ status }: InspectorProps) {
+type InspectorTab = 'overview' | 'contract' | 'references'
+
+const INSPECTOR_TABS: { id: InspectorTab; label: string }[] = [
+  { id: 'overview', label: '概览' },
+  { id: 'contract', label: '场景契约' },
+  { id: 'references', label: '引用' },
+]
+
+export function Inspector({
+  status,
+  open = true,
+  mobileOpen = false,
+  onClose,
+}: InspectorProps) {
+  const [activeTab, setActiveTab] = useState<InspectorTab>('overview')
+  const instanceId = useId()
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const visible = open || mobileOpen
   const metadata = status.metadata
   const mixture = status.superposition
   const state = metadata?.state
@@ -119,9 +140,82 @@ export function Inspector({ status }: InspectorProps) {
       ? `${mixture.terms.length} 项叠加 · ${mixture.basis} basis`
       : '等待已验证 metadata'
 
+  const tabId = (tab: InspectorTab): string => `${instanceId}-${tab}-tab`
+  const panelId = (tab: InspectorTab): string => `${instanceId}-${tab}-panel`
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight') {
+      nextIndex = (index + 1) % INSPECTOR_TABS.length
+    } else if (event.key === 'ArrowLeft') {
+      nextIndex = (index - 1 + INSPECTOR_TABS.length) % INSPECTOR_TABS.length
+    } else if (event.key === 'Home') {
+      nextIndex = 0
+    } else if (event.key === 'End') {
+      nextIndex = INSPECTOR_TABS.length - 1
+    }
+    if (nextIndex === undefined) return
+
+    event.preventDefault()
+    setActiveTab(INSPECTOR_TABS[nextIndex].id)
+    tabRefs.current[nextIndex]?.focus()
+  }
+
   return (
-    <aside className="panel inspector-panel">
-      <span className="eyebrow">场景契约</span>
+    <aside
+      id="science-inspector"
+      className={`panel inspector-panel${visible ? ' is-open' : ''}${mobileOpen ? ' mobile-open' : ''}`}
+      aria-label="科学详情"
+      aria-hidden={!visible}
+      inert={!visible}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || onClose === undefined) return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
+    >
+      <div className="inspector-tabbar">
+        <div className="inspector-tabs" role="tablist" aria-label="科学详情视图">
+          {INSPECTOR_TABS.map((tab, index) => (
+            <button
+              type="button"
+              role="tab"
+              key={tab.id}
+              id={tabId(tab.id)}
+              ref={(node) => {
+                tabRefs.current[index] = node
+              }}
+              aria-selected={activeTab === tab.id}
+              aria-controls={panelId(tab.id)}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              className={activeTab === tab.id ? 'active' : ''}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) => handleTabKeyDown(event, index)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {onClose === undefined ? null : (
+          <button
+            type="button"
+            className="inspector-close"
+            onClick={onClose}
+            aria-label="关闭科学详情"
+            title="关闭科学详情"
+          >
+            <X size={17} />
+          </button>
+        )}
+      </div>
+
+      <section
+        id={panelId('overview')}
+        className="inspector-tab-panel overview-panel"
+        role="tabpanel"
+        aria-labelledby={tabId('overview')}
+        hidden={activeTab !== 'overview'}
+      >
       <div className="state-title-row">
         <div>
           <h2>{label ?? (status.loading ? '计算中…' : '暂无资产')}</h2>
@@ -169,7 +263,15 @@ export function Inspector({ status }: InspectorProps) {
           <strong>{formatFiniteUnit(status.extentBohr, { kind: 'fixed', digits: 2 }, 'bohr')}</strong>
         </div>
       </div>
+      </section>
 
+      <section
+        id={panelId('contract')}
+        className="inspector-tab-panel contract-panel"
+        role="tabpanel"
+        aria-labelledby={tabId('contract')}
+        hidden={activeTab !== 'contract'}
+      >
       <dl className="contract-list">
         <div><dt>坐标约定</dt><dd>{metadata?.coordinate_convention ?? mixture?.coordinate_convention ?? '—'}</dd></div>
         <div><dt>归一化</dt><dd>{metadata?.normalization ?? mixture?.normalization ?? '—'}</dd></div>
@@ -465,15 +567,26 @@ export function Inspector({ status }: InspectorProps) {
           </div>
         ) : null}
       </dl>
+      </section>
 
-      {(metadata ?? mixture)?.references.length ? (
-        <div className="reference-block">
-          <span>参考文献 key</span>
-          {(metadata ?? mixture)!.references.map((reference) => (
-            <code key={reference}>{reference}</code>
-          ))}
-        </div>
-      ) : null}
+      <section
+        id={panelId('references')}
+        className="inspector-tab-panel references-panel"
+        role="tabpanel"
+        aria-labelledby={tabId('references')}
+        hidden={activeTab !== 'references'}
+      >
+        {(metadata ?? mixture)?.references.length ? (
+          <div className="reference-block">
+            <span>参考文献 key</span>
+            {(metadata ?? mixture)!.references.map((reference) => (
+              <code key={reference}>{reference}</code>
+            ))}
+          </div>
+        ) : (
+          <p className="inspector-empty">当前资产尚未报告参考文献 key。</p>
+        )}
+      </section>
 
       {status.error ? (
         <div className="warning-card error"><AlertTriangle size={16} /><span>场景错误 · {status.error}</span></div>
