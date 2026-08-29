@@ -28,8 +28,15 @@
  * `window.devicePixelRatio` and `window.requestAnimationFrame`.
  */
 import type { BoundsProps, OrbitControlsProps } from '@react-three/drei'
+import { useThree } from '@react-three/fiber'
 import ReactThreeTestRenderer, { act } from '@react-three/test-renderer'
-import { act as reactAct, createElement, type ReactElement } from 'react'
+import {
+  act as reactAct,
+  createElement,
+  Fragment,
+  type ReactElement,
+  useLayoutEffect,
+} from 'react'
 import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -420,6 +427,12 @@ const queryOf = (url: string): URLSearchParams =>
 
 type Renderer = Awaited<ReturnType<typeof ReactThreeTestRenderer.create>>
 
+function RendererProbe({ capture }: { capture: (renderer: THREE.WebGLRenderer) => void }) {
+  const renderer = useThree(({ gl }) => gl)
+  useLayoutEffect(() => capture(renderer), [capture, renderer])
+  return null
+}
+
 /**
  * Mount the in-canvas scene and let the first response settle.
  *
@@ -431,8 +444,18 @@ type Renderer = Awaited<ReturnType<typeof ReactThreeTestRenderer.create>>
 async function mountScene(
   onStatus: (status: SceneStatus) => void,
   camera: THREE.PerspectiveCamera = defaultCamera(),
+  captureRenderer?: (renderer: THREE.WebGLRenderer) => void,
 ): Promise<Renderer> {
-  const renderer = await ReactThreeTestRenderer.create(createElement(SceneRoot, { onStatus }), {
+  const scene = createElement(SceneRoot, { onStatus })
+  const content = captureRenderer
+    ? createElement(
+        Fragment,
+        null,
+        createElement(RendererProbe, { capture: captureRenderer }),
+        scene,
+      )
+    : scene
+  const renderer = await ReactThreeTestRenderer.create(content, {
     camera,
     // The readiness flag lands on the element the canvas sits in, and the test
     // renderer creates its canvas detached. Giving it a container is what makes
@@ -832,6 +855,42 @@ describe('RendererSettings', () => {
 /* ----------------------------------------------------------- composition */
 
 describe('SceneRoot', () => {
+  it('restores and clears the default framebuffer when a post-processed frame leaves', async () => {
+    useSceneStore.setState({ mode: 'eigenstate', representation: 'slice' })
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const url = String(input)
+      return Promise.resolve(jsonResponse(url.includes('/slice') ? slice() : isosurface()))
+    })
+    let gl: THREE.WebGLRenderer | undefined
+    const renderer = await mountScene(
+      () => undefined,
+      defaultCamera(),
+      (value) => {
+        gl = value
+      },
+    )
+    expect(gl).toBeDefined()
+
+    // postprocessing's EffectComposer constructor leaves this false. Recreate
+    // that side effect without mounting a second renderer in the test harness.
+    const clear = vi.spyOn(gl as THREE.WebGLRenderer, 'clear')
+    const setRenderTarget = vi.spyOn(gl as THREE.WebGLRenderer, 'setRenderTarget')
+    ;(gl as THREE.WebGLRenderer).autoClear = false
+
+    await act(async () => {
+      useSceneStore.setState({ representation: 'isosurface' })
+    })
+
+    expect((gl as THREE.WebGLRenderer).autoClear).toBe(true)
+    expect(setRenderTarget).toHaveBeenCalledWith(null)
+    expect(clear).toHaveBeenCalledWith(true, true, true)
+    expect(setRenderTarget.mock.invocationCallOrder[0]).toBeLessThan(
+      clear.mock.invocationCallOrder[0],
+    )
+
+    await renderer.unmount()
+  })
+
   it('turns the store into one superposition streamline request and draws its answer', async () => {
     useSceneStore.setState({
       mode: 'superposition',
@@ -1277,6 +1336,7 @@ describe('OrbitalCanvas', () => {
     const children = childrenOf(props)
     expect(children).toHaveLength(2)
     const composer = children[1]
+    expect((composer.props as { ref?: unknown }).ref).toEqual(expect.any(Function))
     const effects = (composer.props as { children: ReactElement[] }).children
     expect((effects[0].props as { intensity: number }).intensity).toBe(0.42)
 

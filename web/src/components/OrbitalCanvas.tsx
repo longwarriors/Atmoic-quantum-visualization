@@ -2,6 +2,7 @@ import { Bounds, OrbitControls, useBounds } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing'
 import { type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
+import type { EffectComposer as EffectComposerImpl } from 'postprocessing'
 import * as THREE from 'three'
 
 import type {
@@ -28,9 +29,50 @@ import {
   useSceneAsset,
   type SceneAsset,
 } from './useSceneAsset'
+import { useDeferredDisposableRef } from './useDeferredDisposableRef'
 
 interface OrbitalCanvasProps {
   onStatus: (status: SceneStatus) => void
+}
+
+/** The renderer operations needed when the post-processing chain lets go. */
+interface DefaultFramebufferRenderer {
+  autoClear: boolean
+  setRenderTarget(target: null): void
+  clear(color: boolean, depth: boolean, stencil: boolean): void
+}
+
+interface RendererClearBoundaryProps {
+  renderer: DefaultFramebufferRenderer
+  effectsActive: boolean
+}
+
+/**
+ * Restore r3f's default render contract after `EffectComposer` unmounts.
+ *
+ * `postprocessing` sets `renderer.autoClear = false` in its constructor because
+ * its passes own clearing while the composer is mounted. It does not restore
+ * that flag when the composer is disposed. Our scientific representations
+ * deliberately mount the composer only for slices and streamlines, so moving
+ * from either of those to an isosurface otherwise leaves the default renderer
+ * drawing every camera pose over the previous frame.
+ *
+ * Reset the target as well as the flag, then erase all three default-buffer
+ * planes immediately. The next r3f frame can therefore start from a known
+ * framebuffer even when the transition spends time in the loading state.
+ */
+function RendererClearBoundary({
+  renderer,
+  effectsActive,
+}: RendererClearBoundaryProps) {
+  useLayoutEffect(() => {
+    if (effectsActive) return
+    renderer.autoClear = true
+    renderer.setRenderTarget(null)
+    renderer.clear(true, true, true)
+  }, [effectsActive, renderer])
+
+  return null
 }
 
 /** The colour depth fades into: the page's own background, so fog reads as distance. */
@@ -333,9 +375,15 @@ interface SceneViewProps {
 function SceneView({ state, asset, fitKey }: SceneViewProps) {
   const extent = sceneExtentBohr(asset)
   const reducedMotion = usePrefersReducedMotion()
+  const renderer = useThree(({ gl }) => gl)
+  const presentationEffectsActive = usesPresentationEffects(asset)
 
   return (
     <>
+      <RendererClearBoundary
+        renderer={renderer}
+        effectsActive={presentationEffectsActive}
+      />
       <RendererSettings exposure={state.exposure} fogStrength={state.fogStrength} extent={extent} />
       <Atmosphere showGrid={state.showGrid} extent={extent} />
       {/* The two animations this scene runs on its own, both of which a viewer
@@ -438,6 +486,11 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
   // consulting it here would briefly recolour the old scientific frame (or
   // remove effects from the old presentation frame) before the response lands.
   const showPresentationEffects = usesPresentationEffects(model.asset)
+  // react-three/postprocessing creates this imperative composer in useMemo but
+  // does not dispose it when its conditional component leaves. Own that gap at
+  // the exposed ref boundary. The callback defers by one microtask so React's
+  // StrictMode detach/reattach probe cannot destroy a live composer.
+  const composerRef = useDeferredDisposableRef<EffectComposerImpl>()
 
   return (
     <Canvas
@@ -460,7 +513,7 @@ export function OrbitalCanvas({ onStatus }: OrbitalCanvasProps) {
       {showPresentationEffects ? (
         /* Bloom and vignette read the rendered buffers back, so unlike
            everything above them they cannot exist without a real renderer. */
-        <EffectComposer multisampling={0}>
+        <EffectComposer ref={composerRef} multisampling={0}>
           <Bloom
             intensity={model.state.bloom}
             luminanceThreshold={0.56}
