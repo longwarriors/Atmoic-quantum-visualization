@@ -18,6 +18,8 @@ interface SceneStore {
   superpositionLabel: string
   /** Slice floor published by the selected server catalogue entry. */
   superpositionSliceResolutionFloor: number
+  /** Workload-safe streamline ceiling published for the selected mixture. */
+  superpositionStreamlineSeedCountMax: number | undefined
   /**
    * The superposition's own basis, independent of `orbital.basis` on purpose:
    * they describe two different states, and sharing one field silently changed
@@ -68,11 +70,15 @@ interface SceneStore {
     terms: string,
     label: string,
     sliceResolutionFloor: number,
+    streamlineSeedCountMax: number,
   ) => void
   syncSuperpositionCapabilities: (
     terms: string,
     sliceResolutionFloor: number,
+    streamlineSeedCountMax: number,
   ) => void
+  /** Fail closed when the selected catalogue entry cannot be trusted. */
+  invalidateSuperpositionStreamlineCapability: () => void
   setSuperpositionBasis: (value: BasisKind) => void
   setSuperpositionZ: (value: number) => void
   setAMu: (value: number) => void
@@ -145,6 +151,26 @@ function clampResolution(
   return Math.min(bound.max, Math.max(bound.min, resolution))
 }
 
+/** Keep the displayed seed count equal to the value the selected route sends. */
+function clampSeedCount(
+  mode: SceneMode,
+  orbital: OrbitalParameters,
+  representation: RepresentationKind,
+  seedCount: number,
+  superpositionStreamlineSeedCountMax?: number,
+): number {
+  const capability = capabilityFor({
+    mode,
+    orbital,
+    representation,
+    superpositionStreamlineSeedCountMax,
+  })
+  const bound: ParameterBound | undefined =
+    capability.status === 'available' ? capability.parameters.seedCount : undefined
+  if (bound === undefined) return seedCount
+  return Math.round(Math.min(bound.max, Math.max(bound.min, seedCount)))
+}
+
 /**
  * The representation each mode can always serve, and therefore the last resort
  * when neither the requested nor the standing one is available.
@@ -176,15 +202,24 @@ const ALWAYS_AVAILABLE: Record<SceneMode, RepresentationKind> = {
  * `current` is kept when the request is refused but the standing representation
  * still works: a user asking for something unavailable should not also lose the
  * picture they already had.
+ * The catalogue ceiling travels with this decision. A superposition streamline
+ * row without valid workload metadata is not "one safe seed"; it is a row whose
+ * safety cannot be established, so the resolver must not leave it selected.
  */
 export function resolveRepresentation(
   mode: SceneMode,
   orbital: OrbitalParameters,
   requested: RepresentationKind,
   current: RepresentationKind,
+  superpositionStreamlineSeedCountMax?: number,
 ): RepresentationKind {
   const available = (representation: RepresentationKind): boolean =>
-    capabilityFor({ mode, orbital, representation }).status === 'available'
+    capabilityFor({
+      mode,
+      orbital,
+      representation,
+      superpositionStreamlineSeedCountMax,
+    }).status === 'available'
   if (available(requested)) return requested
   if (available(current)) return current
   return ALWAYS_AVAILABLE[mode]
@@ -195,6 +230,9 @@ export const useSceneStore = create<SceneStore>()((set) => ({
   superpositionTerms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
   superpositionLabel: '1s + 2p_z (Bohr oscillation)',
   superpositionSliceResolutionFloor: MINIMUM_SLICE_RESOLUTION,
+  // No local route-bound guess: the selected server catalogue entry must
+  // arrive before a superposition current-field request can be proven safe.
+  superpositionStreamlineSeedCountMax: undefined,
   superpositionBasis: 'complex',
   superpositionZ: 1.0,
   aMu: 1.0,
@@ -229,6 +267,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         state.orbital,
         state.representation,
         state.representation,
+        state.superpositionStreamlineSeedCountMax,
       )
       return {
         mode,
@@ -241,12 +280,20 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           state.resolution,
           state.superpositionSliceResolutionFloor,
         ),
+        seedCount: clampSeedCount(
+          mode,
+          state.orbital,
+          representation,
+          state.seedCount,
+          state.superpositionStreamlineSeedCountMax,
+        ),
       }
     }),
   setSuperposition: (
     superpositionTerms,
     superpositionLabel,
     superpositionSliceResolutionFloor,
+    superpositionStreamlineSeedCountMax,
   ) =>
     set((state) => {
       const representation = resolveRepresentation(
@@ -254,11 +301,13 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         state.orbital,
         state.representation,
         state.representation,
+        superpositionStreamlineSeedCountMax,
       )
       return {
         superpositionTerms,
         superpositionLabel,
         superpositionSliceResolutionFloor,
+        superpositionStreamlineSeedCountMax,
         representation,
         timeAu: 0,
         playing: false,
@@ -269,11 +318,19 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           state.resolution,
           superpositionSliceResolutionFloor,
         ),
+        seedCount: clampSeedCount(
+          state.mode,
+          state.orbital,
+          representation,
+          state.seedCount,
+          superpositionStreamlineSeedCountMax,
+        ),
       }
     }),
   syncSuperpositionCapabilities: (
     terms,
     superpositionSliceResolutionFloor,
+    superpositionStreamlineSeedCountMax,
   ) =>
     set((state) => {
       if (state.superpositionTerms !== terms) return state
@@ -282,9 +339,11 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         state.orbital,
         state.representation,
         state.representation,
+        superpositionStreamlineSeedCountMax,
       )
       return {
         superpositionSliceResolutionFloor,
+        superpositionStreamlineSeedCountMax,
         representation,
         resolution: clampResolution(
           state.mode,
@@ -292,6 +351,42 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           representation,
           state.resolution,
           superpositionSliceResolutionFloor,
+        ),
+        seedCount: clampSeedCount(
+          state.mode,
+          state.orbital,
+          representation,
+          state.seedCount,
+          superpositionStreamlineSeedCountMax,
+        ),
+      }
+    }),
+  invalidateSuperpositionStreamlineCapability: () =>
+    set((state) => {
+      const representation = resolveRepresentation(
+        state.mode,
+        state.orbital,
+        state.representation,
+        state.representation,
+        undefined,
+      )
+      return {
+        superpositionStreamlineSeedCountMax: undefined,
+        representation,
+        playing: false,
+        resolution: clampResolution(
+          state.mode,
+          state.orbital,
+          representation,
+          state.resolution,
+          state.superpositionSliceResolutionFloor,
+        ),
+        seedCount: clampSeedCount(
+          state.mode,
+          state.orbital,
+          representation,
+          state.seedCount,
+          undefined,
         ),
       }
     }),
@@ -314,6 +409,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         orbital,
         state.representation,
         state.representation,
+        state.superpositionStreamlineSeedCountMax,
       )
       return {
         orbital,
@@ -325,6 +421,13 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           state.resolution,
           state.superpositionSliceResolutionFloor,
         ),
+        seedCount: clampSeedCount(
+          state.mode,
+          orbital,
+          representation,
+          state.seedCount,
+          state.superpositionStreamlineSeedCountMax,
+        ),
       }
     }),
   setRepresentation: (representation) =>
@@ -334,6 +437,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         state.orbital,
         representation,
         state.representation,
+        state.superpositionStreamlineSeedCountMax,
       )
       return {
         representation: resolved,
@@ -343,6 +447,13 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           resolved,
           state.resolution,
           state.superpositionSliceResolutionFloor,
+        ),
+        seedCount: clampSeedCount(
+          state.mode,
+          state.orbital,
+          resolved,
+          state.seedCount,
+          state.superpositionStreamlineSeedCountMax,
         ),
       }
     }),
@@ -361,7 +472,16 @@ export const useSceneStore = create<SceneStore>()((set) => ({
       ),
     })),
   setProbabilityMass: (probabilityMass) => set({ probabilityMass }),
-  setSeedCount: (seedCount) => set({ seedCount }),
+  setSeedCount: (seedCount) =>
+    set((state) => ({
+      seedCount: clampSeedCount(
+        state.mode,
+        state.orbital,
+        state.representation,
+        seedCount,
+        state.superpositionStreamlineSeedCountMax,
+      ),
+    })),
   setPointSize: (pointSize) => set({ pointSize }),
   setOpacity: (opacity) => set({ opacity }),
   setBloom: (bloom) => set({ bloom }),
@@ -377,6 +497,7 @@ export const useSceneStore = create<SceneStore>()((set) => ({
         orbital,
         state.representation,
         state.representation,
+        state.superpositionStreamlineSeedCountMax,
       )
       return {
         orbital,
@@ -387,6 +508,13 @@ export const useSceneStore = create<SceneStore>()((set) => ({
           representation,
           state.resolution,
           state.superpositionSliceResolutionFloor,
+        ),
+        seedCount: clampSeedCount(
+          state.mode,
+          orbital,
+          representation,
+          state.seedCount,
+          state.superpositionStreamlineSeedCountMax,
         ),
       }
     }),

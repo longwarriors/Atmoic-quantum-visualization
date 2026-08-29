@@ -78,6 +78,7 @@ _GENERAL_TOPOLOGY_CAPTURED_MASS_TOLERANCE = 5e-4
 _PAYLOAD_DIMENSIONLESS_DECIMALS = 6
 _PAYLOAD_SPEED_SIGNIFICANT_DIGITS = 12
 _RK4_VELOCITY_EVALUATIONS_PER_STEP = 5
+_SUPERPOSITION_CURRENT_SEED_LATTICE = 21
 _MINIMUM_CURRENT_COULOMB_SCALE = float(np.finfo(np.float64).tiny ** 0.25)
 _MAXIMUM_CURRENT_COULOMB_SCALE = float(np.finfo(np.float64).max ** 0.25)
 
@@ -823,12 +824,16 @@ class CurrentFieldWorkEstimate:
     for the stages and once more at the candidate point, in addition to the
     initial seed evaluation.  Multiplying that count by the number of active
     hydrogenic terms therefore tracks the expensive wavefunction work rather
-    than merely counting seeds.
+    than merely counting seeds. A general superposition also evaluates the
+    initial velocity of every density-live candidate before choosing usable
+    seeds; ``seed_filter_evaluations_per_term`` is the conservative lattice-wide
+    bound for that pass.
     """
 
     active_terms: int
     requested_seeds: int
     max_points_per_line: int
+    seed_filter_evaluations_per_term: int = 0
 
     @property
     def serialized_path_samples(self) -> int:
@@ -837,9 +842,9 @@ class CurrentFieldWorkEstimate:
     @property
     def velocity_evaluations_per_term(self) -> int:
         if self.max_points_per_line == 0:
-            return 0
+            return self.seed_filter_evaluations_per_term
         stages_per_seed = 1 + _RK4_VELOCITY_EVALUATIONS_PER_STEP * (self.max_points_per_line - 1)
-        return self.requested_seeds * stages_per_seed
+        return self.seed_filter_evaluations_per_term + self.requested_seeds * stages_per_seed
 
     @property
     def term_velocity_evaluations(self) -> int:
@@ -881,11 +886,14 @@ def estimate_superposition_current_workload(
     *,
     seed_count: int = 48,
     arc_step: float | None = None,
+    lattice: int = _SUPERPOSITION_CURRENT_SEED_LATTICE,
 ) -> CurrentFieldWorkEstimate:
     """Bound RK4 work and output size before building a superposition field."""
 
     if seed_count < 1:
         raise ValueError("seed_count must be positive")
+    if lattice < 1:
+        raise ValueError("lattice must be positive")
     if len(state.terms) > 8:
         raise ValueError("current-field diagnostics support at most 8 active terms")
     _validate_current_numeric_scale(z=state.z, a_mu=state.a_mu)
@@ -895,7 +903,12 @@ def estimate_superposition_current_workload(
         return CurrentFieldWorkEstimate(len(state.terms), seed_count, 0)
 
     max_points = _streamline_point_budget(4.0 * superposition_extent(state), resolved_arc_step)
-    return CurrentFieldWorkEstimate(len(state.terms), seed_count, max_points)
+    return CurrentFieldWorkEstimate(
+        len(state.terms),
+        seed_count,
+        max_points,
+        seed_filter_evaluations_per_term=lattice**3,
+    )
 
 
 def build_current_field(
@@ -1417,7 +1430,7 @@ def build_superposition_current_field(
     time: float = 0.0,
     seed_count: int = 48,
     arc_step: float | None = None,
-    lattice: int = 21,
+    lattice: int = _SUPERPOSITION_CURRENT_SEED_LATTICE,
 ) -> SuperpositionCurrentPayload:
     r"""Build probability-flow streamlines of :math:`\Psi(t)`.
 
@@ -1462,6 +1475,18 @@ def build_superposition_current_field(
         live = rho > density_floor
         np.divide(current, rho[:, None], out=result, where=live[:, None])
         return result
+
+    if keep.size and not analytic_zero_current:
+        # A requested seed means a usable path seed, not merely one of the
+        # densest lattice points.  The origin is the density maximum for states
+        # such as 1s + 3d_z2, but its instantaneous velocity is exactly zero;
+        # truncating first therefore made every request deterministically lose
+        # one line.  Filter only strict, representable zero here -- no epsilon
+        # may erase a physically weak but finite current -- and rank the
+        # remaining candidates by density afterwards.
+        initial_speed = stable_vector_magnitudes(velocity(candidates[keep]))
+        moving = np.isfinite(initial_speed) & (initial_speed > 0.0)
+        keep = keep[moving]
 
     keep = keep[np.argsort(density[keep])[::-1]][:seed_count]
 
@@ -1533,12 +1558,21 @@ def build_superposition_current_field(
             )
     normalized = absolute / continuity_scale if continuity_scale > 0.0 else 0.0
 
+    warnings: list[str] = []
+    if not analytic_zero_current and not lines:
+        warnings.append(
+            "no drawable streamlines were resolved at this instant; "
+            "the sampled instantaneous probability current is zero or stalls "
+            "before a drawable path forms"
+        )
+
     return SuperpositionCurrentPayload(
         metadata=superposition_metadata(
             state,
             time=time,
             observable=ObservableKind.PROBABILITY_CURRENT,
             representation=RepresentationKind.STREAMLINES,
+            warnings=warnings,
         ),
         lines=lines,
         speed=speeds,

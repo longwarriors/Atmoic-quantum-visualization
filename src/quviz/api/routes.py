@@ -342,6 +342,7 @@ def _enforce_request_workload(
     work_per_term: int,
     limit: int,
     unit: str,
+    multiplicand_label: str = "active terms",
 ) -> None:
     """Reject a combined request before a scientific builder allocates its arrays."""
 
@@ -351,7 +352,7 @@ def _enforce_request_workload(
             status_code=422,
             detail=(
                 f"{operation} request work is {cost} {unit} "
-                f"({active_terms} active terms * {work_per_term}); limit is {limit}"
+                f"({active_terms} {multiplicand_label} * {work_per_term}); limit is {limit}"
             ),
         )
 
@@ -365,6 +366,7 @@ def _enforce_current_field_workload(operation: str, estimate: CurrentFieldWorkEs
         work_per_term=estimate.max_points_per_line,
         limit=_CURRENT_FIELD_PATH_SAMPLE_LIMIT,
         unit="path samples",
+        multiplicand_label="requested seeds",
     )
     _enforce_request_workload(
         operation,
@@ -373,6 +375,33 @@ def _enforce_current_field_workload(operation: str, estimate: CurrentFieldWorkEs
         limit=_CURRENT_FIELD_WORK_LIMIT,
         unit="term-velocity evaluations",
     )
+
+
+def _superposition_current_seed_count_max(state: SuperpositionState) -> int:
+    """Largest route-valid seed count that both current-field guards accept.
+
+    The web client never sends an explicit ``arc_step``, so one one-seed
+    estimate at the route default supplies the per-seed output and RK4 costs.
+    The same estimator fields and limits used by
+    :func:`_enforce_current_field_workload` derive the catalogue ceiling; the
+    browser therefore consumes the guard's answer instead of reimplementing
+    its geometric workload model.
+    """
+
+    one_seed = estimate_superposition_current_workload(state, seed_count=1)
+    for seed_count in range(_MAXIMUM_SUPERPOSITION_CURRENT_SEEDS, 0, -1):
+        candidate = CurrentFieldWorkEstimate(
+            active_terms=one_seed.active_terms,
+            requested_seeds=seed_count,
+            max_points_per_line=one_seed.max_points_per_line,
+            seed_filter_evaluations_per_term=one_seed.seed_filter_evaluations_per_term,
+        )
+        try:
+            _enforce_current_field_workload("superposition current-field", candidate)
+        except HTTPException:
+            continue
+        return seed_count
+    raise ValueError("superposition current-field workload admits no positive seed_count")
 
 
 def _hydrogenic_beat_period_au(first_n: int, second_n: int) -> float:
@@ -396,6 +425,16 @@ class SuperpositionCatalogEntry(BaseModel):
         description=(
             "First odd uniform grid accepted by the superposition slice builder for this "
             "preset; independent of Z and a_mu because all relevant lengths scale together."
+        ),
+    )
+    streamline_seed_count_max: int = Field(
+        ge=1,
+        le=_MAXIMUM_SUPERPOSITION_CURRENT_SEEDS,
+        description=(
+            "Largest seed_count accepted by both superposition current-field workload "
+            "guards for this preset in either basis at the route-default arc_step; "
+            "independent of Z and a_mu because the extent and default arc step scale "
+            "together."
         ),
     )
 
@@ -490,11 +529,17 @@ def _superposition_catalog_entry(
 ) -> dict[str, object]:
     """Attach the actual builder floor rather than a duplicated client literal."""
 
-    state = _parse_superposition(
+    complex_state = _parse_superposition(
         terms,
         BasisKind.COMPLEX,
-        maximum_n=_MAXIMUM_SLICE_N,
-        operation="superposition catalogue slice",
+        maximum_n=_MAXIMUM_CURRENT_FIELD_N,
+        operation="superposition catalogue current-field",
+    )
+    real_state = _parse_superposition(
+        terms,
+        BasisKind.REAL,
+        maximum_n=_MAXIMUM_CURRENT_FIELD_N,
+        operation="superposition catalogue current-field",
     )
     return {
         "id": preset_id,
@@ -502,7 +547,14 @@ def _superposition_catalog_entry(
         "terms": terms,
         "period_au": period_au,
         "note": note,
-        "slice_resolution_floor": superposition_slice_resolution_floor(state),
+        "slice_resolution_floor": superposition_slice_resolution_floor(complex_state),
+        # The panel may render one preset in either basis.  Publish the safe
+        # intersection so changing basis cannot turn an advertised request
+        # into one the workload guard rejects.
+        "streamline_seed_count_max": min(
+            _superposition_current_seed_count_max(complex_state),
+            _superposition_current_seed_count_max(real_state),
+        ),
     }
 
 

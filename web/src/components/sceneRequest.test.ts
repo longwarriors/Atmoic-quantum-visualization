@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { planSceneRequest } from '../api/capability'
 import type { SceneIdentityInputs } from './sceneRequest'
 import {
   createFetchCoordinator,
@@ -43,6 +44,7 @@ describe('selectSceneRequestInputs', () => {
     ...snapshot(),
     superpositionBasis: 'complex' as const,
     superpositionSliceResolutionFloor: 65,
+    superpositionStreamlineSeedCountMax: 40,
     superpositionZ: 4,
     plane: 'xz' as const,
     sliceObservable: 'probability_density' as const,
@@ -53,6 +55,7 @@ describe('selectSceneRequestInputs', () => {
 
     expect(selected.orbital).toEqual({ ...source.orbital, z: 4 })
     expect(selected.superpositionBasis).toBe('complex')
+    expect(selected.superpositionStreamlineSeedCountMax).toBe(40)
     expect(selected.timeAu).toBe(0)
   })
 
@@ -60,6 +63,18 @@ describe('selectSceneRequestInputs', () => {
     const selected = selectSceneRequestInputs({ ...source, mode: 'eigenstate' })
 
     expect(selected.orbital.z).toBe(source.orbital.z)
+  })
+
+  it('preserves an unknown catalogue ceiling so the first streamline plan fails closed', () => {
+    const selected = selectSceneRequestInputs({
+      ...source,
+      mode: 'superposition',
+      representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: undefined,
+    })
+
+    expect(selected.superpositionStreamlineSeedCountMax).toBeUndefined()
+    expect(planSceneRequest(selected)).toMatchObject({ status: 'unsupported' })
   })
 })
 

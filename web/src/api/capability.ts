@@ -112,6 +112,8 @@ export interface CapabilityInputs {
   representation: RepresentationKind
   /** Builder-derived floor supplied by the selected superposition catalogue entry. */
   superpositionSliceResolutionFloor?: number
+  /** Workload-safe seed ceiling supplied by the selected catalogue entry. */
+  superpositionStreamlineSeedCountMax?: number
 }
 
 export interface SceneRequestInputs extends CapabilityInputs {
@@ -395,6 +397,28 @@ function catalogSliceResolutionFloor(value: number | undefined): number {
   return value
 }
 
+/**
+ * A catalogue ceiling inside the route's outer seed range.
+ *
+ * Missing or corrupt metadata has no numeric fallback.  Without the builder's
+ * published ceiling the browser cannot prove that even the route-minimum
+ * request belongs to this state, so the whole capability must fail closed
+ * instead of inventing a workload contract.
+ */
+function catalogStreamlineSeedCountMax(value: number | undefined): number | null {
+  const routeBound =
+    CAPABILITY_ROUTE_CONSTRAINTS.superpositionCurrent.parameters.seedCount.uiBound
+  if (
+    value === undefined ||
+    !Number.isInteger(value) ||
+    value < routeBound.min ||
+    value > routeBound.max
+  ) {
+    return null
+  }
+  return value
+}
+
 function eigenstateIsosurface(orbital: OrbitalParameters): Capability {
   const stateLimit = CAPABILITY_ROUTE_CONSTRAINTS.eigenstateIsosurface.state
   // routes.py `isosurface`: n le=4, l le=3, m ge=-3 le=3.
@@ -575,6 +599,7 @@ function eigenstateCapability(
 function superpositionCapability(
   representation: RepresentationKind,
   sliceResolutionFloor?: number,
+  streamlineSeedCountMax?: number,
 ): Capability {
   switch (representation) {
     case 'point_cloud':
@@ -621,12 +646,28 @@ function superpositionCapability(
         serverValidation: SLICE_SERVER_VALIDATION,
       }
     case 'streamlines': {
+      const routeSeedBound =
+        CAPABILITY_ROUTE_CONSTRAINTS.superpositionCurrent.parameters.seedCount.uiBound
+      const catalogueSeedMax = catalogStreamlineSeedCountMax(streamlineSeedCountMax)
+      if (catalogueSeedMax === null) {
+        return {
+          status: 'unsupported',
+          reason:
+            '当前叠加态目录没有提供有效的流线工作量上限；为避免发出无法证明安全的请求，' +
+            '概率流线已关闭。请重新加载目录后再试。',
+        }
+      }
       return {
         status: 'available',
         endpoint: SUPERPOSITION_CURRENT_FIELD_ENDPOINT,
+        // The route's outer range is 1..40.  Its catalogue narrows the upper
+        // bound with the same path-sample and RK4 guards used by the endpoint,
+        // because path length depends on the selected state.
         parameters: {
-          seedCount:
-            CAPABILITY_ROUTE_CONSTRAINTS.superpositionCurrent.parameters.seedCount.uiBound,
+          seedCount: {
+            ...routeSeedBound,
+            max: catalogueSeedMax,
+          },
           timeAu: TIME_BOUND,
           aMu: A_MU_BOUND,
         },
@@ -649,9 +690,14 @@ export function capabilityFor({
   orbital,
   representation,
   superpositionSliceResolutionFloor,
+  superpositionStreamlineSeedCountMax,
 }: CapabilityInputs): Capability {
   return mode === 'superposition'
-    ? superpositionCapability(representation, superpositionSliceResolutionFloor)
+    ? superpositionCapability(
+        representation,
+        superpositionSliceResolutionFloor,
+        superpositionStreamlineSeedCountMax,
+      )
     : eigenstateCapability(orbital, representation)
 }
 

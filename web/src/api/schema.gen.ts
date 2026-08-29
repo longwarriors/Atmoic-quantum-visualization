@@ -512,6 +512,11 @@ export interface components {
              * @description First odd uniform grid accepted by the superposition slice builder for this preset; independent of Z and a_mu because all relevant lengths scale together.
              */
             slice_resolution_floor: number;
+            /**
+             * Streamline Seed Count Max
+             * @description Largest seed_count accepted by both superposition current-field workload guards for this preset in either basis at the route-default arc_step; independent of Z and a_mu because the extent and default arc step scale together.
+             */
+            streamline_seed_count_max: number;
             /** Terms */
             terms: string;
         };

@@ -304,6 +304,7 @@ def test_live_installation_instructions_consume_committed_lockfiles() -> None:
 def test_api_reference_does_not_call_the_high_n_slice_floor_a_validity_proof() -> None:
     api = (ROOT / "docs/reference/api.md").read_text(encoding="utf-8")
     status = (ROOT / "docs/project/status.md").read_text(encoding="utf-8")
+    quality_gates = (ROOT / "docs/reference/quality-gates.md").read_text(encoding="utf-8")
 
     assert "不是高 $n$ 收敛性或物理准确性的证书" in api
     assert "花的是采样数" not in api
@@ -312,8 +313,12 @@ def test_api_reference_does_not_call_the_high_n_slice_floor_a_validity_proof() -
     en_dash = "\N{EN DASH}"
     assert f"active_terms {multiplication} resolution³" in api
     assert f"active_terms {multiplication} resolution²" in api
-    assert f"active_terms {multiplication} seed_count" in api
-    assert f"1 + 5(max_points {minus_sign} 1)" in api
+    assert f"active_terms {multiplication} [seed_filter_evaluations_per_term" in api
+    assert f"seed_count {multiplication} (1 + 5(max_points {minus_sign} 1))" in api
+    assert f"active_terms {multiplication} seed_count {multiplication}" not in api
+    assert "seed_filter_evaluations_per_term = 21³" in api
+    assert "八项态 11/12 边界" in quality_gates
+    assert "八项态 12/13 边界" not in quality_gates
     assert "2,000,000 term-velocity evaluations" in api
     assert "100,000 serialized path samples" in api
     assert f"1{en_dash}96" in api
@@ -348,7 +353,7 @@ def test_sampling_tutorial_describes_the_gated_adaptive_tail() -> None:
     assert "`tests/test_sampling.py`" in sampling
 
 
-def test_probability_flow_docs_cover_scale_covariance_and_playback() -> None:
+def test_probability_flow_docs_cover_scale_covariance_and_discovery() -> None:
     quality = (ROOT / "docs/reference/quality-gates.md").read_text(encoding="utf-8")
     current = (ROOT / "docs/concepts/probability-current.md").read_text(encoding="utf-8")
     frontend = (ROOT / "docs/tutorials/frontend-rendering.md").read_text(encoding="utf-8")
@@ -357,6 +362,7 @@ def test_probability_flow_docs_cover_scale_covariance_and_playback() -> None:
     assert "均仅在 $Z=1$ 下验证" not in quality
     assert "概率流 oracle 测试仅在 $Z=1$ 下验证" not in status
     assert "$(Z/a_\\mu)^3$" in current
+    assert "服务端 orbital catalog 的 `3d-complex`" in frontend
     assert "`period_au=0` 的简并态不执行播放" in frontend
     assert "`aria-disabled`" in frontend
     assert "`aria-describedby`" in frontend

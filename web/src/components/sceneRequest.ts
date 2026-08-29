@@ -26,6 +26,7 @@ export interface SceneInputSource {
   seedCount: number
   superpositionTerms: string
   superpositionSliceResolutionFloor: number
+  superpositionStreamlineSeedCountMax: number | undefined
   superpositionBasis: BasisKind
   superpositionZ: number
   aMu: number
@@ -50,6 +51,7 @@ export function selectSceneRequestInputs(state: SceneInputSource): SceneRequestI
     seedCount: state.seedCount,
     superpositionTerms: state.superpositionTerms,
     superpositionSliceResolutionFloor: state.superpositionSliceResolutionFloor,
+    superpositionStreamlineSeedCountMax: state.superpositionStreamlineSeedCountMax,
     superpositionBasis: state.superpositionBasis,
     aMu: state.aMu,
     timeAu: state.timeAu,

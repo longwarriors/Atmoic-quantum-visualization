@@ -14,6 +14,7 @@ import type { OrbitalParameters, RepresentationKind } from '../api/types'
 import { useSceneStore, type SceneMode } from '../state/useSceneStore'
 import { mount, type MountedTree } from '../test/mount'
 import { ControlPanel } from './ControlPanel'
+import { selectSceneRequestInputs } from './sceneRequest'
 
 /**
  * The panel's answer to "can this cell be drawn?" must come from
@@ -32,6 +33,11 @@ const capabilityOverride = vi.hoisted(() => ({
   current: null as ((inputs: CapabilityInputs) => Capability) | null,
 }))
 
+const superpositionCatalogueFailure = vi.hoisted(() => ({
+  current: null as Error | null,
+  omitSelected: false,
+}))
+
 vi.mock('../api/capability', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/capability')>()
   return {
@@ -42,13 +48,14 @@ vi.mock('../api/capability', async (importOriginal) => {
 })
 
 // The catalogue fetches are not what this file measures, and a jsdom worker
-// that really reaches for 127.0.0.1:8000 is both slow and flaky. Two entries in
-// each catalogue, one of which matches the store's initial state, so the
+// that really reaches for 127.0.0.1:8000 is both slow and flaky. Fixture entries
+// include one that matches the store's initial state, so the
 // "currently selected" branch of each strip is rendered as well as the other.
 const CATALOGUE = vi.hoisted(() => ({
   presets: [
     { id: 'p2pz', label: '2p_z', n: 2, l: 1, m: 0, z: 1, basis: 'real' as const },
     { id: 'p3d', label: '3d_xy', n: 3, l: 2, m: -2, z: 1, basis: 'real' as const },
+    { id: '3d-complex', label: '3d, m=2', n: 3, l: 2, m: 2, z: 1, basis: 'complex' as const },
   ],
   mixtures: [
     {
@@ -58,6 +65,7 @@ const CATALOGUE = vi.hoisted(() => ({
       period_au: 39.6,
       note: 'Bohr oscillation',
       slice_resolution_floor: 65,
+      streamline_seed_count_max: 40,
     },
     {
       id: 'ring',
@@ -66,13 +74,30 @@ const CATALOGUE = vi.hoisted(() => ({
       period_au: 12.1,
       note: 'ring current',
       slice_resolution_floor: 65,
+      streamline_seed_count_max: 40,
+    },
+    {
+      id: '1s-3dz2',
+      label: '1s + 3d_z2',
+      terms: '1,0,0,0.7071067811865476;3,2,0,0.7071067811865476',
+      period_au: 14.137166941154069,
+      note: 'quadrupole breathing',
+      slice_resolution_floor: 103,
+      streamline_seed_count_max: 24,
     },
   ],
 }))
 
 vi.mock('../api/client', () => ({
   fetchCatalog: () => Promise.resolve(CATALOGUE.presets),
-  fetchSuperpositionCatalog: () => Promise.resolve(CATALOGUE.mixtures),
+  fetchSuperpositionCatalog: () =>
+    superpositionCatalogueFailure.current === null
+      ? Promise.resolve(
+          superpositionCatalogueFailure.omitSelected
+            ? CATALOGUE.mixtures.slice(1)
+            : CATALOGUE.mixtures,
+        )
+      : Promise.reject(superpositionCatalogueFailure.current),
 }))
 
 const PRISTINE = useSceneStore.getState()
@@ -106,6 +131,8 @@ const CELLS: [SceneMode, RepresentationKind, OrbitalParameters][] = [
 
 beforeEach(() => {
   capabilityOverride.current = null
+  superpositionCatalogueFailure.current = null
+  superpositionCatalogueFailure.omitSelected = false
   useSceneStore.setState(PRISTINE, true)
 })
 
@@ -120,6 +147,21 @@ async function panel(
   return tree
 }
 
+function panelCapability(
+  mode: SceneMode,
+  orbital: OrbitalParameters,
+  representation: RepresentationKind,
+): Capability {
+  const state = useSceneStore.getState()
+  return capabilityFor({
+    mode,
+    orbital,
+    representation,
+    superpositionSliceResolutionFloor: state.superpositionSliceResolutionFloor,
+    superpositionStreamlineSeedCountMax: state.superpositionStreamlineSeedCountMax,
+  })
+}
+
 function representationButton(tree: MountedTree, id: RepresentationKind): HTMLButtonElement {
   const button = tree.container.querySelector<HTMLButtonElement>(
     `button[data-representation="${id}"]`,
@@ -129,7 +171,7 @@ function representationButton(tree: MountedTree, id: RepresentationKind): HTMLBu
 }
 
 function isUnavailable(button: HTMLButtonElement): boolean {
-  return button.getAttribute('aria-disabled') === 'true'
+  return button.dataset.unavailable === 'true'
 }
 
 function parameterInput(tree: MountedTree, id: ParameterId): HTMLInputElement | null {
@@ -156,13 +198,13 @@ function choiceValues(tree: MountedTree, choice: 'plane' | 'observable'): string
 
 describe('ControlPanel representation buttons read the capability matrix', () => {
   it.each(CELLS)(
-    '%s / %s: aria-disabled iff the matrix refuses, and the title carries its reason',
+    '%s / %s: marks refused cells without disabling their explanation action',
     async (mode, representation, orbital) => {
       // The selected representation is deliberately the one under test, so the
       // cell is exercised as both "the button" and "the current scene".
       const tree = await panel(mode, representation, orbital)
       try {
-        const expected = capabilityFor({ mode, orbital, representation })
+        const expected = panelCapability(mode, orbital, representation)
         const button = representationButton(tree, representation)
 
         expect(isUnavailable(button)).toBe(expected.status !== 'available')
@@ -185,7 +227,7 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
       const tree = await panel(mode, selected, orbital)
       try {
         for (const representation of OFFERED) {
-          const expected = capabilityFor({ mode, orbital, representation })
+          const expected = panelCapability(mode, orbital, representation)
           const button = representationButton(tree, representation)
           expect(isUnavailable(button), representation).toBe(expected.status !== 'available')
           if (expected.status !== 'available') {
@@ -210,6 +252,29 @@ describe('ControlPanel representation buttons read the capability matrix', () =>
       // "not implemented" is not "unsupported": the panel must not claim the
       // physics forbids a time-dependent point cloud.
       expect(button.title).toContain('这不是 physics 限制')
+    } finally {
+      await tree.unmount()
+    }
+  })
+})
+
+describe('probability-flow discovery', () => {
+  it('explains a refused zero-flow choice and offers an explicit catalogue example', async () => {
+    const tree = await panel('eigenstate', 'point_cloud', REAL_ORBITAL)
+    try {
+      const refused = representationButton(tree, 'streamlines')
+      const before = useSceneStore.getState().orbital
+      await press(refused, 'the refused streamline explanation action')
+      expect(useSceneStore.getState().orbital).toEqual(before)
+      expect(tree.container.querySelector('[data-representation-notice="streamlines"]')).not.toBeNull()
+
+      const example = tree.container.querySelector<HTMLButtonElement>('[data-flow-example]')
+      await press(example, 'the explicit probability-flow example')
+      expect(useSceneStore.getState()).toMatchObject({
+        mode: 'eigenstate',
+        representation: 'streamlines',
+        orbital: { n: 3, l: 2, m: 2, z: 1, basis: 'complex' },
+      })
     } finally {
       await tree.unmount()
     }
@@ -286,7 +351,7 @@ describe('ControlPanel sliders are the capability matrix bounds', () => {
     async (mode, representation, orbital) => {
       const tree = await panel(mode, representation, orbital)
       try {
-        const capability = capabilityFor({ mode, orbital, representation })
+        const capability = panelCapability(mode, orbital, representation)
         const bounds = capability.status === 'available' ? capability.parameters : {}
         for (const id of EVERY_PARAMETER) {
           const bound = bounds[id]
@@ -320,6 +385,81 @@ describe('ControlPanel sliders are the capability matrix bounds', () => {
       expect(parameterInput(stationary, 'seedCount')?.max).toBe('96')
     } finally {
       await stationary.unmount()
+    }
+  })
+
+  it('uses a selected catalogue ceiling below the route outer maximum', async () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: 40,
+      seedCount: 40,
+    })
+    const tree = await mount(createElement(ControlPanel))
+    try {
+      const mixtures = tree.container.querySelectorAll<HTMLButtonElement>('.mixture-list .preset')
+      await press(mixtures[2], 'the 1s + 3d_z2 mixture')
+
+      const state = useSceneStore.getState()
+      expect(state.superpositionTerms).toBe(CATALOGUE.mixtures[2].terms)
+      expect(state.superpositionStreamlineSeedCountMax).toBe(24)
+      expect(state.seedCount).toBe(24)
+      expect(parameterInput(tree, 'seedCount')?.max).toBe('24')
+      expect(planSceneRequest(selectSceneRequestInputs(state))).toMatchObject({
+        status: 'available',
+        endpoint: '/api/superposition/current-field',
+        params: { seed_count: 24 },
+      })
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('invalidates stale seed metadata when the catalogue request or parser rejects', async () => {
+    superpositionCatalogueFailure.current = new Error('catalogue unavailable or corrupt')
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 24,
+      superpositionStreamlineSeedCountMax: 24,
+    })
+
+    const tree = await mount(createElement(ControlPanel))
+    try {
+      const state = useSceneStore.getState()
+      expect(tree.container.querySelectorAll('.mixture-list .preset')).toHaveLength(0)
+      expect(state.superpositionStreamlineSeedCountMax).toBeUndefined()
+      expect(state.representation).toBe('isosurface')
+      expect(representationButton(tree, 'streamlines').dataset.unavailable).toBe('true')
+      expect(planSceneRequest(selectSceneRequestInputs(state))).toMatchObject({
+        status: 'available',
+        endpoint: '/api/superposition/isosurface',
+      })
+    } finally {
+      await tree.unmount()
+    }
+  })
+
+  it('invalidates stale seed metadata when the catalogue omits the selected mixture', async () => {
+    superpositionCatalogueFailure.omitSelected = true
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 24,
+      superpositionStreamlineSeedCountMax: 24,
+    })
+
+    const tree = await mount(createElement(ControlPanel))
+    try {
+      const state = useSceneStore.getState()
+      expect(state.superpositionStreamlineSeedCountMax).toBeUndefined()
+      expect(state.representation).toBe('isosurface')
+      expect(planSceneRequest(selectSceneRequestInputs(state))).toMatchObject({
+        status: 'available',
+        endpoint: '/api/superposition/isosurface',
+      })
+    } finally {
+      await tree.unmount()
     }
   })
 
@@ -396,7 +536,7 @@ describe('ControlPanel plane and observable pickers read the capability matrix',
     async (mode, representation, orbital) => {
       const tree = await panel(mode, representation, orbital)
       try {
-        const capability = capabilityFor({ mode, orbital, representation })
+        const capability = panelCapability(mode, orbital, representation)
         const declared = capability.status === 'available' ? capability : undefined
         for (const [choice, options] of [
           ['plane', declared?.planes],
@@ -632,7 +772,7 @@ describe('ControlPanel controls write to the store', () => {
     const tree = await panel('eigenstate', 'point_cloud')
     try {
       const presets = tree.container.querySelectorAll<HTMLButtonElement>('.preset-strip .preset')
-      expect(presets).toHaveLength(2)
+      expect(presets).toHaveLength(3)
       expect(presets[0].className).toContain('active')
 
       await press(presets[1], 'the second preset')
@@ -686,7 +826,7 @@ describe('ControlPanel controls write to the store', () => {
       expect(useSceneStore.getState().mode).toBe('superposition')
 
       const mixtures = tree.container.querySelectorAll<HTMLButtonElement>('.mixture-list .preset')
-      expect(mixtures).toHaveLength(2)
+      expect(mixtures).toHaveLength(3)
       expect(mixtures[0].className).toContain('active')
       await press(mixtures[1], 'the second mixture')
       expect(useSceneStore.getState().superpositionTerms).toBe(CATALOGUE.mixtures[1].terms)

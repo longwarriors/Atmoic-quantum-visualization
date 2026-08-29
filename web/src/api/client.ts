@@ -25,6 +25,10 @@ import type {
 
 export { parsePointCloud } from './qvpc'
 
+/** OpenAPI bounds of SuperpositionCatalogEntry.streamline_seed_count_max. */
+const MINIMUM_SUPERPOSITION_STREAMLINE_SEEDS = 1
+const MAXIMUM_SUPERPOSITION_STREAMLINE_SEEDS = 40
+
 function queryString(params: object): string {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => search.set(key, String(value)))
@@ -114,6 +118,7 @@ function parseSuperpositionPreset(value: unknown, index: number): SuperpositionP
     period_au,
     note,
     slice_resolution_floor,
+    streamline_seed_count_max,
   } = value
   if (typeof id !== 'string' || !id.trim()) throw new Error(`${location}.id must be a string`)
   if (typeof label !== 'string' || !label.trim()) {
@@ -138,6 +143,18 @@ function parseSuperpositionPreset(value: unknown, index: number): SuperpositionP
       `${MINIMUM_SLICE_RESOLUTION}..${MAXIMUM_SLICE_RESOLUTION}`,
     )
   }
+  if (
+    typeof streamline_seed_count_max !== 'number' ||
+    !Number.isInteger(streamline_seed_count_max) ||
+    streamline_seed_count_max < MINIMUM_SUPERPOSITION_STREAMLINE_SEEDS ||
+    streamline_seed_count_max > MAXIMUM_SUPERPOSITION_STREAMLINE_SEEDS
+  ) {
+    throw new Error(
+      `${location}.streamline_seed_count_max must be an integer in ` +
+        `${MINIMUM_SUPERPOSITION_STREAMLINE_SEEDS}..${MAXIMUM_SUPERPOSITION_STREAMLINE_SEEDS}`,
+    )
+  }
+
   return {
     id,
     label,
@@ -145,6 +162,7 @@ function parseSuperpositionPreset(value: unknown, index: number): SuperpositionP
     period_au,
     note,
     slice_resolution_floor,
+    streamline_seed_count_max,
   }
 }
 

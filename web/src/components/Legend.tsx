@@ -138,6 +138,38 @@ export function Legend({ status }: { status: SceneStatus }) {
     )
   }
 
+  if (
+    representation === 'streamlines' &&
+    status.superposition !== undefined &&
+    status.continuityScaleKind === 'analytic_zero_current'
+  ) {
+    return (
+      <div className="legend" data-empty-flow="analytic_zero_current">
+        <div className="legend-title">解析零概率流</div>
+        <p>
+          该叠加态的概率流经解析判据严格为零，因此服务端有意返回空流线；空视图不是加载失败，
+          也没有可供颜色编码的 |j|/ρ 速率。
+        </p>
+      </div>
+    )
+  }
+
+  if (
+    representation === 'streamlines' &&
+    status.lineCount === 0 &&
+    status.continuityScaleKind !== 'analytic_zero_current'
+  ) {
+    return (
+      <div className="legend" data-empty-flow="instantaneous_empty_current">
+        <div className="legend-title">当前时刻无可绘制流线</div>
+        <p>
+          服务端在该时刻没有解析出可绘制的概率流线。这是已到达的空场结果，不是加载失败；
+          当前也没有可供颜色编码的 |j|/ρ 速率。
+        </p>
+      </div>
+    )
+  }
+
   if (representation === 'streamlines') {
     return (
       <div className="legend">

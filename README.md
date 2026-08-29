@@ -18,6 +18,8 @@ Quantum state → Observable → Representation → Scene contract → GPU rende
 
 当前 Alpha 基线已覆盖解析氢样轨道、实/复球谐、概率密度、相位、定态与解析含时叠加态的概率流、分离逆 CDF 点采样，以及 $\psi$/相位平面切片；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$。FastAPI/QVPC/1、typed JSON Scene payload 与 React/Three.js 已端到端接线。它仍不代表通用 TISE/TDSE、一般叠加态采样或多电子求解器已经完成。
 
+默认 2p_z 实基态的概率流严格为零，因此“概率流线”不会伪造一张流图；该按钮可点击查看原因，旁边的显式操作会从服务端 orbital catalog 载入 `3d, m=2, complex` 示例并切换到真实概率流。
+
 请先阅读文档中的[当前状态](docs/project/status.md)；愿景或路线图中的能力不代表今天已经实现。
 
 ## 项目结构

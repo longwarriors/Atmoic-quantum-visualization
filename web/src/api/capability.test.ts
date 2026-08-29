@@ -57,6 +57,7 @@ const inputs = (patch: Partial<SceneRequestInputs> = {}): SceneRequestInputs => 
   probabilityMass: 0.9,
   seedCount: 48,
   superpositionTerms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
+  superpositionStreamlineSeedCountMax: 40,
   superpositionBasis: 'complex',
   aMu: 1,
   timeAu: 0,
@@ -104,6 +105,7 @@ describe('capabilityFor: superposition x streamlines', () => {
         mode: 'superposition',
         orbital: orbital(),
         representation: 'streamlines',
+        superpositionStreamlineSeedCountMax: 40,
       }),
     )
     expect(capability.endpoint).toBe('/api/superposition/current-field')
@@ -272,6 +274,7 @@ describe('server numerical validation metadata', () => {
         mode,
         orbital: state,
         representation,
+        superpositionStreamlineSeedCountMax: 40,
       }),
     )
     expect(capability.serverValidation).toBeUndefined()
@@ -484,6 +487,48 @@ describe('planSceneRequest: every value it sends is inside the declared bound', 
     expect(plan.params.time).toBe(1000)
   })
 
+  it('uses the selected catalogue workload ceiling instead of the route outer maximum', () => {
+    const capability = available(
+      capabilityFor({
+        mode: 'superposition',
+        orbital: orbital(),
+        representation: 'streamlines',
+        superpositionStreamlineSeedCountMax: 24,
+      }),
+    )
+    expect(capability.parameters.seedCount).toEqual({ min: 1, max: 24, step: 1 })
+
+    const plan = planSceneRequest(
+      inputs({
+        mode: 'superposition',
+        representation: 'streamlines',
+        seedCount: 40,
+        superpositionStreamlineSeedCountMax: 24,
+      }),
+    )
+    if (plan.status !== 'available') throw new Error('unreachable')
+    expect(plan.params.seed_count).toBe(24)
+  })
+
+  it('fails closed without a request when catalogue workload metadata is absent or corrupt', () => {
+    for (const superpositionStreamlineSeedCountMax of [undefined, 0, 41, 24.5]) {
+      const requestInputs = inputs({
+        mode: 'superposition',
+        representation: 'streamlines',
+        superpositionStreamlineSeedCountMax,
+      })
+      const capability = capabilityFor(requestInputs)
+      expect(capability.status).toBe('unsupported')
+      if (capability.status === 'available') throw new Error('unreachable')
+      expect(capability.reason).toContain('工作量上限')
+
+      const plan = planSceneRequest(requestInputs)
+      expect(plan.status).toBe('unsupported')
+      expect('endpoint' in plan).toBe(false)
+      expect('params' in plan).toBe(false)
+    }
+  })
+
   it('preserves clock values that lie on the slider grid', () => {
     for (const timeAu of [0, 8.4]) {
       const plan = planSceneRequest(
@@ -683,6 +728,7 @@ describe('capabilityFor: a_mu is declared only where the route reads it', () => 
         mode,
         orbital: orbital({ n: 3, l: 2, m: 1, basis: 'complex' }),
         representation,
+        superpositionStreamlineSeedCountMax: 40,
       }),
     )
     expect(capability.parameters.aMu !== undefined).toBe(declared)

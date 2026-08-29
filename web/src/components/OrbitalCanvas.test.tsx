@@ -494,6 +494,7 @@ describe('sceneAssetInputs', () => {
       seedCount: 33,
       superpositionTerms: '1,0,0,1',
       superpositionSliceResolutionFloor: 103,
+      superpositionStreamlineSeedCountMax: 24,
       superpositionBasis: 'real',
       superpositionZ: 4,
       aMu: 0.999456,
@@ -516,6 +517,7 @@ describe('sceneAssetInputs', () => {
       seedCount: 33,
       superpositionTerms: '1,0,0,1',
       superpositionSliceResolutionFloor: 103,
+      superpositionStreamlineSeedCountMax: 24,
       superpositionBasis: 'real',
       aMu: 0.999456,
       timeAu: 6.5,
@@ -834,6 +836,7 @@ describe('SceneRoot', () => {
     useSceneStore.setState({
       mode: 'superposition',
       representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: 40,
       superpositionTerms: '1,0,0,0.6;2,1,1,0.8',
       superpositionBasis: 'real',
       superpositionZ: 2,
@@ -868,6 +871,7 @@ describe('SceneRoot', () => {
     useSceneStore.setState({
       mode: 'superposition',
       representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: 40,
       fogStrength: 0.4,
       showGrid: true,
     })
@@ -1265,6 +1269,7 @@ describe('OrbitalCanvas', () => {
       mode: 'superposition',
       bloom: 0.42,
       representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: 40,
     })
     answerWith(superpositionCurrent())
     const { props, unmount } = await mountShell()
@@ -1293,7 +1298,11 @@ describe('OrbitalCanvas', () => {
   })
 
   it('keeps the post chain aligned with the arrived frame during a delayed kind switch', async () => {
-    useSceneStore.setState({ mode: 'superposition', representation: 'streamlines' })
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      superpositionStreamlineSeedCountMax: 40,
+    })
     requestedUrls = []
     let requestCount = 0
     let resolveIsosurface: ((response: Response) => void) | undefined

@@ -281,6 +281,51 @@ def test_weak_superposition_coherence_is_not_serialized_as_zero(epsilon: float) 
     assert payload.max_speed == max(max(line) for line in payload.speed)
 
 
+@pytest.mark.parametrize("time", [3.5, 7.0])
+@pytest.mark.parametrize("seed_count", [1, 2, 4, 24])
+def test_quadrupolar_superposition_seed_count_means_usable_lines(
+    time: float, seed_count: int
+) -> None:
+    coefficient = 1.0 / np.sqrt(2.0)
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, coefficient),
+            SuperpositionTerm(3, 2, 0, coefficient),
+        ),
+        basis=BasisKind.REAL,
+    )
+
+    payload = build_superposition_current_field(state, time=time, seed_count=seed_count)
+
+    assert payload.seed_count == seed_count
+    assert len(payload.lines) == seed_count
+    assert len(payload.speed) == seed_count
+    assert all(np.any(np.asarray(line[0]) != 0.0) for line in payload.lines)
+    assert payload.metadata.warnings == []
+
+
+def test_instantaneous_empty_superposition_flow_is_valid_and_warns() -> None:
+    coefficient = 1.0 / np.sqrt(2.0)
+    state = SuperpositionState(
+        terms=(
+            SuperpositionTerm(1, 0, 0, coefficient),
+            SuperpositionTerm(3, 2, 0, coefficient),
+        ),
+        basis=BasisKind.REAL,
+    )
+
+    payload = build_superposition_current_field(state, time=0.0, seed_count=1)
+
+    assert payload.lines == []
+    assert payload.speed == []
+    assert payload.seed_count == 0
+    assert payload.continuity_scale_kind == "transition_coherence"
+    assert any(
+        "no drawable streamlines" in warning and "at this instant" in warning
+        for warning in payload.metadata.warnings
+    )
+
+
 def test_common_tiny_z_and_a_mu_scale_retains_representable_stationary_current() -> None:
     state = SuperpositionState(
         terms=(SuperpositionTerm(2, 1, 1, 1.0),),

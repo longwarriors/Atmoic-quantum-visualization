@@ -32,6 +32,7 @@ describe('representation availability', () => {
   })
 
   it('keeps an already-available representation instead of falling to the mode default', () => {
+    useSceneStore.setState({ superpositionStreamlineSeedCountMax: 40 })
     read().setMode('superposition')
     read().setRepresentation('streamlines')
 
@@ -41,11 +42,37 @@ describe('representation availability', () => {
   })
 
   it('honours a representation the superposition routes do serve', () => {
+    useSceneStore.setState({ superpositionStreamlineSeedCountMax: 40 })
     read().setMode('superposition')
 
     read().setRepresentation('streamlines')
 
     expect(read().representation).toBe('streamlines')
+  })
+
+  it('clamps seed count to the selected current-field route', () => {
+    useSceneStore.setState({
+      seedCount: 96,
+      superpositionStreamlineSeedCountMax: 40,
+    })
+
+    read().setMode('superposition')
+    read().setRepresentation('streamlines')
+
+    expect(read().seedCount).toBe(40)
+  })
+
+  it('starts fail-closed instead of inventing the route ceiling before catalogue metadata arrives', () => {
+    expect(read().superpositionStreamlineSeedCountMax).toBeUndefined()
+
+    read().setMode('superposition')
+    read().setRepresentation('streamlines')
+
+    expect(read().representation).toBe('isosurface')
+    expect(planSceneRequest(selectSceneRequestInputs(read()))).toMatchObject({
+      status: 'available',
+      endpoint: '/api/superposition/isosurface',
+    })
   })
 
   it('returns to point_cloud when the mode becomes eigenstate again', () => {
@@ -344,6 +371,7 @@ describe('resolution follows the bound of the representation actually shown', ()
       '1,0,0,0.7071067811865476;3,2,0,0.7071067811865476',
       '1s + 3d_z²',
       103,
+      24,
     )
 
     expect(read().resolution).toBe(103)
@@ -384,7 +412,7 @@ describe('scene setters', () => {
     read().setTimeAu(12)
     read().setPlaying(true)
 
-    read().setSuperposition('1,0,0,1', '1s', 65)
+    read().setSuperposition('1,0,0,1', '1s', 65, 40)
 
     expect(read().superpositionTerms).toBe('1,0,0,1')
     expect(read().superpositionLabel).toBe('1s')
@@ -401,16 +429,98 @@ describe('scene setters', () => {
     })
     const terms = read().superpositionTerms
 
-    read().syncSuperpositionCapabilities(terms, 103)
+    read().syncSuperpositionCapabilities(terms, 103, 24)
     expect(read().superpositionSliceResolutionFloor).toBe(103)
+    expect(read().superpositionStreamlineSeedCountMax).toBe(24)
     expect(read().resolution).toBe(103)
 
     read().syncSuperpositionCapabilities(
       'a mixture selected after this fetch began',
       201,
+      7,
     )
     expect(read().superpositionSliceResolutionFloor).toBe(103)
+    expect(read().superpositionStreamlineSeedCountMax).toBe(24)
     expect(read().resolution).toBe(103)
+  })
+
+  it('atomically clamps the first streamline request to the selected catalogue ceiling', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 40,
+      superpositionStreamlineSeedCountMax: 40,
+    })
+
+    read().setSuperposition(
+      '1,0,0,0.7071067811865476;3,2,0,0.7071067811865476',
+      '1s + 3d_z²',
+      103,
+      24,
+    )
+
+    expect(read().superpositionStreamlineSeedCountMax).toBe(24)
+    expect(read().seedCount).toBe(24)
+    expect(planSceneRequest(selectSceneRequestInputs(read()))).toMatchObject({
+      status: 'available',
+      params: { seed_count: 24 },
+    })
+  })
+
+  it('atomically clamps a late catalogue sync before it can plan an unsafe request', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 40,
+      superpositionStreamlineSeedCountMax: 40,
+    })
+    const terms = read().superpositionTerms
+
+    read().syncSuperpositionCapabilities(terms, 65, 17)
+
+    expect(read().superpositionStreamlineSeedCountMax).toBe(17)
+    expect(read().seedCount).toBe(17)
+    expect(planSceneRequest(selectSceneRequestInputs(read()))).toMatchObject({
+      status: 'available',
+      params: { seed_count: 17 },
+    })
+  })
+
+  it('atomically leaves streamlines when a catalogue ceiling cannot prove a safe request', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 24,
+      superpositionStreamlineSeedCountMax: 24,
+    })
+    const terms = read().superpositionTerms
+
+    read().syncSuperpositionCapabilities(terms, 65, 0)
+
+    expect(read().superpositionStreamlineSeedCountMax).toBe(0)
+    expect(read().representation).toBe('isosurface')
+    expect(planSceneRequest(selectSceneRequestInputs(read()))).toMatchObject({
+      status: 'available',
+      endpoint: '/api/superposition/isosurface',
+    })
+  })
+
+  it('atomically invalidates a stale catalogue ceiling and leaves streamlines', () => {
+    useSceneStore.setState({
+      mode: 'superposition',
+      representation: 'streamlines',
+      seedCount: 24,
+      superpositionStreamlineSeedCountMax: 24,
+    })
+
+    read().invalidateSuperpositionStreamlineCapability()
+
+    expect(read().superpositionStreamlineSeedCountMax).toBeUndefined()
+    expect(read().representation).toBe('isosurface')
+    expect(planSceneRequest(selectSceneRequestInputs(read()))).toMatchObject({
+      status: 'available',
+      endpoint: '/api/superposition/isosurface',
+    })
   })
 
   it('writes every remaining scalar through its setter', () => {

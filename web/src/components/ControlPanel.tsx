@@ -276,6 +276,8 @@ const PARAMETER_ROWS: {
 export function ControlPanel() {
   const store = useSceneStore()
   const [presets, setPresets] = useState<OrbitalPreset[]>([])
+  const [representationNotice, setRepresentationNotice] =
+    useState<RepresentationKind | null>(null)
   const lOptions = useMemo(
     () => Array.from({ length: store.orbital.n }, (_, index) => index),
     [store.orbital.n],
@@ -291,19 +293,27 @@ export function ControlPanel() {
     fetchCatalog(controller.signal).then(setPresets).catch(() => setPresets([]))
     fetchSuperpositionCatalog(controller.signal)
       .then((catalogue) => {
+        if (controller.signal.aborted) return
         setMixtures(catalogue)
         const terms = useSceneStore.getState().superpositionTerms
         const selected = catalogue.find((mixture) => mixture.terms === terms)
-        if (selected !== undefined) {
-          useSceneStore
-            .getState()
-            .syncSuperpositionCapabilities(
-              selected.terms,
-              selected.slice_resolution_floor,
-            )
+        if (selected === undefined) {
+          useSceneStore.getState().invalidateSuperpositionStreamlineCapability()
+          return
         }
+        useSceneStore
+          .getState()
+          .syncSuperpositionCapabilities(
+            selected.terms,
+            selected.slice_resolution_floor,
+            selected.streamline_seed_count_max,
+          )
       })
-      .catch(() => setMixtures([]))
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setMixtures([])
+        useSceneStore.getState().invalidateSuperpositionStreamlineCapability()
+      })
     return () => controller.abort()
   }, [])
 
@@ -324,8 +334,53 @@ export function ControlPanel() {
   const observables = current.status === 'available' ? current.observables : undefined
   /** What the request will actually carry, or a refusal that carries nothing. */
   const plan = planSceneRequest(requestInputs)
+  const noticedCapability =
+    representationNotice === null
+      ? null
+      : capabilityFor({
+          mode,
+          orbital: requestInputs.orbital,
+          representation: representationNotice,
+          superpositionSliceResolutionFloor: requestInputs.superpositionSliceResolutionFloor,
+          superpositionStreamlineSeedCountMax:
+            requestInputs.superpositionStreamlineSeedCountMax,
+        })
+  const representationNoticeText =
+    noticedCapability !== null && noticedCapability.status !== 'available'
+      ? noticedCapability.reason
+      : null
   const currentServerValidation =
     current.status === 'available' ? current.serverValidation : undefined
+  const streamlineCapability = capabilityFor({
+    mode,
+    orbital: requestInputs.orbital,
+    representation: 'streamlines',
+    superpositionStreamlineSeedCountMax:
+      requestInputs.superpositionStreamlineSeedCountMax,
+  })
+  const flowExample = presets.find((preset) => preset.id === '3d-complex')
+  const flowExampleOrbital =
+    flowExample === undefined ? undefined : { ...requestInputs.orbital, ...flowExample }
+  const flowExampleCapability =
+    flowExampleOrbital === undefined
+      ? undefined
+      : capabilityFor({
+          mode: 'eigenstate',
+          orbital: flowExampleOrbital,
+          representation: 'streamlines',
+        })
+  const offerFlowExample =
+    mode === 'eigenstate' &&
+    streamlineCapability.status !== 'available' &&
+    flowExample !== undefined &&
+    flowExampleCapability?.status === 'available'
+
+  const loadFlowExample = (): void => {
+    if (flowExample === undefined) return
+    store.applyPreset(flowExample)
+    useSceneStore.getState().setRepresentation('streamlines')
+    setRepresentationNotice(null)
+  }
 
   const parameterValue: Record<ParameterId, number> = {
     samples: store.samples,
@@ -524,6 +579,7 @@ export function ControlPanel() {
                       mixture.terms,
                       mixture.label,
                       mixture.slice_resolution_floor,
+                      mixture.streamline_seed_count_max,
                     )
                   }
                 >
@@ -600,6 +656,8 @@ export function ControlPanel() {
               representation: id,
               superpositionSliceResolutionFloor:
                 requestInputs.superpositionSliceResolutionFloor,
+              superpositionStreamlineSeedCountMax:
+                requestInputs.superpositionStreamlineSeedCountMax,
             })
             const available = capability.status === 'available'
             const serverValidation = available ? capability.serverValidation : undefined
@@ -608,10 +666,10 @@ export function ControlPanel() {
                 type="button"
                 key={id}
                 data-representation={id}
+                data-unavailable={available ? undefined : 'true'}
                 data-server-validation={serverValidation === undefined ? undefined : 'required'}
                 className={store.representation === id ? 'active' : ''}
                 aria-pressed={store.representation === id}
-                aria-disabled={!available}
                 aria-label={
                   !available
                     ? `${label}暂不可用：${capability.reason}`
@@ -620,9 +678,11 @@ export function ControlPanel() {
                       : `${label}；需服务端数值验证：${serverValidation.reason}`
                 }
                 aria-describedby={
-                  available && store.representation === id && serverValidation !== undefined
-                    ? 'representation-server-validation-notice'
-                    : undefined
+                  !available && representationNotice === id
+                    ? 'representation-availability-notice'
+                    : available && store.representation === id && serverValidation !== undefined
+                      ? 'representation-server-validation-notice'
+                      : undefined
                 }
                 title={
                   !available
@@ -631,8 +691,16 @@ export function ControlPanel() {
                       ? purpose
                       : `${purpose}；需服务端数值验证：${serverValidation.reason}`
                 }
+                onFocus={() => {
+                  if (!available) setRepresentationNotice(id)
+                }}
                 onClick={() => {
-                  if (available) store.setRepresentation(id)
+                  if (available) {
+                    setRepresentationNotice(null)
+                    store.setRepresentation(id)
+                  } else {
+                    setRepresentationNotice(id)
+                  }
                 }}
               >
                 <Icon size={17} /> {label}
@@ -640,6 +708,17 @@ export function ControlPanel() {
             )
           })}
         </div>
+
+        {representationNoticeText === null ? null : (
+          <p
+            id="representation-availability-notice"
+            className="capability-notice"
+            role="status"
+            data-representation-notice={representationNotice}
+          >
+            {representationNoticeText}
+          </p>
+        )}
 
         {currentServerValidation === undefined ? null : (
           <p
@@ -652,6 +731,18 @@ export function ControlPanel() {
             {currentServerValidation.reason}
           </p>
         )}
+
+        {offerFlowExample && flowExample !== undefined ? (
+          <button
+            type="button"
+            className="flow-example-action"
+            data-flow-example
+            onClick={loadFlowExample}
+          >
+            <Waves size={14} /> 载入并显示概率流示例 · {flowExample.label} ·{' '}
+            {flowExample.basis}
+          </button>
+        ) : null}
 
         {planes === undefined ? null : (
           <ChoiceRow

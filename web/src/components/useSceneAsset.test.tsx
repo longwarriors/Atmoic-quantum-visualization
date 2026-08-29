@@ -270,6 +270,7 @@ const baseInputs: SceneAssetInputs = {
   probabilityMass: 0.9,
   seedCount: 48,
   superpositionTerms: '1,0,0,0.7071067811865476;2,1,0,0.7071067811865476',
+  superpositionStreamlineSeedCountMax: 40,
   superpositionBasis: 'complex',
   aMu: 1,
   timeAu: 0,

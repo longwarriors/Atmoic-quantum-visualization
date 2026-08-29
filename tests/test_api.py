@@ -431,6 +431,108 @@ def test_superposition_catalog_includes_a_degenerate_control() -> None:
     assert one_s_three_d["period_au"] == pytest.approx(tau / abs(energy_3 - energy_1))
 
 
+def test_superposition_catalog_publishes_the_exact_current_field_seed_ceiling() -> None:
+    """Every advertised maximum must survive the route's own workload guards.
+
+    In particular, the quadrupolar 1s+3d_z2 preset has longer default paths:
+    24 seeds fit below 100,000 serialized samples while 25 do not.  The
+    catalogue is the browser's capability source, so publishing the route's
+    outer maximum of 40 for that state would create a request guaranteed to
+    fail.
+    """
+
+    entries = client.get("/api/superposition/catalog").json()
+    ceilings = {entry["id"]: entry["streamline_seed_count_max"] for entry in entries}
+
+    assert ceilings == {
+        "1s-2pz": 40,
+        "2s-2pz": 40,
+        "1s-3dz2": 24,
+        "2pplus-2pminus": 40,
+    }
+    for entry in entries:
+        state = routes_module._parse_superposition(
+            entry["terms"],
+            BasisKind.COMPLEX,
+            maximum_n=routes_module._MAXIMUM_CURRENT_FIELD_N,
+            operation="catalogue current-field test",
+        )
+        estimate = routes_module.estimate_superposition_current_workload(
+            state,
+            seed_count=entry["streamline_seed_count_max"],
+        )
+        routes_module._enforce_current_field_workload("catalogue boundary", estimate)
+
+
+def test_catalogue_seed_ceiling_rejects_the_first_unsafe_request_before_building(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = client.get("/api/superposition/catalog").json()
+    preset = next(entry for entry in entries if entry["id"] == "1s-3dz2")
+
+    def forbidden_builder(*args: object, **kwargs: object) -> None:
+        raise AssertionError("builder was called before workload preflight completed")
+
+    monkeypatch.setattr(routes_module, "_cached_superposition_current", forbidden_builder)
+    response = client.get(
+        "/api/superposition/current-field",
+        params={
+            "terms": preset["terms"],
+            "seed_count": preset["streamline_seed_count_max"] + 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "102400" in response.json()["detail"]
+    assert "100000" in response.json()["detail"]
+    assert "path samples" in response.json()["detail"]
+    assert "25 requested seeds" in response.json()["detail"]
+    assert "active terms" not in response.json()["detail"]
+
+
+def test_current_seed_ceiling_accounts_for_the_rk4_work_limit_too() -> None:
+    state = routes_module._parse_superposition(
+        EIGHT_NORMALIZED_TERMS,
+        BasisKind.COMPLEX,
+        maximum_n=routes_module._MAXIMUM_CURRENT_FIELD_N,
+        operation="current-field ceiling test",
+    )
+
+    assert routes_module._superposition_current_seed_count_max(state) == 11
+
+    accepted = routes_module.estimate_superposition_current_workload(state, seed_count=11)
+    routes_module._enforce_current_field_workload("current-field ceiling", accepted)
+    rejected = routes_module.estimate_superposition_current_workload(state, seed_count=12)
+    with pytest.raises(HTTPException, match="term-velocity evaluations"):
+        routes_module._enforce_current_field_workload("current-field ceiling", rejected)
+
+
+def test_catalogue_seed_ceiling_is_the_safe_intersection_of_both_bases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[BasisKind] = []
+
+    def basis_specific_ceiling(state: superposition_module.SuperpositionState) -> int:
+        observed.append(state.basis)
+        return 24 if state.basis is BasisKind.REAL else 40
+
+    monkeypatch.setattr(
+        routes_module,
+        "_superposition_current_seed_count_max",
+        basis_specific_ceiling,
+    )
+    entry = routes_module._superposition_catalog_entry(
+        preset_id="basis-probe",
+        label="basis probe",
+        terms=BOHR_PAIR,
+        period_au=1.0,
+        note="test",
+    )
+
+    assert observed == [BasisKind.COMPLEX, BasisKind.REAL]
+    assert entry["streamline_seed_count_max"] == 24
+
+
 def test_superposition_isosurface_route_carries_time_coefficients_and_mass_scale() -> None:
     response = client.get(
         f"/api/superposition/isosurface?terms={BOHR_PAIR}&time=3.5&resolution=49&a_mu=0.5"
@@ -756,11 +858,12 @@ def test_current_work_estimate_counts_the_initial_and_five_rk4_stage_evaluations
         active_terms=2,
         requested_seeds=24,
         max_points_per_line=2_497,
+        seed_filter_evaluations_per_term=21**3,
     )
 
     assert estimate.serialized_path_samples == 24 * 2_497
-    assert estimate.velocity_evaluations_per_term == 24 * (1 + 5 * (2_497 - 1))
-    assert estimate.term_velocity_evaluations == 2 * 24 * (1 + 5 * (2_497 - 1))
+    assert estimate.velocity_evaluations_per_term == 21**3 + 24 * (1 + 5 * (2_497 - 1))
+    assert estimate.term_velocity_evaluations == 2 * (21**3 + 24 * (1 + 5 * (2_497 - 1)))
 
 
 def test_each_current_work_limit_accepts_its_boundary_and_rejects_one_more() -> None:

@@ -55,7 +55,7 @@ Little-endian：
 
 默认离散化按物理尺度定义。单态以 $L=n^2/Z$，叠加态分别以最紧致与最宽的 $L_k=n_k^2a_\mu/Z$：`arc_step_bohr` 为最紧致尺度的 0.03，播种下限满足 $\rho_{\min}L_{\max}^3=10^{-4}$；连续性差分则用更短的 $L_d=\min(n_ka_\mu/Z)$。每条流线的默认停止阈值固定为该 seed 初始有限速度的 $10^{-12}$，所以批次重排、合并或拆分不改变慢线结果；密度遮罩随 $(Z/a_\mu)^3$ 缩放。速度与电流向量长度由稳定 `hypot` 归约计算，不先平方极小分量。payload 顶点按 $a_\mu/Z$ 无量纲化后保留六位小数，速度按 $Z$ 无量纲化后逐值保留 12 位有效数字再恢复单位；`max_speed` 从最终 `speed` 数组重算。弱相干速度可远小于 $10^{-6}$，因此速度绝不能使用固定六位小数。
 
-显式传入 `arc_step` 时它仍是 bohr，但必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$：下界绑定 4096 点的**单路径**硬上限，上界使半径为一个最紧致支撑尺度的圆周仍约有 50 步；超界请求 fail-safe 为 HTTP 422。API 还用请求 seed 数预估总成本：`active_terms × seed_count × [1+5(max_points−1)] ≤ 2,000,000`，并要求 `seed_count × max_points ≤ 100,000`。所以落在弧长窗口内仍不等于组合请求必然被接受。`lines` 的实际顶点数会直接暴露是否触及单路径上限，payload 不声称走完某个预设物理弧长。
+显式传入 `arc_step` 时它仍是 bohr，但必须满足 $1/4096\leq\texttt{arc\_step}/L_{\min}\leq1/8$：下界绑定 4096 点的**单路径**硬上限，上界使半径为一个最紧致支撑尺度的圆周仍约有 50 步；超界请求 fail-safe 为 HTTP 422。API 还用请求 seed 数预估总成本：`active_terms × [seed_filter_evaluations_per_term + seed_count × (1+5(max_points−1))] ≤ 2,000,000`，并要求 `seed_count × max_points ≤ 100,000`。数值积分的叠加态先为 $21^3$ 候选 lattice 逐项求速度以剔除严格零速种子，所以其 `seed_filter_evaluations_per_term = 21³`；本征态与解析零流早退为 0。所以落在弧长窗口内仍不等于组合请求必然被接受。`lines` 的实际顶点数会直接暴露是否触及单路径上限，payload 不声称走完某个预设物理弧长。
 
 对单一本征态，实基或 $m=0$ 时 `lines` 为空且 `max_speed` 为 0，并附 warning。这是**物理上正确的答案**（实定态概率流恒为零），不是错误。叠加态不能套用这一捷径：实基分量若带相对复相位仍可有流，必须按上面的共相位/共轭关系判定。
 

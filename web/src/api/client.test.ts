@@ -513,6 +513,7 @@ describe('fetchSuperpositionCatalog', () => {
       period_au: 1,
       note: '',
       slice_resolution_floor: 65,
+      streamline_seed_count_max: 24,
     },
   ]
 
@@ -543,6 +544,20 @@ describe('fetchSuperpositionCatalog', () => {
 
       await expect(fetchSuperpositionCatalog()).rejects.toThrow(
         /slice_resolution_floor must be an odd integer in 65\.\.513/,
+      )
+    },
+  )
+
+  it.each([undefined, 0, 41, 24.5, Number.NaN])(
+    'rejects a catalogue streamline ceiling outside the generated contract: %s',
+    async (streamline_seed_count_max) => {
+      routeFetch({
+        '/api/superposition/catalog': () =>
+          jsonResponse([{ ...presets[0], streamline_seed_count_max }]),
+      })
+
+      await expect(fetchSuperpositionCatalog()).rejects.toThrow(
+        /streamline_seed_count_max must be an integer in 1\.\.40/,
       )
     },
   )

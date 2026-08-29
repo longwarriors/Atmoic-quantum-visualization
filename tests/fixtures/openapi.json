@@ -604,6 +604,13 @@
             "title": "Slice Resolution Floor",
             "type": "integer"
           },
+          "streamline_seed_count_max": {
+            "description": "Largest seed_count accepted by both superposition current-field workload guards for this preset in either basis at the route-default arc_step; independent of Z and a_mu because the extent and default arc step scale together.",
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Streamline Seed Count Max",
+            "type": "integer"
+          },
           "terms": {
             "title": "Terms",
             "type": "string"
@@ -615,7 +622,8 @@
           "terms",
           "period_au",
           "note",
-          "slice_resolution_floor"
+          "slice_resolution_floor",
+          "streamline_seed_count_max"
         ],
         "title": "SuperpositionCatalogEntry",
         "type": "object"

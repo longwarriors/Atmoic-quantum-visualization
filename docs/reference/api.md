@@ -82,7 +82,7 @@ payload 体积是主要工程约束之一，但不是有效性的判据。实测
 
 - 最大主量子数与对应单态能力一致：等值面 $n\le4$、概率流 $n\le6$、切片 $n\le12$；结合 $0\le\ell<n$ 与 $|m|\le\ell$，这也使返回的 term 一定能由 OpenAPI 中的 `SuperpositionTermSpec` 表达；
 - 组合工作量按实际 active terms 估算：普通等值面的每次完整网格成本为 `active_terms × resolution³`，预检同时计入 mesh 构建与最终有限网格质量诊断两次，上限 2,500,000 term-voxel evaluations；单项激发 s 态另计入可能的选定 level 重建和最终 129 诊断，含激发 s 的多项态只把实际构建并参与判决的最细两个拓扑网格以及最终诊断网格逐次相加，二者使用 16,000,000 的自适应上限。典型 129/137 门禁的两项态成本为 14,578,790，仍可进入 builder；三个及以上 active terms 至少为 21,868,185，必在 builder 前拒绝。这里界定的是请求参数可预见的完整网格 term evaluation，不声称精确涵盖 marching-cubes 顶点数量等数据相关工作。切片为 `active_terms × resolution²`，上限 1,500,000 term-pixel evaluations；
-- 概率流使用与积分器相同的 `max_points` 上界：`active_terms × seed_count × [1 + 5(max_points − 1)]` 不得超过 2,000,000 term-velocity evaluations，`seed_count × max_points` 不得超过 100,000 serialized path samples。本征态取 `active_terms=1`。这里的 `seed_count` 是**请求值**，payload 同名字段是实际返回流线数，不能用来反算预检。
+- 概率流使用与积分器相同的 `max_points` 上界：`active_terms × [seed_filter_evaluations_per_term + seed_count × (1 + 5(max_points − 1))]` 不得超过 2,000,000 term-velocity evaluations，`seed_count × max_points` 不得超过 100,000 serialized path samples。数值积分的叠加态先在 $21^3$ 候选 lattice 上逐项求速度并剔除严格零速种子，因此 `seed_filter_evaluations_per_term = 21³`；本征态与解析零流早退为 0，本征态另取 `active_terms=1`。这里的 `seed_count` 是**请求值**，payload 同名字段是实际返回流线数，不能用来反算预检。
 
 任一超限都在 builder 前返回 422，`detail` 同时报告实际 cost 与 limit。可归因于请求的物理域、float32/float64 可表示性、收敛或有限数失败同样以可解释的 422 返回；非预期编程错误不会被 blanket catch 改写，仍是 500。
 
@@ -113,7 +113,7 @@ payload 体积是主要工程约束之一，但不是有效性的判据。实测
 
 ## `GET /api/superposition/catalog`
 
-无参数。返回 typed 叠加态预设列表，每项含 `id`、`label`、`terms`（可直接传给下面三个端点的查询串）、`period_au`、`note` 与 `slice_resolution_floor`。该楼层由 slice builder 的同一个 extent CDF / Laguerre 径向特征计算生成，是该预设第一个可接受的奇数 uniform grid；它对 $Z$ 与 $a_\mu$ 不变，因为相关长度按同一尺度缩放。前端选择预设时在一次 store 写入中同时提升 resolution，不复制数值算法；当前 `1s-3dz2` 发布 103。
+无参数。返回 typed 叠加态预设列表，每项含 `id`、`label`、`terms`（可直接传给下面三个端点的查询串）、`period_au`、`note`、`slice_resolution_floor` 与 `streamline_seed_count_max`。前者由 slice builder 的同一个 extent CDF / Laguerre 径向特征计算生成，是该预设第一个可接受的奇数 uniform grid；后者在 route 默认 `arc_step` 下，用 current-field 端点同一份 estimator 和两道 workload guard 对 real/complex 两种 basis 取安全交集。二者对 $Z$ 与 $a_\mu$ 不变，因为相关长度与默认步长按同一尺度缩放。前端选择预设时在一次 store 写入中同时提升 resolution、收紧 seed count，不复制数值算法；当前 `1s-3dz2` 发布 103 与 24，其余三个预设的流线 seed 上限为 40。该 seed 上限只承诺省略 `arc_step` 的目录请求；未来若 UI 暴露显式步长，必须重新消费对应步长的服务端能力结果。
 
 非简并两项态的默认尺度周期由 $2\pi/|E_b-E_a|$ 计算，不手写近似常数；前端再按当前 $a_\mu/Z^2$ 换算。简并预设的 `period_au` 为 0，用作 negative control：这类态的密度不应移动，UI 也不提供伪动画。
 
@@ -134,7 +134,7 @@ payload 体积是主要工程约束之一，但不是有效性的判据。实测
 参数：
 
 - `terms`、`time`、`basis`、`z`、`a_mu`：同上；最多 8 个编码项/活跃项，且每项 $n\le6$；
-- `seed_count`：route 外框为 1–40，默认 24；
+- `seed_count`：route 外框为 1–40，默认 24；目录态还受各项 `streamline_seed_count_max` 收紧，当前 `1s-3dz2` 为 24，因此前端不会把 25–40 作为该态的可选值；
 - `arc_step`：可选，窗口同为 $1/4096$–$1/8$，但相对的是**最紧凑的活跃 support length**（而非 $n^2/Z$），越界返回 422；即使位于窗口内，仍受 RK4 work 与序列化点数双预算约束。
 
 返回 `SuperpositionCurrentPayload`：在单态流场字段之外，`continuity_residual` 是完整的 $\partial\rho/\partial t+\nabla\cdot\mathbf j=0$；`continuity_scale_kind` 多出 `transition_coherence` 一种，`continuity_phase_count` 报告每个不同能隙审计的相位数，`density_rate_scale` 只作透明度参考，不作非定态的归一化分母。

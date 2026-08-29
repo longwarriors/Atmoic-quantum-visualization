@@ -90,6 +90,64 @@ describe('Legend names what is actually on screen', () => {
     expect(markup).toContain('>max<')
   })
 
+  it('explains an analytically zero superposition as an intentional empty flow', () => {
+    const markup = render({
+      loading: false,
+      lineCount: 0,
+      maxSpeed: 0,
+      continuityScaleKind: 'analytic_zero_current',
+      superposition: superpositionMetadata('streamlines'),
+    })
+
+    expect(markup).toContain('data-empty-flow="analytic_zero_current"')
+    expect(markup).toContain('解析零概率流')
+    expect(markup).toContain('有意返回空流线')
+    expect(markup).not.toContain('speed-ramp')
+  })
+
+  it('explains a non-analytic empty field without drawing a misleading speed ramp', () => {
+    const markup = render({
+      loading: false,
+      lineCount: 0,
+      maxSpeed: 0,
+      continuityScaleKind: 'transition_coherence',
+      superposition: superpositionMetadata('streamlines'),
+    })
+
+    expect(markup).toContain('data-empty-flow="instantaneous_empty_current"')
+    expect(markup).toContain('当前时刻无可绘制流线')
+    expect(markup).toContain('已到达的空场结果')
+    expect(markup).not.toContain('speed-ramp')
+    expect(markup).not.toContain('0.00 a.u.')
+  })
+
+  it('keeps the speed ramp when the arrived field contains a line', () => {
+    const markup = render({
+      loading: false,
+      lineCount: 1,
+      maxSpeed: 0.0421,
+      continuityScaleKind: 'transition_coherence',
+      superposition: superpositionMetadata('streamlines'),
+    })
+
+    expect(markup).toContain('speed-ramp')
+    expect(markup).not.toContain('data-empty-flow')
+  })
+
+  it('keeps the existing eigenstate streamline legend for its zero-current diagnostic kind', () => {
+    const markup = render({
+      loading: false,
+      lineCount: 0,
+      maxSpeed: 0,
+      continuityScaleKind: 'analytic_zero_current',
+      metadata: eigenstateMetadata('streamlines', 'complex'),
+    })
+
+    expect(markup).toContain('概率流速率 |j|/ρ')
+    expect(markup).toContain('speed-ramp')
+    expect(markup).not.toContain('data-empty-flow')
+  })
+
   it('shows a phase wheel for a complex state and two dots for a real one', () => {
     const complex = render({
       loading: false,
