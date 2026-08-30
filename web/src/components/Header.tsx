@@ -39,7 +39,7 @@ export function Header({ stateLabel }: { stateLabel?: string }) {
         <span className="topbar-context-compact">{compactStateSummary}</span>
       </div>
       <div className="topbar-actions">
-        <a className="icon-button" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" title="查看 OpenAPI" aria-label="查看 OpenAPI">
+        <a className="icon-button" href="/docs" target="_blank" rel="noreferrer" title="查看 OpenAPI" aria-label="查看 OpenAPI">
           <BookOpen size={17} />
           <span>OpenAPI</span>
         </a>

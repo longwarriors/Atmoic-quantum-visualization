@@ -481,29 +481,19 @@ function hasExactOptionsHelper(sourceFile, name, comparison) {
   const initializer = unwrapExpression(declarations[0].initializer)
   if (
     !ts.isArrowFunction(initializer) ||
-    initializer.parameters.length !== 1 ||
-    !ts.isIdentifier(initializer.parameters[0].name) ||
-    initializer.parameters[0].name.text !== 'page'
+    initializer.parameters.length !== 0
   ) {
     return false
   }
   const body = unwrapExpression(initializer.body)
-  if (!ts.isObjectLiteralExpression(body) || body.properties.length !== 2) {
+  if (!ts.isObjectLiteralExpression(body) || body.properties.length !== 1) {
     return false
   }
-  const [spread, mask] = body.properties
+  const [spread] = body.properties
   return (
     ts.isSpreadAssignment(spread) &&
     ts.isIdentifier(spread.expression) &&
-    spread.expression.text === comparison &&
-    ts.isPropertyAssignment(mask) &&
-    propertyNameText(mask.name) === 'mask' &&
-    ts.isCallExpression(mask.initializer) &&
-    ts.isIdentifier(mask.initializer.expression) &&
-    mask.initializer.expression.text === 'overlays' &&
-    mask.initializer.arguments.length === 1 &&
-    ts.isIdentifier(mask.initializer.arguments[0]) &&
-    mask.initializer.arguments[0].text === 'page'
+    spread.expression.text === comparison
   )
 }
 
@@ -567,7 +557,7 @@ function auditSliceComparisonConfiguration(sourceFile) {
   ]) {
     if (!hasExactOptionsHelper(sourceFile, name, comparisonName)) {
       problems.push(
-        `${name} must return { ...${comparisonName}, mask: overlays(page) } exactly`,
+        `${name} must return { ...${comparisonName} } exactly`,
       )
     }
   }

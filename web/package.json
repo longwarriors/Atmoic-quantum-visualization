@@ -13,6 +13,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false",
     "test": "node scripts/clean-coverage.mjs && tsc -p tsconfig.test.json --noEmit && vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/vitest-results.json && node scripts/assert-no-skips.mjs && node scripts/assert-coverage-scope.mjs",
+    "test:fullstack": "playwright test --config=playwright.fullstack.config.ts && node scripts/assert-fullstack-run.mjs",
     "test:watch": "vitest",
     "test:visual": "playwright test && node scripts/assert-visual-run.mjs",
     "test:visual:update": "playwright test --update-snapshots"

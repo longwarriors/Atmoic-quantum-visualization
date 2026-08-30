@@ -1378,6 +1378,174 @@ def test_only_the_upload_step_of_the_visual_job_is_conditional() -> None:
         )
 
 
+# --- ci.yml web-fullstack job ----------------------------------------------
+
+FULLSTACK_JOB = "web-fullstack"
+FULLSTACK_SYNC_COMMAND = "uv sync --locked --all-groups"
+FULLSTACK_TEST_COMMAND = "npm run test:fullstack"
+FULLSTACK_SCRIPT = (
+    "playwright test --config=playwright.fullstack.config.ts "
+    "&& node scripts/assert-fullstack-run.mjs"
+)
+FULLSTACK_ARTIFACT_NAME = "fullstack-playwright-report"
+FULLSTACK_ARTIFACT_PATHS = (
+    "web/playwright-report/fullstack",
+    "web/test-results/fullstack",
+)
+
+
+def _fullstack_job() -> dict[str, object]:
+    """The checkout-to-FastAPI browser gate, or a direct missing-job failure."""
+
+    jobs = _workflow().get("jobs")
+    assert isinstance(jobs, dict), "ci.yml declares no jobs"
+    assert FULLSTACK_JOB in jobs, (
+        f"ci.yml has no `{FULLSTACK_JOB}` job: the fixture-backed visual suite still passes when "
+        "the built SPA cannot talk to FastAPI, so nothing else proves the production static-file "
+        f"mount and real API work together. Jobs found: {sorted(jobs)}"
+    )
+    job = jobs[FULLSTACK_JOB]
+    assert isinstance(job, dict), f"ci.yml's `{FULLSTACK_JOB}` job is not a mapping"
+    return job
+
+
+def _fullstack_steps() -> list[dict[str, object]]:
+    steps = _fullstack_job().get("steps")
+    assert isinstance(steps, list) and steps, f"ci.yml's `{FULLSTACK_JOB}` job has no steps"
+    for step in steps:
+        assert isinstance(step, dict), (
+            f"ci.yml's `{FULLSTACK_JOB}` job has a non-mapping step: {step!r}"
+        )
+    return steps
+
+
+def _fullstack_runs() -> list[str]:
+    return [" ".join(str(step.get("run", "")).split()) for step in _fullstack_steps()]
+
+
+def test_ci_fullstack_job_runs_on_linux_inside_web() -> None:
+    job = _fullstack_job()
+    assert job.get("runs-on") == "ubuntu-latest"
+    defaults = job.get("defaults")
+    assert isinstance(defaults, dict), f"ci.yml's `{FULLSTACK_JOB}` job declares no defaults"
+    run_defaults = defaults.get("run")
+    assert isinstance(run_defaults, dict), (
+        f"ci.yml's `{FULLSTACK_JOB}` job declares no defaults.run mapping"
+    )
+    assert run_defaults.get("working-directory") == "web", (
+        f"ci.yml's `{FULLSTACK_JOB}` job must run commands inside web/; found "
+        f"{run_defaults.get('working-directory')!r}"
+    )
+
+
+def test_ci_fullstack_job_installs_both_locked_runtimes_then_runs_the_gate() -> None:
+    steps = _fullstack_steps()
+    uses = [str(step.get("uses", "")) for step in steps]
+    action_prefixes = ("actions/checkout@", "astral-sh/setup-uv@", "actions/setup-node@")
+    action_positions: list[int] = []
+    for prefix in action_prefixes:
+        matches = [index for index, value in enumerate(uses) if value.startswith(prefix)]
+        assert len(matches) == 1, (
+            f"ci.yml's `{FULLSTACK_JOB}` job must use `{prefix}` exactly once; "
+            f"found positions {matches}"
+        )
+        action_positions.append(matches[0])
+
+    runs = _fullstack_runs()
+    commands = (
+        FULLSTACK_SYNC_COMMAND,
+        WEB_INSTALL_COMMAND,
+        VISUAL_BROWSER_INSTALL,
+        FULLSTACK_TEST_COMMAND,
+    )
+    command_positions: list[int] = []
+    for command in commands:
+        assert runs.count(command) == 1, (
+            f"ci.yml's `{FULLSTACK_JOB}` job must run `{command}` exactly once as its own step; "
+            f"found {runs.count(command)} in {runs}"
+        )
+        command_positions.append(
+            next(
+                index
+                for index, step in enumerate(steps)
+                if " ".join(str(step.get("run", "")).split()) == command
+            )
+        )
+    all_positions = action_positions + command_positions
+    assert all_positions == sorted(all_positions), (
+        f"ci.yml's `{FULLSTACK_JOB}` setup and gate steps are out of order: "
+        f"{dict(zip(action_prefixes + commands, all_positions, strict=True))}"
+    )
+    assert "npm install" not in "\n".join(runs), (
+        "the full-stack job must fail on a missing frontend lockfile, not resolve a fresh tree"
+    )
+
+
+def test_ci_fullstack_job_uses_the_frontend_node_and_a_supported_python() -> None:
+    def versions(action: str, key: str) -> list[str]:
+        found: list[str] = []
+        for step in _fullstack_steps():
+            if not str(step.get("uses", "")).startswith(action):
+                continue
+            inputs = step.get("with")
+            assert isinstance(inputs, dict), f"{action} in `{FULLSTACK_JOB}` has no with mapping"
+            found.append(str(inputs.get(key, "")))
+        return found
+
+    fullstack_node = versions("actions/setup-node@", "node-version")
+    web_node = [
+        str(step["with"]["node-version"])
+        for step in _web_steps()
+        if str(step.get("uses", "")).startswith("actions/setup-node@")
+        and isinstance(step.get("with"), dict)
+    ]
+    assert fullstack_node and set(fullstack_node) == set(web_node)
+    assert versions("astral-sh/setup-uv@", "python-version") == ["3.12"]
+
+
+def test_ci_fullstack_job_uploads_only_failed_run_evidence() -> None:
+    job = _fullstack_job()
+    for escape in ("if", "continue-on-error"):
+        assert escape not in job, f"`{FULLSTACK_JOB}` job carries {escape}: {job[escape]!r}"
+
+    steps = _fullstack_steps()
+    uploads = [
+        step for step in steps if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
+    (upload,) = uploads
+    assert upload.get("if") == "failure()"
+    assert "continue-on-error" not in upload
+    inputs = upload.get("with")
+    assert isinstance(inputs, dict)
+    assert inputs.get("name") == FULLSTACK_ARTIFACT_NAME
+    assert tuple(str(inputs.get("path", "")).split()) == FULLSTACK_ARTIFACT_PATHS
+    assert int(str(inputs.get("retention-days"))) == 7
+    gate_index = next(
+        index
+        for index, step in enumerate(steps)
+        if " ".join(str(step.get("run", "")).split()) == FULLSTACK_TEST_COMMAND
+    )
+    assert steps.index(upload) > gate_index, (
+        f"ci.yml's `{FULLSTACK_JOB}` failure upload must follow the browser gate so its trace "
+        "and report exist when the upload step runs"
+    )
+
+    for step in steps:
+        assert "continue-on-error" not in step
+        if step is not upload:
+            assert "if" not in step, f"a required full-stack step is conditional: {step!r}"
+
+
+def test_npm_fullstack_script_runs_the_pinned_config_then_audits_its_report() -> None:
+    scripts = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))["scripts"]
+    assert scripts.get("test:fullstack") == FULLSTACK_SCRIPT, (
+        "web/package.json's `test:fullstack` script must invoke exactly the reviewed Playwright "
+        "config, then reject a skipped or empty report; found "
+        f"{scripts.get('test:fullstack')!r}"
+    )
+
+
 # --- web/package.json test chain -------------------------------------------
 
 #: The ``test`` script's ``&&``-joined stages, in full and in order.
@@ -1644,6 +1812,8 @@ def test_vitest_config_imports_exactly_these_modules() -> None:
 WEB_SCRIPTS = (
     "assert-coverage-scope.d.mts",
     "assert-coverage-scope.mjs",
+    "assert-fullstack-run.d.mts",
+    "assert-fullstack-run.mjs",
     "assert-no-skips.d.mts",
     "assert-no-skips.mjs",
     # The visual suite's post-run gate, and the counterpart of

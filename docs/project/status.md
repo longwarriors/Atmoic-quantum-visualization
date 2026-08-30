@@ -2,7 +2,7 @@
 
 !!! success “Phase 0 可演示基线”
 
-    截至 2026-08-29，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。2026-08-29 的全面复审又加固了概率流的尺度协变、采样收敛、拓扑与 payload 不变量、API 资源边界和前端可发现性。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+    截至 2026-08-30，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。2026-08-29 的全面复审又加固了概率流的尺度协变、采样收敛、拓扑与 payload 不变量、API 资源边界和前端可发现性；2026-08-30 再加入真实 `quviz serve` + FastAPI 静态挂载的源码 checkout 全栈浏览器门禁。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
 
 ## 能力账本
 
@@ -18,7 +18,7 @@
 | $sp^3$ 系数与四面体方向 | 正交性与方向测试通过 | 尚不是完整点群/SALC 系统，未接入 UI |
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过；QVPC float32 边界、科学数值失败统一 422 与意外编程错误仍为 500 均有负控 | 点云 binary 与 metadata 使用同参数 sidecar 请求；极端正尺度仍受各 representation 的可表示域约束 |
-| React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（33 个 spec 文件、985 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；PR-8A 起覆盖范围为 `src/**` 下全部 `.ts`/`.tsx`，共 30 个门禁模块（`src/api/types.ts` 与 `src/api/schema.gen.ts` 是仅有的两个排除项，且“仅含类型”由守卫解析强制）；PR-8C 起 `web/e2e/` 的 Playwright 截图套件与 `ci.yml` 的 `web-visual` job 已接线并被 `tests/test_check_script.py` 钉住，五张 Linux/SwiftShader PNG 基线已入树；2pz、3dz² 与 3d complex 概率流浏览器视觉复核通过；WebUI 已完成 Quantum Observatory 重构，桌面 canvas 与 panel 内容高度解耦 | 截图门禁只代表固定的 Linux/Chromium/SwiftShader 软件栅格环境，不代表真实 GPU 与多浏览器矩阵；Windows 本机按设计不能直接执行或更新该门禁，本树已另在锁定 Linux 容器中真比较通过；主 bundle 1,261.35 kB（gzip 347.26 kB）尚待拆分 |
+| React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（34 个 spec 文件、1010 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；`web/e2e/` 在本地锁定 Linux/SwiftShader 容器中实测 8/8，`web/fullstack-e2e/` 另以真实 `quviz serve`、FastAPI `web/dist` 挂载和未拦截 `/api` 走通点云→等值面→切片→3d complex 概率流→叠加态，完整 query、2xx、科学语义与浏览器零错误均受检；两个 Playwright 入口都有 JSON 运行后审计，两个 CI job 均由 `tests/test_check_script.py` 钉住 | CI job 接线受门禁，但本地结果不替代远端 runner 的实际执行；全栈 smoke 只证明源码 checkout 的生产挂载，不证明 wheel 静态资产打包；截图仍只覆盖切片与固定 Linux/Chromium/SwiftShader，不代表真实 GPU、多浏览器或移动视口；主 bundle 1,261.33 kB（gzip 347.25 kB）尚待拆分 |
 | 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
 
 ## 审计输入基线：2026-08-22
@@ -115,7 +115,7 @@ P0 解析门禁、概率流 representation、M1 解析叠加态、引用系统�
 
 ## 剩余限制
 
-1. 五张截图基线与 CI 接线都已存在，但只覆盖固定的 Linux/Chromium/SwiftShader 环境与切片主路径；真实 GPU、多浏览器以及切片之外的端到端交互仍未覆盖；
+1. 源码 checkout 的真实全栈门禁已覆盖核心表示法切换，但五张像素基线仍只覆盖固定 Linux/Chromium/SwiftShader 的切片主路径；真实 GPU、多浏览器、移动视口和响应式/无障碍浏览器矩阵仍未覆盖，wheel 的静态资产打包与安装后启动也尚未验证；全栈 JSON 后审计会拒绝空跑与错误运行身份，但尚未像视觉门禁那样用 AST/content manifest 钉住固定标题测试体内的六段旅程与关键断言；
 2. 拆分 Three.js/后处理 bundle，并测量帧时、显存与大资产传输；
 3. 将等值面验证扩展到更高 $n$ 前，先设计随节点数增长的收敛策略；
 4. 原计划在进入解析含时叠加前先实现切片和节点面 representation，实际顺序没有遵守：概率流先交付，M1 叠加态先于切片完成，$\psi$/相位切片与相位遮罩到 PR-8B 才落地；真正的**节面 representation**（节点几何本身）仍未实现——切片报告的是低振幅 / 相位未定义遮罩，不是节面；
@@ -283,6 +283,7 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 - **物理与数值**：量子数、$Z$、$a_\mu$ 和质量参数在模型入口（包括解析零流早退）拒绝布尔值、非整数及非有限值；径向节点改由 Laguerre 根精确给出。含径向节点的单一 s 态等值面以解析拓扑为 oracle；含任意非零激发 s 分量的多项态不按系数容差降格，而要求 129/137 最细两级的逐分量 Euler 特征、density level 与质量稳定，失败就拒绝。点云径向与角向 CDF 都以嵌套网格收敛判定；QVPC float32 同时检查上溢、长度尺度下溢及 cast 后非零样本塌缩。概率流每条线固定自己的速度参照，向量长度使用抗上/下溢 `hypot` 归约，速度以 12 位有效数字序列化，$10^{-12}$ 弱相干及 $Z=a_\mu=10^{-160}$ 的可表示流仍保持非零。
 - **契约与架构**：网格索引、法向、流线点/速度、metadata 互易尺度和 term identity 都在 Pydantic 边界做形状、有限性与语义校验。叠加态 `terms` 使用严格语法，限制编码长度、最多 8 个 active terms；等值面把网格构建、可能的重建、实际参与判决的最细两个自适应拓扑网格及最终质量诊断逐次计入 term-voxel 预算，且 estimator 与真实 builder 的逐 term 完整网格求值记录直接互校；典型 129/137 门禁允许两项态进入 builder，三项及以上仍在 16M 上限前 fail-closed。概率流按 RK4 五阶段和序列化点数执行双预算。本征态和叠加态 slice 只在私有 builder 保留一层 LRU，public builder deep copy，HTTP route 不重复缓存大数组。只有 `ValueError`、`ScientificComputationError`、`FloatingPointError` 与 `OverflowError` 这组可归因于请求的科学失败统一为有原因的 422；`RecursionError` 等意外运行时错误仍为 500。前端请求规划集中在一个选择器，模式/表示法切换原子化，4s–8s 切片楼层与 Python builder 机械互校，叠加态物理周期按 $a_\mu/Z^2$ 缩放。真实浏览器逐项选择 4s–8s 时滑条分别落在 97/141/193/251/319，五个首次 slice 请求均为 200；非简并叠加态显示物理周期 `16.7552 a.u.`，播放时间保持在 0.2 a.u. 网格。
 - **概率流可发现性**：默认实基定态下的“概率流线”是可聚焦、可点击的解释动作，而不是伪装成按钮的禁用控件；点击会保留原态并显示 $j=0$ 的原因。独立动作从服务端 catalog 载入 `3d, m=2, complex` 并切到流线。真实浏览器验收观察到 `/api/orbitals/current-field` 返回 200、48 条流线、`max |j|/rho = 1.551` a.u.、连续性 residual $6.00\times10^{-13}$，画布和 Scene Contract 同时到达。解析零流的 `2p(+1)+2p(-1)` 同样经 current-field 200 返回 0 lines，图例明确解释空视图而不显示伪 `0…0` 色带；简并播放不执行，但 `aria-disabled` 控件仍可用键盘聚焦并引用页面内持续可见的物理说明。该轮对默认态与解析零流态的控制台验收无 error；后续审计另在 `1s+3d_z²@40` 发现确定性 422，已由下述逐态 catalog seed 上限修复。仍有一条来自上游 React Three Fiber 使用已弃用 `THREE.Clock` 的 warning。
+- **真实全栈浏览器门禁**：独立于 fixture-backed 像素套件，`npm run test:fullstack` 先构建 `web/dist`，再以文档化 CLI `quviz serve` 从仓库根启动 FastAPI。Chromium 在同一 origin 上完成默认点云、2p_z 等值面、概率密度切片、catalog 的 3d complex 概率流示例、3d 等值面和默认叠加态；六次科学请求逐项精确核对 query，任何漏掉 `a_mu`、plane、observable、basis、terms 或 workload 参数的客户端变异都会失败，而不是由服务端默认值掩盖。QVPC/1、28,000 pts、48 lines、图例、叠加态能量、settled identity 及零 API/page/console error 同时受检。OpenAPI 链接改为同源 `/docs`，并真实读取 Swagger HTML 与 `/openapi.json`；Vite 开发服务器把 `/docs`、`/openapi.json`、`/redoc` 与 `/api` 一起代理到 8000，生产与开发两种入口都不会再指向访问者机器或落回 SPA。Playwright JSON 后审计把固定 spec、标题、rootDir/testDir、唯一 project/result、零 skip/flaky/额外测试钉成闭合集合，其 23 个正/负控进入普通 vitest；CI 用独立 `web-fullstack` job 执行并上传失败 trace。边界是它仍从源码 checkout 找 `web/dist`，没有证明 wheel 已打包静态资产。
 - **仍未实现或未普适证明**：一般叠加态点云采样（M5）、显式节面几何、不含激发 s 分量的一般叠加态拓扑证明、数值 TISE/TDSE（M2+）、完整点群/SALC 与多电子/分子能力仍属路线图；视觉结论只对本次锁定版 Linux/Chromium/SwiftShader 真比较与 Windows Chromium 响应式矩阵负责，尚无真实 GPU/多浏览器矩阵；主 bundle 仍待拆分，上述上游 `THREE.Clock` 弃用 warning 也待依赖栈迁移后消除。
 
 ### 第二轮对抗审计收口：2026-08-29
@@ -292,16 +293,16 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 - **叠加目录能力与前端契约**：`/api/superposition/catalog` 发布由实际 slice builder 共用函数计算的 `slice_resolution_floor`，并发布由 current-field estimator 与两道 route guard 推导的 `streamline_seed_count_max`；`1s + 3d_z²` 分别为 103 与 24，切片 101 拒绝/103 接受，流线 24 通过而 25 因 102,400 path samples 在 builder 前拒绝。两字段经生成 OpenAPI 类型、严格 parser、store、能力矩阵、ControlPanel 和首个 request planner 全链路采用；store 启动时不预置 route 的 40，只有选中 catalog 条目成功到达才注入 ceiling，拉取/解析失败或目录缺少当前条目都会原子撤销流线能力并降级表示法。切换预设与迟到 catalog 同步同样原子收紧当前参数，缺失或损坏 seed metadata 不再猜测回落值，而是 fail-closed 为不可请求。Z 边界已进入七条 route 的 OpenAPI 机械互校；3s/4s 等值面在 UI 静态标明全部公开网格均不可服务。播放周期测试推进到首个能区分物理周期与旧 39.6 常数的第 5 帧；简并播放保留可聚焦的 `aria-disabled` 控件，并由 `aria-describedby` 指向持续可见的物理说明。
 - **变异盲区**：payload 的 face 上下界、顶点/法向/phase 长度、seed 数、speed 行列和 max-speed 双侧全部直接钉扎；phase-mask 两个互斥分支、Euler 分量多重集、probe-score 平局索引以及径向表 131,073 精确上界均有删除或边界变异负控制。
 
-本树最终实测（Windows 11、CPython 3.12.10、同一工作树）：
+本树最终实测（2026-08-30，Windows 11、CPython 3.12.10、同一工作树）：
 
 | 门禁 | 结果 |
 |---|---|
 | `pwsh -NoProfile -File scripts/check.ps1` | 全部通过 |
-| Python 全量 | 1297 passed，0 skipped；总覆盖率 92.09%（门槛 85%） |
-| 前端全量 | 33 个 spec、985 passed，0 skipped、0 todo；语句 99.58%、分支 98.37%、函数 99.57%、行 99.58%，30 个模块逐文件达标 |
+| Python 全量 | 1302 passed，0 skipped；总覆盖率 92.14%（门槛 85%） |
+| 前端全量 | 34 个 spec、1010 passed，0 skipped、0 todo；语句 99.58%、分支 98.37%、函数 99.57%、行 99.58%，30 个模块逐文件达标 |
 | 静态与文档 | ruff 118 文件、mypy strict 34 文件、MkDocs strict、OpenAPI/schema/视觉 fixture 门全部通过 |
-| 生产构建 | JS 1,261.35 kB（gzip 347.26 kB），CSS 42.50 kB（gzip 8.52 kB）；保留既有 chunk > 500 kB 警告 |
-| 真实浏览器 | 概率流示例 200、48 lines、1.551 a.u.、连续性 residual `6.00e-13`；`1s + 3d_z²` 首次 slice 为 103→200；控制台 0 error |
+| 生产构建 | JS 1,261.33 kB（gzip 347.25 kB），CSS 42.50 kB（gzip 8.52 kB）；保留既有 chunk > 500 kB 警告 |
+| 真实浏览器 | 源码 checkout 的生产挂载旅程 1/1 通过：默认点云、2p_z 等值面与切片、3d complex 的 48 条概率流线、3d 等值面及默认叠加态均由真实 API 返回 2xx，完整 query 与语义受检，控制台 0 error；Linux/SwiftShader 像素门另为 8/8 |
 
 本机仍因 Windows 权限不能实际创建文件 symlink，相关 `check.ps1` 端到端路径只由 POSIX/CI 覆盖；截图门已另在锁定版 Linux/Chromium/SwiftShader 容器中以 committed baselines 真比较通过 8/8，并包含转置、2% 几何误差与半周期负控。测试输出中的 `THREE.Clock` 弃用提示、Three.js 多实例提示与 MkDocs Material 2.0 横幅是已知上游警告，不改变本轮门禁结论。
 
