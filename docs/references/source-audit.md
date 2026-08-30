@@ -46,11 +46,11 @@ Evanescence 的通式计算、Rust/WASM 架构、点云和补充剖面很值得�
 
 ## 3. 实验、对称性与杂化
 
-正确实验 DOI 是 `10.1103/PhysRevLett.110.213001`。实验通过光电离显微镜测量远处连续态投影；近核 Stark 波函数与该投影共享节点结构，所以节点可以被映射观察。它不是对自由氢原子三维 $|\psi|^2$ 的直接摄影 [@stodolna2013stark]。
+正确实验 DOI 是 `10.1103/PhysRevLett.110.213001`。在论文所研究的氢 Stark 态中，哈密顿量可用抛物坐标分离；近核波函数沿束缚坐标的节点数保留到光电离后的远场投影，二维探测器因此能观察相应暗纹。这个结论依赖该态、坐标分离和传播条件，不是任意 measurement operator 保持节点结构的定理，更不是对自由氢原子三维 $|\psi|^2$ 的直接摄影 [@stodolna2013stark, pp. 213001-1--213001-4, especially Fig. 3]。
 
 Maksić 的资料确实讨论对称性如何约束杂化与定向成键，但杂化仍是解释模型和基选择。$T_d$ 下 $A_1\oplus T_2$ 的分解可支撑 $sp^3$ 构造；具体矩阵还必须检查正交性、方向夹角和相位/轴约定 [@maksic1986hybridization]。
 
-Gelessus 特征标表可作为数据输入，但不能人工复制后直接信任。至少自动检查群阶、不可约表示维数平方和、行列正交和类顺序；特征标表文献本身也存在过长期传播的表头错误案例 [@jacobs-character-tables; @shirts2007-character-tables]。
+Gelessus 特征标表可作为未来数据输入，但不能人工复制后直接信任。导入 M4 时至少要新增群阶、不可约表示维数平方和、行列正交和类顺序检查；Phase 0 尚未实现这些通用门禁，当前只有固定 $sp^3$ 矩阵正交性和四面体方向测试。特征标表文献本身也存在过长期传播的表头错误案例 [@jacobs-character-tables; @shirts2007-character-tables]。
 
 !!! warning "原引用域名已经失效"
 
@@ -69,7 +69,7 @@ Gelessus 特征标表可作为数据输入，但不能人工复制后直接信�
 - FloatHeadPhysics 说明区未列论文、教材或大学讲义；外链是 Patreon、Brilliant 赞助和商品。Comenius University 2025/26 的量子理论作业还专门要求学生解释该视频 08:46--10:00 为何错误；这只是独立审计旁证，正确概率测度仍由教材公式与 QuViz 测试承担 [@comenius2025-quantum-theory-ps03, problem 5 (PDF p. 4)]；
 - Wikipedia 只保留为概率流术语入口，连续性方程与电流公式引用量子力学教材 [@probability-current-wikipedia; @griffiths2018qm]；
 - TDS 文中约 300 倍来自 2D 热方程、切片向量化和作者自己的 `timeit`；NumPy 官方文档还提醒 sliding-window 方法可能比专用算法慢，必须按问题 benchmark [@mocquin2022-fdm; @numpy-sliding-window]；
-- 知乎页面显示的 2016-03-08 是**问题**的创建与编辑时间；该回答本身不显示发布或更新日期（同页其他回答显示日期，说明这是该回答的属性而非页面限制），`year = {2023}` 由 answer id 量级推断。当前页面作者匿名化为“知乎用户”。其“通过编程计算和作图加深理解”的建议与项目愿景一致，但不能替代量子化学教材 [@zhihu-molecular-orbital]。
+- 知乎页面显示的 2016-03-08 是**问题**的创建与编辑时间，不是所引回答的日期；该回答本身不显示发布或更新日期，因此参考条目明确记为日期未知，不再从 answer id 推断年份。当前页面作者匿名化为“知乎用户”。其“通过编程计算和作图加深理解”的建议与项目愿景一致，但不能替代量子化学教材 [@zhihu-molecular-orbital]。
 
 ## 5. Claude 审计 artifact
 

@@ -65,15 +65,22 @@ class CitationInlineProcessor(InlineProcessor):
         locators = [ref.locator or "" for ref in references]
         if any(locators):
             span.set("data-cite-locators", ";".join(locators))
-        labels: list[str] = []
         titles: list[str] = []
-        for ref in references:
+        span.text = "["
+        for index, ref in enumerate(references):
             entry = self.bibliography.entries[ref.key]
             label = _author_year(entry)
-            labels.append(f"{label}, {ref.locator}" if ref.locator else label)
+            link = ElementTree.SubElement(span, "a")
+            link.set("class", "quviz-citation__link")
+            # MkDocs' relative-path tree processor rewrites this docs-root
+            # source path for the current page when ``absolute_links`` is set
+            # to ``relative_to_docs``. The built href is therefore safe both
+            # at the domain root and under a deployment subpath.
+            link.set("href", f"/references/index.md#{ref.key}")
+            link.text = f"{label}, {ref.locator}" if ref.locator else label
+            link.tail = " ; " if index < len(references) - 1 else "]"
             titles.append(f"{ref.key}: {entry.fields.get('title', ref.key)}")
         span.set("title", " | ".join(titles))
-        span.text = f"[{' ; '.join(labels)}]"
         return span, match.start(0), match.end(0)
 
 

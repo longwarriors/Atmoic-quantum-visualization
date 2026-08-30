@@ -1,6 +1,8 @@
 # HTTP API
 
-FastAPI 自动生成 OpenAPI 文档 [@fastapi]。
+FastAPI 自动生成 OpenAPI 文档 [@fastapi]。逐端点的查询参数、默认值、外层 schema 边界与
+成功响应媒体类型由 live schema 生成到 [HTTP schema](http-schema.md)；本页只维护参数之间的
+关系、科学语义、数值门禁与 422 原因。两者若不一致属于构建失败，不能靠人工判断忽略。
 
 ## `GET /api/health`
 
@@ -12,17 +14,14 @@ FastAPI 自动生成 OpenAPI 文档 [@fastapi]。
 
 ## `GET /api/orbitals/metadata`
 
-参数：`n,l,m,z,basis`。
+机械参数表见 [HTTP schema](http-schema.md#get-apiorbitalsmetadata)。
 
 返回 Scene metadata，不生成大数组。
 
 ## `GET /api/orbitals/point-cloud`
 
-参数：
-
-- `n,l,m,z,basis`；
-- `samples`：1000–120000；
-- `seed`。
+机械参数表见 [HTTP schema](http-schema.md#get-apiorbitalspoint-cloud)。其中
+`samples` 为 1000–120000，`seed` 为 0–2147483647；默认分别为 20000 与 7。
 
 返回 `application/vnd.quviz.point-cloud`，格式为 `QVPC/1`。响应头包含：
 
@@ -34,10 +33,9 @@ QVPC 坐标是 float32。若正的 $Z$ 仍小到使径向表范围超出 float32
 
 ## `GET /api/orbitals/isosurface`
 
-参数：
-
-- `resolution`：49–81，必须为奇数；最低值随 $n$ 增长为 $\max(49,16n+17)$；
-- `probability_mass`：0.50–0.99。
+机械参数表见 [HTTP schema](http-schema.md#get-apiorbitalsisosurface)。其中 $n\le4$；
+`resolution` 为 49–81 且必须为奇数，最低值随 $n$ 增长为 $\max(49,16n+17)$；
+`probability_mass` 为 0.50–0.99。
 
 当前等值面 API 保守限制为 $n\le4$，但这不表示已经穷举验证该范围的全部轨道。对含径向节点的单一 s 态，builder 会先用高分辨率一维径向 oracle 得到所选 density level 的正确边界分量数，再在内部把请求网格提高到不超过 129 的奇数分辨率并复核 marching-cubes 连通分量；`grid_resolution` 报告的是这个**实际**值。若需求超过 129 或最终拓扑不匹配，请求以 422 fail-closed。
 
@@ -103,13 +101,18 @@ payload 体积是主要工程约束之一，但不是有效性的判据。实测
 - `basis`：默认 `complex`；
 - `seed_count`：1–96，默认 48；
 - `arc_step`：可选，缺省时取 $0.03\,n^2/Z$；显式给出时，`arc_step` 与 $n^2/Z$ 之比必须落在 $[1/4096,\ 1/8]$ 内（含端点），越界返回 422。该窗口只是必要条件：较小步长会增大 `max_points`，仍可能触发上述两个请求级预算；
-- 极端但为正的 $Z/a_\mu$ 若使概率流的四次尺度超出 float64 可表示域，也会以说明范围的 422 拒绝。
+- 此本征态路由不接受 `a_mu`，固定使用 ordinary-Bohr / 电子质量标度；极端但为正的 $Z$
+  若使概率流密度的 $Z^4$ 尺度超出 float64 可表示域，也会以说明范围的 422 拒绝。
 
 返回 `CurrentFieldPayload`：等弧长采样的流线顶点、逐顶点 $|\mathbf j|/\rho$ 速率、`arc_step_bohr`、`seed_density_floor`、`extent_bohr`，以及连续性诊断 `continuity_residual`、`continuity_absolute_residual`、`continuity_scale`、`continuity_scale_kind`（`stationary_current` 或 `analytic_zero_current`）、`continuity_probe_count`。`seed_count` 字段是**实际返回的流线条数**，不是请求的种子数。
 
 实基或 $m=0$ 的定态概率流恒为零，此时返回空的 `lines` 与 metadata 警告，而不是错误——“没有流动”是物理上正确的答案。
 
-密度遮罩不是固定 ordinary-Bohr 数字：它随 $(Z/a_\mu)^3$ 缩放。每条流线把自己的初始有限速度固定为相对 cutoff 参照，因此慢线的生死不依赖同批是否恰有一条快线。速度/电流向量长度使用不先平方分量的稳定 `hypot` 归约，避免仍可表示的极小共同尺度在 norm 中下溢为零。序列化前，顶点按 $a_\mu/Z$ 无量纲化后保留六位小数；速度按 $Z$ 无量纲化后**逐值保留 12 位有效数字**，不使用绝对小数位或整束最大值，故弱相干的非零流不会被清成零，`max_speed` 严格取自最终 `speed` 数组。
+密度遮罩不是固定 ordinary-Bohr 数字：在该路由固定 $a_\mu=1$ 的契约下随 $Z^3$ 缩放。
+每条流线把自己的初始有限速度固定为相对 cutoff 参照，因此慢线的生死不依赖同批是否恰有一条快线。
+速度/电流向量长度使用不先平方分量的稳定 `hypot` 归约，避免仍可表示的极小共同尺度在 norm 中下溢为零。
+序列化前，顶点按 $1/Z$ 无量纲化后保留六位小数；速度按 $Z$ 无量纲化后**逐值保留 12 位有效数字**，
+不使用绝对小数位或整束最大值，故弱相干的非零流不会被清成零，`max_speed` 严格取自最终 `speed` 数组。
 
 ## `GET /api/superposition/catalog`
 

@@ -2,6 +2,11 @@
 
 QuViz 按科学依赖关系推进：先定义状态和 observable，再决定离散化与 representation，最后才优化视觉效果。每个里程碑都必须同时满足公式、数值、契约和视觉四类验收。
 
+!!! info "当前暂停点：Phase 0 checkpoint"
+
+    本 checkpoint 包含已完成的 M0R、M1，以及随后交付的切片、浏览器产品路径和文档系统收口。
+    M2–M6 均保持待开发状态；路线图描述的是重新启动开发后的目标，不是当前产品能力。
+
 ## M0R：修复解析轨道基线（2026-08-23 完成）
 
 - 让 Python lint、format、mypy、pytest、文档和前端构建全部通过；
@@ -75,7 +80,7 @@ $$
 把态、实验算子和探测器分开：
 
 $$
-I(\mathbf R)=|\mathcal M[\Psi](\mathbf R)|^2*\operatorname{PSF}+\epsilon.
+I(\mathbf R)=\left(|\mathcal M[\Psi]|^2*\operatorname{PSF}\right)(\mathbf R)+\epsilon(\mathbf R).
 $$
 
 首个案例可复现 Stark 态光电离显微成像的节点映射，但不得把二维探测器投影描述成自由氢原子的三维密度照片 [@stodolna2013stark]。

@@ -13,9 +13,11 @@
 
 ## 开发环境
 
+从仓库根目录执行：
+
 ```bash
 uv sync --locked --all-groups
-cd web && npm ci --no-audit --no-fund
+npm --prefix web ci --no-audit --no-fund
 ```
 
 这两个命令只消费仓库已经提交的锁文件。依赖升级应作为独立变更，同时审阅 manifest 与 lockfile diff。

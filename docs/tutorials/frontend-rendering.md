@@ -7,17 +7,17 @@
 仓库使用 React、TypeScript、Vite、React Three Fiber、Drei、Three.js `BufferGeometry`、自定义点云 shader 和后处理。生产构建已通过，并完成以下 M0R 修复：
 
 - 点云使用普通 alpha blending 和统一 marker 权重，密度只由空间点浓度编码；
-- 点云与等值面使用同一套以 sRGB 定义的 HSV 周期相位映射，送入 GPU 前统一解码到 Linear-sRGB；实基相位 0 为红、相位 $\pi$ 为青；
+- 点云与等值面使用同一套以 sRGB 定义的 HSV 周期相位映射，送入 GPU 前统一解码到 Linear-sRGB；实基相位 0 为红、相位 $\pi$ 为青；`Re ψ` / `Im ψ` 切片使用红—深中性—青发散色图，density 切片使用单调亮度的蓝色顺序色图；
 - 雾、Bloom 和 opacity 控件只出现在实际消费它们的展示层；相位点云/等值面刻意绕过会改写数据色的雾与全帧后处理，因此这些 representation 不显示 Bloom。Exposure 在后处理接管 tone mapping 的真实挂载路径完成验证前不向用户暴露；
 - 新资产到达后按轨道方向重新选择观察轴并 fit camera；
 - Inspector 从服务端 metadata 显示标签、能量、单位、几何/颜色语义和引用；
-- 等值面默认不透明并使用已校正绕向的 front faces，避免透明排序制造假结构。
+- 等值面默认不透明、使用未照明 `MeshBasicMaterial` 和已校正绕向的 front faces；Phase 0 没有 Fresnel 映射，避免光照、视角或透明排序制造假结构。
 
 PR-8B/8C 又加了 $\psi$/相位平面切片：后端返回行主序标量场与右手 $(u,v,n)$ 标架，前端把它上传成一张 `DataTexture` 贴在一块按同一标架旋转的 quad 上（`src/scene/SliceField.tsx`）。
 
 概率流入口不再因默认 2p_z 实基、$m=0$ 态而成为一个“点不到”的死控件：对这类本征态，不可用按钮仍可聚焦和点击，并在页面内显示零流原因；独立的“载入并显示概率流示例”操作从服务端 orbital catalog 的 `3d-complex` 项取状态，再显式切到流线 representation。它不在用户点击不可用按钮时偷偷改写量子态，也不在前端复制一份可能漂移的示例参数。对解析上严格零流、但 route 正常返回空 `lines` 的叠加态，图例会明确显示“解析零概率流”；对数值上合法但当前时刻没有可绘制路径的空结果，图例则显示“当前时刻无可绘制流线”。两种情况都省略没有物理取值可编码的 `0…0` 色带。
 
-叠加态播放同样消费服务端 catalog 的 `period_au`，并按当前 $a_\mu/Z^2$ 能量尺度换算周期；每圈把真实周期分成整数帧后从帧号重建时间，既不会在旧的 39.6 a.u. 人工边界发生相位跳变，也能在后续圈生成逐位相同的缓存键。`period_au=0` 的简并态不执行播放，但控件仍可用键盘聚焦：它使用 `aria-disabled`，并通过 `aria-describedby` 指向页面内持续可见的“能量简并、概率密度不随时间变化”说明，而不是把唯一解释藏在 disabled 按钮的鼠标 tooltip 中。
+叠加态播放同样消费服务端 catalog 的 `period_au`，并按当前 $a_\mu/Z^2$ 时间尺度换算周期（对应的能量尺度为 $Z^2/a_\mu$）；每圈把真实周期分成整数帧后从帧号重建时间，既不会在旧的 39.6 a.u. 人工边界发生相位跳变，也能在后续圈生成逐位相同的缓存键。`period_au=0` 的简并态不执行播放，但控件仍可用键盘聚焦：它使用 `aria-disabled`，并通过 `aria-describedby` 指向页面内持续可见的“能量简并、概率密度不随时间变化”说明，而不是把唯一解释藏在 disabled 按钮的鼠标 tooltip 中。
 
 同一 catalog 还发布每个预设的 `slice_resolution_floor` 与 `streamline_seed_count_max`。前者由服务端 slice builder 的实际 extent / 径向特征楼层函数生成；后者由 current-field route 的 estimator 和两道 workload guard 在默认 `arc_step` 下生成。选择预设与 store 更新在一次原子写入中完成，因此 `1s + 3d_z²` 的第一份切片 plan 已是 103、第一份流线 plan 最多 24 seeds，不会先发一个确定性 422 再回退。typed runtime parser、能力矩阵、滑条和 request planner 全部消费这两个字段，不在 TypeScript 重算径向或 RK4 数值。缺失或损坏的 seed metadata 不会猜测一个回落数值，而是把该流线能力标为 unsupported，保证 planner 根本构造不出请求。Z 的前端数值范围也来自能力约束表；该约束与所有七个科学 route 的 committed OpenAPI 逐项互校，number input、store clamp 和 query planner 共用同一组 0.1–20 UI 边界。
 
@@ -31,13 +31,16 @@ WebUI 采用“中文主述、专业记法原样保留”的单一信息层级�
 
 ## 当前渲染契约
 
-前端只能映射数据，不能重新发明物理语义。每个 layer 至少接收：
+前端只能映射数据，不能重新发明物理语义。每个 layer 至少接收与其状态类型相符的身份：
 
-- 状态标签、basis、observable 和 representation；
+- 本征态使用 $n,\ell,m,Z,a_\mu,$ basis；叠加态使用各项量子数、复系数、$Z,a_\mu,$ basis 与时刻；
+- 状态标签、observable 和 representation；
 - 坐标、长度单位、归一化与有限域质量；
-- 点数或网格分辨率、阈值和包围概率；
+- representation 专属的分辨率、阈值与数值诊断；
 - phase colormap 的数学映射；
 - 来源键与计算警告。
+
+公开诊断不能混成一个虚构的通用 metadata 结构：点云的捕获径向质量与 extent 来自响应头；等值面带请求/实际质量、有限网格积分、resolution、spacing 与 extent；流线带 extent、seed density floor、arc step、速度和连续性 residual/scale/probe；切片带平面、extent、spacing、值单位，并只在 phase 场中携带低振幅 mask 的阈值、数值下限与 `valid_mask`。Inspector 按资产类型显示存在的字段，缺失值不猜测。
 
 ## 点云
 
@@ -71,13 +74,12 @@ WebUI 采用“中文主述、专业记法原样保留”的单一信息层级�
 
 ## 信息层
 
-界面始终显示：
+界面按当前资产显示：
 
-- $n,\ell,m,Z$ 与 real/complex basis；
+- 本征态的 $n,\ell,m,Z$ 与 real/complex basis，或叠加态的逐项系数、$Z,a_\mu$、basis 与时刻；
 - observable 和 representation；
 - 单位、归一化和计算域；
-- 点数或网格分辨率；
-- 截断概率或目标包围概率；
+- 对应表示法实际拥有的点数、线数、网格分辨率、质量或连续性诊断；
 - 与 shader 一致的相位图例；
 - 阻断警告，不能只写入后端 metadata 后在 UI 隐藏。
 

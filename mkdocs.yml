@@ -5,6 +5,20 @@ watch:
   - src/quviz
   - references.bib
 
+# Under ``strict: true`` every warning below fails the build.  Spell the
+# policy out instead of relying on MkDocs defaults, which have changed between
+# releases and otherwise leave omitted pages and broken anchors as INFO only.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    absolute_links: relative_to_docs
+    unrecognized_links: warn
+    anchors: warn
+
 theme:
   name: material
   language: zh
@@ -75,7 +89,10 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+          # Mermaid consumes the element's source text. ``fence_code_format``
+          # adds a nested <code> wrapper, which Mermaid 11 parses as diagram
+          # syntax and rejects; the div formatter hands it plain graph text.
+          format: !!python/name:pymdownx.superfences.fence_div_format
   - pymdownx.tabbed:
       alternate_style: true
   - quviz.docs.citations:
@@ -86,7 +103,9 @@ extra_css:
 
 extra_javascript:
   - assets/javascripts/mathjax.js
-  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js
+  - https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js
+  - assets/javascripts/mermaid.js
 
 nav:
   - 首页: index.md
@@ -110,6 +129,7 @@ nav:
       - 实验图样与概率密度: concepts/experiment-vs-density.md
   - 教程:
       - tutorials/index.md
+      - Phase 0 交互工作流: tutorials/phase-0-walkthrough.md
       - 氢与类氢轨道: tutorials/hydrogenic-orbitals.md
       - 实轨道与复轨道: tutorials/real-vs-complex.md
       - 电子云采样: tutorials/sampling.md
@@ -126,6 +146,7 @@ nav:
       - 系统架构: concepts/architecture.md
       - Scene Contract: reference/scene-contract.md
       - HTTP API: reference/api.md
+      - HTTP Schema: reference/http-schema.md
       - Python API: reference/physics-api.md
       - 质量门禁: reference/quality-gates.md
   - 决策记录:

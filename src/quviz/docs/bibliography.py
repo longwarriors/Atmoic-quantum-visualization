@@ -8,6 +8,7 @@ making citation-key validation available to tests and maintenance scripts.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,53 @@ class Bibliography:
     entries: dict[str, BibEntry]
 
 
+# Each tuple is a group of alternatives: at least one non-empty field in the
+# group is required.  Keeping this policy next to the parser gives the index
+# generator and tests one definition of "complete enough to publish" without
+# making the deliberately small parser reject partial entries used by callers.
+ENTRY_TYPE_REQUIRED_FIELDS: Mapping[str, tuple[tuple[str, ...], ...]] = {
+    "article": (
+        ("author",),
+        ("title",),
+        ("journal",),
+        ("year",),
+        ("volume",),
+        ("pages",),
+    ),
+    "book": (
+        ("author", "editor"),
+        ("title",),
+        ("publisher",),
+        ("year",),
+        ("edition",),
+    ),
+    "incollection": (
+        ("author",),
+        ("title",),
+        ("booktitle",),
+        ("editor",),
+        ("publisher",),
+        ("year",),
+        ("pages",),
+    ),
+    "online": (("author", "editor", "organization"), ("title",), ("url",), ("urldate",)),
+    "software": (
+        ("author", "editor", "organization"),
+        ("title",),
+        ("url",),
+        ("urldate",),
+        ("version", "commit"),
+    ),
+}
+
+# QuViz additionally requires a discovery tag and a persistent target for
+# every canonical entry, independent of its BibTeX type.
+COMMON_REQUIRED_FIELDS: tuple[tuple[str, ...], ...] = (
+    ("keywords",),
+    ("doi", "url"),
+)
+
+
 def keywords(entry: BibEntry) -> set[str]:
     """The comma-separated ``keywords`` field as a set, whitespace stripped.
 
@@ -47,6 +95,27 @@ def keywords(entry: BibEntry) -> set[str]:
     """
 
     return {value.strip() for value in entry.fields.get("keywords", "").split(",")} - {""}
+
+
+def required_field_problems(bibliography: Bibliography) -> list[str]:
+    """Return missing-field problems under QuViz's supported entry policy.
+
+    A field group such as ``("author", "editor")`` means that either field is
+    sufficient.  Unsupported entry types are rejected explicitly: otherwise a
+    misspelled ``@article`` would silently bypass every type-specific check.
+    """
+
+    problems: list[str] = []
+    for key, entry in bibliography.entries.items():
+        type_groups = ENTRY_TYPE_REQUIRED_FIELDS.get(entry.entry_type)
+        if type_groups is None:
+            problems.append(f"{key}: unsupported entry type {entry.entry_type!r}")
+            continue
+        for alternatives in (*type_groups, *COMMON_REQUIRED_FIELDS):
+            if not any(entry.fields.get(field, "").strip() for field in alternatives):
+                label = " or ".join(alternatives)
+                problems.append(f"{key} ({entry.entry_type}): missing {label}")
+    return problems
 
 
 def _skip_space(text: str, index: int) -> int:

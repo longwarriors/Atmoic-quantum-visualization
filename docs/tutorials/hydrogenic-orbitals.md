@@ -19,10 +19,12 @@ $$
 其中：
 
 $$
-\rho=\frac{2Zr}{na_\mu}.
+\sigma=\frac{Zr}{a_\mu},
+\qquad
+\rho=\frac{2\sigma}{n}=\frac{2Zr}{na_\mu}.
 $$
 
-广义 Laguerre 多项式和球谐函数分别由 SciPy 的当前 API 计算 [@scipy-eval-genlaguerre; @scipy-sph-harm-y]，公式依据可追溯到 DLMF [@dlmf-laguerre; @dlmf-spherical-harmonics]。
+归一化总式采用 Griffiths 的氢原子波函数形式，并把普通 Bohr 半径替换为约化质量尺度 $a_\mu$ [@griffiths2018qm, eq. (4.89), p. 151]。广义 Laguerre 多项式和球谐函数分别由 SciPy 的当前 API 计算 [@scipy-eval-genlaguerre; @scipy-sph-harm-y]；多项式与球谐的约定分别对照 DLMF 18.5.12 与 14.30.1 [@dlmf-laguerre, eq. 18.5.12; @dlmf-spherical-harmonics, eq. 14.30.1]。
 
 ## 节点计数
 
@@ -58,7 +60,7 @@ $$
 
 !!! warning "节点更多不代表氢原子的平均动能更高"
 
-    一维弦或无限深势阱中“节点更多、波长更短、动能更高”的直觉不能原样搬到库仑束缚态。氢样定态满足 virial 关系 $2\langle T\rangle=-\langle V\rangle$，所以 $E=\langle T\rangle+\langle V\rangle=-\langle T\rangle$。当 $n$ 增大时 $E_n$ 变得较不负，而 $\langle T\rangle=-E_n$ 反而减小 [@griffiths2018qm, p. 125 (virial theorem) and ch. 4 (pp. 131--197)]。视频 05:05--06:05 的不确定性论证越过了类比的适用边界；常见实基下总节点面数仍是 $n-1$，错误的是这条能量解释 [@floatheadphysics2025-orbitals, 05:05--06:05]。
+    一维弦或无限深势阱中“节点更多、波长更短、动能更高”的直觉不能原样搬到库仑束缚态。氢样定态满足 virial 关系 $2\langle T\rangle=-\langle V\rangle$，所以 $E=\langle T\rangle+\langle V\rangle=-\langle T\rangle$。当 $n$ 增大时 $E_n$ 变得较不负，而 $\langle T\rangle=-E_n$ 反而减小 [@griffiths2018qm, problem 3.37, p. 125, and problem 4.48, eq. (4.218), p. 187]。视频 05:05--06:05 的不确定性论证越过了类比的适用边界；常见实基下总节点面数仍是 $n-1$，错误的是这条能量解释 [@floatheadphysics2025-orbitals, 05:05--06:05]。
 
 ## 已确认的资料纠错
 

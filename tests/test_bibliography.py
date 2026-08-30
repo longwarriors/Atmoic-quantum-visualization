@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from quviz.docs.bibliography import parse_bibtex, parse_bibtex_file
+from quviz.docs.bibliography import (
+    parse_bibtex,
+    parse_bibtex_file,
+    required_field_problems,
+)
 from quviz.docs.scan import cited_keys_in_tree, orphan_keys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +24,59 @@ def test_canonical_bibliography_has_expected_sources() -> None:
     tully = bibliography.entries["tully2013pointillist"]
     assert tully.authors[0].first_names == ("Shane", "P.")
     assert tully.authors[-1].first_names == ("Przemyslaw",)
+
+
+def test_canonical_entries_have_type_required_and_persistent_metadata() -> None:
+    bibliography = parse_bibtex_file(ROOT / "references.bib")
+    assert required_field_problems(bibliography) == []
+
+
+def test_required_metadata_is_entry_type_aware() -> None:
+    incomplete = parse_bibtex(
+        """
+        @article{paper, author={A. Author}, title={Paper}, year={2026},
+          doi={10.1/example}, keywords={physics}}
+        @online{page, author={{Docs Team}}, title={Docs},
+          url={https://example.test}, keywords={software}}
+        @misc{typo, author={A. Author}, title={Wrong type},
+          url={https://example.test}, keywords={software}}
+        """
+    )
+    assert required_field_problems(incomplete) == [
+        "paper (article): missing journal",
+        "paper (article): missing volume",
+        "paper (article): missing pages",
+        "page (online): missing urldate",
+        "typo: unsupported entry type 'misc'",
+    ]
+
+
+def test_generated_index_emits_every_canonical_field() -> None:
+    bibliography = parse_bibtex_file(ROOT / "references.bib")
+    rendered = (ROOT / "docs/references/index.md").read_text(encoding="utf-8")
+    type_labels = {
+        "article": "Journal article",
+        "book": "Book",
+        "incollection": "Book chapter",
+        "online": "Online resource",
+        "software": "Software",
+    }
+    for key, entry in bibliography.entries.items():
+        start = rendered.index(f'<a id="{key}"></a>')
+        next_entry = rendered.find('<a id="', start + 1)
+        block = rendered[start:] if next_entry < 0 else rendered[start:next_entry]
+        assert f"| **Type** | {type_labels[entry.entry_type]} |" in block
+        assert entry.fields["title"] in block
+        for field, value in entry.fields.items():
+            if field == "author":
+                for person in entry.authors:
+                    expected = person.literal or " ".join(person.last_names)
+                    assert expected in block, (key, field, expected)
+            elif field == "keywords":
+                for tag in value.split(","):
+                    assert f"`{tag.strip()}`" in block, (key, field, tag)
+            else:
+                assert value.replace(r"\&", "&") in block, (key, field, value)
 
 
 def test_duplicate_keys_are_rejected() -> None:

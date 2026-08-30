@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from typer.testing import CliRunner
 
+import quviz.cli as cli_module
 from quviz import __version__
 from quviz.cli import app
 
@@ -45,15 +46,45 @@ def test_sample_command_writes_reproducible_npz(tmp_path: Path) -> None:
 
 
 def test_serve_command_forwards_options(monkeypatch) -> None:
-    calls: list[tuple[str, str, int, bool]] = []
+    calls: list[tuple[str, str, int, bool, list[str] | None]] = []
 
-    def fake_run(target: str, *, host: str, port: int, reload: bool) -> None:
-        calls.append((target, host, port, reload))
+    def fake_run(
+        target: str,
+        *,
+        host: str,
+        port: int,
+        reload: bool,
+        reload_dirs: list[str] | None,
+    ) -> None:
+        calls.append((target, host, port, reload, reload_dirs))
 
     monkeypatch.setattr("quviz.cli.uvicorn.run", fake_run)
     result = runner.invoke(app, ["serve", "--host", "0.0.0.0", "--port", "8123", "--reload"])
     assert result.exit_code == 0, result.stdout
-    assert calls == [("quviz.api.app:app", "0.0.0.0", 8123, True)]
+    source_package = str(Path(cli_module.__file__).resolve().parent)
+    assert calls == [("quviz.api.app:app", "0.0.0.0", 8123, True, [source_package])]
+
+
+def test_serve_without_reload_does_not_configure_a_watch_directory(monkeypatch) -> None:
+    calls: list[tuple[bool, list[str] | None]] = []
+
+    def fake_run(
+        target: str,
+        *,
+        host: str,
+        port: int,
+        reload: bool,
+        reload_dirs: list[str] | None,
+    ) -> None:
+        assert target == "quviz.api.app:app"
+        assert host == "127.0.0.1"
+        assert port == 8000
+        calls.append((reload, reload_dirs))
+
+    monkeypatch.setattr("quviz.cli.uvicorn.run", fake_run)
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0, result.stdout
+    assert calls == [(False, None)]
 
 
 def test_doctor_reports_repository_assets() -> None:

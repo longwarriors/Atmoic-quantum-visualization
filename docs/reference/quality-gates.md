@@ -1,10 +1,10 @@
 # 质量门禁
 
-!!! note “门禁定义”
+!!! note "门禁定义"
 
     Unix 使用 `make check`，Windows PowerShell 使用 `& .\scripts\check.ps1`。只有所有适用门禁在同一提交上通过，才能称为“全绿”；最新结果见[当前状态](../project/status.md)。
 
-!!! warning “状态标记是本页的强制格式”
+!!! warning "状态标记是本页的强制格式"
 
     [文档与引用](#docs-and-citations)一节要求“已实现”“已验证”“计划中”不得混写，因此每一条目必须带状态：
 
@@ -29,7 +29,7 @@
 - ✅ $\theta\in[0,\pi]$、$\phi\in[0,2\pi)$ 角度范围约定 — `test_cartesian_to_spherical_uses_documented_angle_ranges`；
 - ✅ Condon–Shortley 相位与实轨道 Cartesian 形式（$\ell=1,2$） — `test_real_p_harmonics_match_cartesian_directions`、`test_real_d_harmonics_match_cartesian_closed_forms`。
 
-!!! info “为什么这些门禁要用独立参照”
+!!! info "为什么这些门禁要用独立参照"
 
     每一条都对照**独立推导的参照**验证，而不是另一条 QuViz 代码路径：闭式期望值、对 $\psi$ 自身作有限差分得到的算符、或独立求积规则。否则测试只会证明代码与自己一致。
 
@@ -99,7 +99,7 @@
 - ✅ 视觉门禁完整性 — `assert-visual-run.mjs` 使用闭合集合钉住 2 个 spec、8 个必需测试标题及其恰好一次执行；Playwright 的 JSON 报告不记录普通 assertion，所以同一脚本再用锁定的 TypeScript AST 解析器把 7 条正向截图比较、3 条 `.not.toHaveScreenshot` 机制负控和 3 条 WebGL/SwiftShader 断言钉到各自精确测试标题。删测试、换标题、把断言改成注释、拿额外绿测试顶账、复制同名执行或从错误 spec 报告都会由 `visualGate.test.ts` 的负控制变红；
 - 🧑 UI 不能隐藏关键警告和单位。
 
-!!! warning “截图门禁不覆盖什么，以及它到底多出了哪一句”
+!!! warning "截图门禁不覆盖什么，以及它到底多出了哪一句"
 
     **`check.ps1` / `make check` 完全不覆盖视觉映射。** `web/playwright.config.ts` 在非 Linux 上于**模块加载时**直接抛错，所以这条门禁在开发机上不是“没跑”，而是**不允许跑**。这不是洁癖：基线是 Linux CI 镜像上 SwiftShader（Chromium 的软件光栅化器）画出来的像素，Windows 与 macOS 的字体栅格化、次像素定位和可用的 ANGLE 后端都不同，同一份代码在那里渲染出可见不同的图。真正的危险不是本机全红，而是本机全红之后有人顺手敲 `--update-snapshots`——那会**用这台机器的像素覆盖掉 CI 基线**，此后套件本地绿、CI 红，并且不再描述任何回归。所以守卫是抛错而不是 `skip`：`skip` 之下 `--update-snapshots` 照样能写。
 
@@ -107,7 +107,7 @@
 
     **基线的产生方式是刻意昂贵的。** `updateSnapshots: 'none'` 让“缺失基线”成为失败而不是被静默写入的答案键（Playwright 的默认值 `'missing'` 会把新断言的第一次运行变成它自己的答案键，包括 bug）。第一次 CI 运行因此按设计失败，人从失败工件里的 `test-results/<test>/<name>-actual.png` 逐张检查之后才提交答案键；五张 Linux/SwiftShader PNG 现已位于 `web/e2e/__screenshots__/slice.spec.ts/`。任何生产或阈值改动都仍须让同一 SHA 的 CI 运行对这些既有基线通过，不能在开发机上更新快照来消除差异。
 
-!!! info “QVPC/1 的跨语言黄金向量”
+!!! info "QVPC/1 的跨语言黄金向量"
 
     `tests/fixtures/qvpc_golden.bin` 是同一份字节流的**双向契约**：Python 侧断言编码器逐字节复现它，TypeScript 侧断言解析器能解出 `qvpc_golden.json` 里的值。
 
@@ -118,12 +118,20 @@
 - ✅ `mkdocs build --strict`；
 - ✅ 所有 `[@key]` 存在 — `tests/test_bibliography.py::test_all_documentation_citation_keys_exist`；
 - ✅ 生成索引与 `references.bib` 同步 — `scripts/render_reference_index.py --check`；
+- ✅ HTTP 参数/默认值/外层边界/成功媒体类型与 live OpenAPI 同步 —
+  `scripts/render_openapi_reference.py --check` 与 `tests/test_openapi_reference.py`；QVPC/1 的
+  OpenAPI 200 响应必须声明 `application/vnd.quviz.point-cloud` binary，而不是 JSON
+  （`tests/test_openapi_contract.py`）；
 - ✅ Markdown 字节级完整性 — `tests/test_docs_integrity.py` 按**字节**检查 `docs/` 与根目录 Markdown，下列三者任一出现即变红：(1) 除 LF 外的任何 C0 字节——孤立或成对的 CR、TAB、换页符都算，因为它们正是 `\rho`、`\theta` 这类转义被解释后留下的指纹；(2) 转义损坏留下的孤儿 LaTeX 片段（如行首的 `abla`、`ightarrow`）——片段集合不是固定清单，而是在测试时从语料中每个 `\[abfnrtv]...` 命令推导并与静态种子取并集，另有测试断言语料中每个此类命令都被覆盖；行首片段无条件检查，`/ { = ( + - , ^ _ $` 之后的片段（允许隔着空白，因为编辑器会把残留的 TAB 规范化成空格）只在含 `$` 的行和 `$$ ... $$` 块内检查，且 `\text{…}`、`\mathrm{…}`、`\operatorname{…}` 这类文本命令的花括号参数不算；围栏代码块与行内代码一律不扫描，围栏边界同时重置 `$$` 块状态；1–2 字母片段（`\nu`、`\ne`、`\rho` 留下的 `u`、`e`、`ho`）只在紧跟 `$ } _ ^ \` 或数字且仅在行首时才报，其余情形依赖 (1) 的字节检查兜底；(3) 以 `|` 开头的表格行中 `$...$` 内未转义的 `|`——`\(...\)` 数学与不以 `|` 开头的行不扫描；
 - 🌐 **新增**的 URL/DOI 可达 — CI `changed-links` 作业运行 `scripts/check_links.py --changed-since <base>`，除已知 bot 过滤站点（`BOT_HOSTS`）的 BLOCKED 与 HTTP 429 外任何非 OK 结果都失败——429 是限流，只说明探测被限速，不是对链接本身的判定。触发时机与比较基准：pull request 以目标分支为基准；push 以推送前该 ref 所指的提交为基准，该提交不可用时（分支首次推送时为零 SHA，或 force push 后不是 HEAD 的祖先）退回到与 `origin/master` 的合并基，即探测整个分支相对 master 新增的链接，而不是跳过；若连这个基准都已包含 HEAD（master 自身的首次推送或 force push：`origin/master` 即 HEAD，diff 为空）或 checkout 里根本没有 `origin/master`，则没有可比较的基准，改为全量探测 `references.bib` 里的每个 URL 与 DOI（`--include-doi`，即每周扫描的同一探测），作业里没有任何一步会被跳过（`tests/test_check_script.py` 用一次性仓库执行基准解析与探测两步的脚本逐例验证）。已存在链接的腐烂由每周 `link-check` 工作流扫描（BROKEN/SUSPECT 失败）；两者都需要网络，不在 `make check` / `check.ps1` 内，本地提交前无法得知新增链接是否可达；
 - 🕒 引用内容漂移检查（当前没有任何门禁比对页面内容）；
 - ✅ `references.bib` 中未被正文引用的孤儿键 — `tests/test_bibliography.py::test_every_bibliography_entry_is_cited_or_marked_tooling`；代码块、行内代码与块级 HTML 注释里的引用不算正文，正文行内的注释按 python-markdown 的行为计入（`tests/test_citation_gates.py`）；
 - ✅ `source-audit` 条目的 `commit` 与 URL 中 SHA 一致、tag 或无法与 tag 区分的 ref 需要与之相等的 `version`、明确的分支 URL 一律拒绝、非代码托管来源带访问日期（完整规则见[添加和维护引用](../how-to/cite-sources.md#enforced-rules)） — `test_repository_bibliography_has_coherent_source_pins`；
-- 🧑 Mermaid、数学公式和 API 文档在生成 HTML 中真正渲染，而非只通过构建；
+- 🔗 MkDocs 在真实 Chromium 中完成渲染 — `npm run test:fullstack` 同时启动生产应用与
+  `mkdocs serve --strict`：直达页面和 `navigation.instant` 换页后的全部 `.arithmatex` 都必须
+  生成 `mjx-container`，架构页 Mermaid 必须生成 SVG，Python API 必须出现 Phase 0 的
+  superposition / planes / models / slices / streamlines 模块；本地请求、console 或 page error
+  任一非空即失败，并由 `web-fullstack` CI 作业执行；
 - 🧑 已知纠错不可被旧教程重新引入；
 - 🧑 引用是否真正支持正文声明；
 - 🧑 “已实现”“已验证”“计划中”三个状态不得混写。

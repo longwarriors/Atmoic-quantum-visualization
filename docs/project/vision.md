@@ -20,17 +20,18 @@ $$
 \boxed{
 \text{State}
 \rightarrow
-\text{Observable}
+\begin{cases}
+\text{direct theoretical observable},\\
+\text{Measurement model}\rightarrow\text{detector observable}
+\end{cases}
 \rightarrow
 \text{Representation}
 \rightarrow
 \text{Renderer}
-\rightarrow
-\text{Measurement model}
 }
 $$
 
-例如，氢原子 $2p_z$ 是一个状态标签；$|\psi|^2$ 是 observable；点云与等值面是两种 representation；WebGL 是 renderer；光电离显微镜的探测器图样则属于 measurement model。它们不能用“电子云”三个字全部代替。
+例如，氢原子 $2p_z$ 是一个状态标签；$|\psi|^2$ 是直接理论 observable；点云与等值面是两种 representation；WebGL 是 renderer。光电离显微镜还需要 measurement model 先把状态映射成探测器 observable，探测器强度随后才被表示和渲染。它们不能用“电子云”三个字全部代替。
 
 ## 三条长期原则
 

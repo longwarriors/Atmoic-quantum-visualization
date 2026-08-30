@@ -1765,11 +1765,14 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/vnd.quviz.point-cloud": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "QVPC/1 little-endian Float32 point-cloud payload"
           },
           "422": {
             "content": {

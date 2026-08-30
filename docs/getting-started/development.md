@@ -3,13 +3,14 @@
 ## 常用命令
 
 ```bash
-uv run pytest --cov=quviz
-uv run ruff check .
-uv run ruff format .
-uv run mypy
-uv run --group docs python scripts/render_reference_index.py
-uv run --group docs mkdocs serve
-cd web && npm run build
+uv run --locked --group docs pytest --cov=quviz
+uv run --locked ruff check .
+uv run --locked ruff format .
+uv run --locked mypy
+uv run --locked --no-sync python scripts/render_reference_index.py --check
+uv run --locked --no-sync python scripts/render_openapi_reference.py --check
+uv run --locked --no-sync mkdocs serve
+npm --prefix web run build
 ```
 
 也可以使用：
@@ -21,17 +22,16 @@ make check
 前端测试可单独运行：
 
 ```bash
-cd web && npm run test
+npm --prefix web run test
 ```
 
 真实后端与生产前端挂载的浏览器 smoke 另行运行：
 
 ```bash
 uv sync --locked --all-groups
-cd web
-npm ci --no-audit --no-fund
-npx --no-install playwright install chromium
-npm run test:fullstack
+npm --prefix web ci --no-audit --no-fund
+npm --prefix web exec --no -- playwright install chromium
+npm --prefix web run test:fullstack
 ```
 
 该命令生产构建 `web/dist`，从仓库根启动 `quviz serve` 于专用端口 8765，再以 Chromium
@@ -64,27 +64,33 @@ Windows PowerShell：
 
 ## 提交前门禁
 
-`scripts/check.ps1` 按顺序跑完下面八道门禁，任何一道非零退出即整体失败：
+`scripts/check.ps1` 按顺序跑完下面九道门禁，任何一道非零退出即整体失败：
 
 1. `uv run ruff check .`；
 2. `uv run ruff format --check .`；
 3. `uv run mypy`；
 4. `uv run --group docs pytest --cov=quviz --cov-report=term-missing`（科学不变量、采样统计、引用与门禁自身的测试都在其中；`tests/conftest.py` 把任何 skip 记为会话失败）；
 5. `uv run --group docs python scripts/render_reference_index.py --check`（引用键与索引同步）；
-6. `uv run --group docs mkdocs build --strict`；
-7. `web/` 下 `npm run test`（上面那五段链）；
-8. `web/` 下 `npm run build`（Vite 生产构建）。
+6. `uv run --group docs python scripts/render_openapi_reference.py --check`（HTTP 参数页与 live OpenAPI 同步）；
+7. `uv run --group docs mkdocs build --strict`；
+8. `web/` 下 `npm run test`（上面那五段链）；
+9. `web/` 下 `npm run build`（Vite 生产构建）。
 
 判定以**整条命令的退出码**为准：`exit 0` 才算通过。屏幕上那行 `All checks passed!` 是 **ruff**
-自己打印的，不是 check.ps1 的结论——看到它并不代表后面七道门禁跑过了。
+自己打印的，不是 check.ps1 的结论——看到它并不代表后面八道门禁跑过了。
 
-八道门禁一律在**这个脚本自己所在的那份 checkout** 里运行，而不是调用者的当前目录：脚本解析
+九道门禁一律在**这个脚本自己所在的那份 checkout** 里运行，而不是调用者的当前目录：脚本解析
 `$PSCommandPath`（文件本身，不只是它所在的目录）、跟随文件符号链接与目录 junction 到真实位置，
 拒绝以硬链接方式调用（硬链接没有可跟随的目标；注意只要存在任一硬链接，仓库自己的
 `scripts/check.ps1` 也会一并拒绝运行，这是刻意的失效安全方向），再用
 `git rev-parse --show-toplevel --show-prefix` 确认解析出的目录确实是某个工作区的 `scripts/`，
 并要求该根目录的 `pyproject.toml` 声明 `name = "QuViz"`。这些检查合起来取代了原先"存在 `.git` 和
 `pyproject.toml` 两个文件"的判据——两个**空文件**就能满足它。
+
+本地脚本假定前置安装已经由受支持的 Node 版本完成；它不会在每次 `npm run` 前重新解释
+`web/package.json` 的 semver 范围。`npm ci` 由 `web/.npmrc` 的 `engine-strict=true` 拒绝不受支持
+的运行时，三个前端 CI job 则显式固定 Node 22.22.2。仅凭一棵既有 `node_modules` 上的本地
+`check.ps1` 通过，不能反推当前 Node 版本受支持。
 
 ## 添加依赖
 

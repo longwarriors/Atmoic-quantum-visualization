@@ -16,7 +16,7 @@ Quantum state → Observable → Representation → Scene contract → GPU rende
 
 ## 当前状态
 
-当前 Alpha 基线已覆盖解析氢样轨道、实/复球谐、概率密度、相位、定态与解析含时叠加态的概率流、分离逆 CDF 点采样，以及 $\psi$/相位平面切片；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$。FastAPI/QVPC/1、typed JSON Scene payload 与 React/Three.js 已端到端接线。它仍不代表通用 TISE/TDSE、一般叠加态采样或多电子求解器已经完成。
+当前 Alpha 基线已覆盖解析氢样轨道、实/复球谐、概率密度、相位、定态与解析含时叠加态的概率流、单一氢样本征态的分离逆 CDF 点采样，以及 $|\psi|^2$、$\operatorname{Re}\psi$、$\operatorname{Im}\psi$ 与相位平面切片；三维等值面使用自适应计算域、奇数网格和显式质量积分，API 暂时保守限制为 $n\le4$。FastAPI/QVPC/1、typed JSON Scene payload 与 React/Three.js 已端到端接线。它仍不代表通用 TISE/TDSE、一般叠加态采样或多电子求解器已经完成。
 
 默认 2p_z 实基态的概率流严格为零，因此“概率流线”不会伪造一张流图；该按钮可点击查看原因，旁边的显式操作会从服务端 orbital catalog 载入 `3d, m=2, complex` 示例并切换到真实概率流。
 
@@ -43,40 +43,65 @@ QuViz/
 
 ## 快速开始
 
-### 1. 安装全部 Python 依赖
+前置条件是 Python 3.12 或 3.13、[`uv`](https://docs.astral.sh/uv/)，以及
+Node.js `^22.22.2 || ^24.15.0 || >=26.0.0` 与 npm。仓库根的 `.node-version` 和
+`.nvmrc` 为本地版本管理器固定 Node 22.22.2，CI workflow 也显式使用同一版本；不满足
+`web/package.json` 约束时，npm 会直接拒绝安装，而不是留下一个带兼容性警告的环境。
+
+以下命令都从**仓库根目录**执行。
+
+### 1. 安装锁定依赖
 
 ```bash
 uv sync --locked --all-groups
+npm --prefix web ci --no-audit --no-fund
 ```
 
-### 2. 启动科学 API
+### 2. 单服务预览（推荐首次使用）
 
 ```bash
-uv run quviz serve --reload
+npm --prefix web run build
+uv run --locked --no-sync quviz serve
 ```
 
-API 文档位于 `http://127.0.0.1:8000/docs`。
+打开 `http://127.0.0.1:8000/`。这条路径先构建 `web/dist`，随后由 FastAPI 在同一端口
+托管前端和科学 API，因此只需要保持一个服务进程运行。
 
-### 3. 启动前端
+当前 Python wheel 和 Git source archive 都不携带 `web/dist`；从 checkpoint tag 解包后仍须
+先执行上面的 `npm --prefix web ci` 与 `npm --prefix web run build`。只安装 wheel 时，
+`quviz serve` 提供科学 API，但不承诺自带浏览器 UI。
 
-另开一个终端：
+- `http://127.0.0.1:8000/docs` 是由 OpenAPI schema 生成的 Swagger UI，可交互调用 API；
+- `http://127.0.0.1:8000/openapi.json` 是供代码生成器和其他工具读取的原始 OpenAPI JSON；
+- `http://127.0.0.1:8000/api/health` 是健康检查。
+
+### 3. 双终端开发模式
+
+需要前端热更新时，终端一从仓库根启动 API：
 
 ```bash
-cd web
-npm ci --no-audit --no-fund
-npm run dev
+uv run --locked --no-sync quviz serve --reload
 ```
 
-打开 `http://127.0.0.1:5173`。
+终端二仍从仓库根启动 Vite：
+
+```bash
+npm --prefix web run dev
+```
+
+打开 `http://127.0.0.1:5173/`。Vite 会把 `/api` 代理到端口 8000；此模式下不要把
+端口 8000 的根页面误当成热更新前端。
 
 ### 4. 启动教程与参考手册
 
 ```bash
-uv run --group docs python scripts/render_reference_index.py
-uv run --group docs mkdocs serve -a 127.0.0.1:8001
+uv run --locked --no-sync python scripts/render_reference_index.py --check
+uv run --locked --no-sync python scripts/render_openapi_reference.py --check
+uv run --locked --no-sync mkdocs serve -a 127.0.0.1:8001
 ```
 
-打开 `http://127.0.0.1:8001`。
+打开 `http://127.0.0.1:8001/`。启动服务只检查生成的参考文献索引和 HTTP schema 页是否
+与各自真值源一致，不会静默改写受版本控制的文档。
 
 ## 质量检查
 
@@ -95,18 +120,20 @@ Windows PowerShell 使用：
 也可分别执行：
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=quviz --cov-report=term-missing
-uv run --group docs python scripts/render_reference_index.py --check
-uv run --group docs mkdocs build --strict
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked mypy
+uv run --locked --group docs pytest --cov=quviz --cov-report=term-missing
+uv run --locked --group docs python scripts/render_reference_index.py --check
+uv run --locked --group docs python scripts/render_openapi_reference.py --check
+uv run --locked --group docs mkdocs build --strict
 npm --prefix web run test
 npm --prefix web run build
 ```
 
-真实 FastAPI + 生产前端挂载的浏览器 smoke 由 `cd web && npm run test:fullstack` 单独运行；
-首次运行前安装锁定 Playwright 对应的 Chromium：`cd web && npx --no-install playwright install chromium`。
+真实 FastAPI + 生产前端挂载的浏览器 smoke 由 `npm --prefix web run test:fullstack` 单独运行；
+首次运行前安装锁定 Playwright 对应的 Chromium：
+`npm --prefix web exec --no -- playwright install chromium`。
 运行该 smoke 前还须已在仓库根执行 `uv sync --locked --all-groups`，测试服务器使用 `--no-sync`
 以确保执行期间不会静默改动环境。
 该命令在 Playwright 后审计 JSON 报告，0 tests、skip、重复/额外测试或错误测试目录都不会按绿色处理。

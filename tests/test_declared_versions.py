@@ -1,10 +1,9 @@
-"""Declared toolchain versions must match the versions actually enforced.
+"""Declared setup commands and toolchain versions must match what is enforced.
 
 ``docs/getting-started/installation.md`` tells a reader which Node.js they
-need; ``web/package.json`` is what npm actually enforces via ``engines``. When
-the two drift, the documentation is not merely stale -- it instructs a reader
-to install a runtime that the project rejects, and nothing in the build catches
-it, because npm reads the manifest and never reads the prose.
+need; the manifest, lockfile, version-manager files, npm configuration and CI
+jointly enforce that contract. When any pair drifts, the documentation can
+instruct a reader to install a runtime that the locked dependency tree rejects.
 
 The invariant is deliberately strict on numbers and loose on wording: the
 prerequisite bullet may be phrased in any language, but the version numbers it
@@ -21,8 +20,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+README = ROOT / "README.md"
 INSTALLATION_DOC = ROOT / "docs" / "getting-started" / "installation.md"
 WEB_PACKAGE_JSON = ROOT / "web" / "package.json"
+WEB_PACKAGE_LOCK = ROOT / "web" / "package-lock.json"
+WEB_NPMRC = ROOT / "web" / ".npmrc"
+NODE_VERSION = ROOT / ".node-version"
+NVMRC = ROOT / ".nvmrc"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 Version = tuple[int, int, int]
 
@@ -86,6 +91,16 @@ def _node_engines_range() -> str:
     return node_range
 
 
+def _locked_node_engines(package: str) -> str:
+    lock = json.loads(WEB_PACKAGE_LOCK.read_text(encoding="utf-8"))
+    package_record = lock["packages"][package]
+    node_range = package_record.get("engines", {}).get("node")
+    assert isinstance(node_range, str) and node_range.strip(), (
+        f"{WEB_PACKAGE_LOCK} package {package!r} declares no engines.node range"
+    )
+    return node_range
+
+
 def test_installation_doc_node_version_matches_web_engines() -> None:
     """The documented Node.js prerequisite is the one npm enforces."""
 
@@ -106,6 +121,77 @@ def test_installation_doc_node_version_matches_web_engines() -> None:
     )
 
 
+def test_manifest_accepts_exactly_the_locked_jsdom_node_lines() -> None:
+    """The app must not claim support below the strictest locked dependency."""
+
+    declared = _node_engines_range()
+    assert _locked_node_engines("") == declared
+    assert _locked_node_engines("node_modules/jsdom") == declared
+
+
+def test_node_version_files_and_ci_pin_the_lowest_supported_runtime() -> None:
+    """Local version managers and every front-end CI job use one exact baseline."""
+
+    minimum = ".".join(str(part) for part in min(_engine_lower_bounds(_node_engines_range())))
+    assert NODE_VERSION.read_text(encoding="utf-8").strip() == minimum
+    assert NVMRC.read_text(encoding="utf-8").strip() == minimum
+
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    ci_versions = re.findall(r'^\s*node-version:\s*["\']?([^"\'\s]+)', workflow, re.MULTILINE)
+    assert len(ci_versions) == 3, (
+        "the three web, full-stack and visual setup-node steps must each pin a runtime"
+    )
+    assert set(ci_versions) == {minimum}
+
+
+def test_npm_rejects_unsupported_node_instead_of_only_warning() -> None:
+    settings = {
+        line.strip()
+        for line in WEB_NPMRC.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", ";"))
+    }
+    assert "engine-strict=true" in settings
+
+
+def test_readme_setup_is_copyable_from_the_repository_root() -> None:
+    """The primary path builds and serves one app without hidden cwd changes."""
+
+    readme = README.read_text(encoding="utf-8")
+    required = (
+        "uv sync --locked --all-groups",
+        "npm --prefix web ci --no-audit --no-fund",
+        "npm --prefix web run build",
+        "uv run --locked --no-sync quviz serve",
+        "npm --prefix web run dev",
+        "http://127.0.0.1:8000/openapi.json",
+    )
+    for command_or_url in required:
+        assert command_or_url in readme
+    assert "\ncd web" not in readme
+    assert readme.index("npm --prefix web run build") < readme.index(
+        "uv run --locked --no-sync quviz serve"
+    )
+
+    generator_checks = [
+        line
+        for line in readme.splitlines()
+        if "render_reference_index.py" in line or "render_openapi_reference.py" in line
+    ]
+    assert generator_checks
+    assert all("--check" in line for line in generator_checks), (
+        "serving the documentation must not rewrite generated reference pages"
+    )
+
+
+def test_uv_setup_and_run_preserve_the_explicit_dependency_profile() -> None:
+    installation = INSTALLATION_DOC.read_text(encoding="utf-8")
+    assert "uv sync --locked --no-default-groups" in installation
+    assert "uv sync --locked --no-default-groups --group docs" in installation
+    assert "uv run --locked --no-sync python" in installation
+    assert "uv run --locked --no-sync mkdocs" in installation
+    assert "render_openapi_reference.py --check" in installation
+
+
 @pytest.mark.parametrize(
     ("bullet", "reason"),
     [
@@ -113,10 +199,19 @@ def test_installation_doc_node_version_matches_web_engines() -> None:
         # mirror the real installation.md line, which ends in Chinese
         # punctuation.
         ("- Node.js 20+ 与 npm；", "a bare major with no minor names no comparable version"),  # noqa: RUF001
-        ("- Node.js `^20.0.0 || >=24.0.0` 与 npm；", "understates the minimum major"),  # noqa: RUF001
-        ("- Node.js `^22.11.0 || >=24.0.0` 与 npm；", "understates the minimum minor"),  # noqa: RUF001
-        ("- Node.js `^22.13.0` 与 npm；", "drops the second accepted major line"),  # noqa: RUF001
-        ("- Node.js `^22.13.0 || >=24.0.0 || >=26.0.0` 与 npm；", "invents an extra branch"),  # noqa: RUF001
+        (
+            "- Node.js `^22.13.0 || ^24.15.0 || >=26.0.0` 与 npm；",  # noqa: RUF001
+            "understates the minimum minor",
+        ),
+        (
+            "- Node.js `^22.22.2 || ^24.0.0 || >=26.0.0` 与 npm；",  # noqa: RUF001
+            "understates the second active line",
+        ),
+        ("- Node.js `^22.22.2` 与 npm；", "drops the other accepted release lines"),  # noqa: RUF001
+        (
+            "- Node.js `^22.22.2 || ^24.15.0 || >=26.0.0 || >=28.0.0` 与 npm；",  # noqa: RUF001
+            "invents an extra branch",
+        ),
     ],
 )
 def test_a_doc_line_that_disagrees_with_engines_is_rejected(bullet: str, reason: str) -> None:
