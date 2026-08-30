@@ -116,3 +116,16 @@ def test_the_canonical_dump_is_sorted_indented_and_finite_only() -> None:
             "canonical() serialised a non-finite float; allow_nan=False must reject it, or the "
             "fixture can carry the bare NaN token that no JSON parser outside Python accepts"
         )
+
+
+def test_point_cloud_openapi_declares_the_binary_wire_format() -> None:
+    """Swagger and generated docs must not advertise QVPC/1 as JSON."""
+
+    response = write_openapi.live_document()["paths"]["/api/orbitals/point-cloud"]["get"][
+        "responses"
+    ]["200"]
+    assert set(response["content"]) == {"application/vnd.quviz.point-cloud"}
+    assert response["content"]["application/vnd.quviz.point-cloud"]["schema"] == {
+        "type": "string",
+        "format": "binary",
+    }

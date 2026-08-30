@@ -159,7 +159,20 @@ def _point_cloud_bytes(
     return encode_point_cloud(cloud), cloud.radial_mass_captured, cloud.extent_bohr
 
 
-@router.get("/orbitals/point-cloud")
+@router.get(
+    "/orbitals/point-cloud",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "QVPC/1 little-endian Float32 point-cloud payload",
+            "content": {
+                "application/vnd.quviz.point-cloud": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        }
+    },
+)
 def point_cloud(
     n: int = Query(2, ge=1, le=12),
     l: int = Query(1, ge=0, le=11),

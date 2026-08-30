@@ -1,8 +1,18 @@
 # 当前状态
 
-!!! success “Phase 0 可演示基线”
+!!! success "Phase 0 可演示基线"
 
     截至 2026-08-30，M0R 的科学几何、Scene Contract、前端显示和工程门禁阻断项已经修复，M1 解析叠加态已交付，PR-6 让门禁按其声明真正执行，PR-7 又关闭了八项已核实的科学正确性 P1，PR-8A 把前端从“能画出来”改成“说的与画的一致”，并把覆盖率门禁扩到 `src/` 下的全部生产模块，PR-8B 交付了 $\psi$/相位平面切片并把 API 描述改成端到端生成、双端受检的一条链，PR-8C 把切片画成像素并第一次把截图门禁接进 CI；五张 Linux/SwiftShader 基线随后已经提交。2026-08-29 的全面复审又加固了概率流的尺度协变、采样收敛、拓扑与 payload 不变量、API 资源边界和前端可发现性；2026-08-30 再加入真实 `quviz serve` + FastAPI 静态挂载的源码 checkout 全栈浏览器门禁。QuViz 仍是 Alpha：这里的“可演示”不代表通用 TISE/TDSE、完整量子化学或多电子能力已经实现。
+
+!!! success "Phase 0 文档 checkpoint 收口（2026-08-30）"
+
+    当前开发暂停点已定义为 **Phase 0 checkpoint**。本轮重新从干净源码路径复现安装和启动，
+    把首选入口改为“构建前端后由 FastAPI 单服务托管”，开发模式统一为从仓库根执行的双终端命令；
+    Node 的真实依赖范围、uv 默认依赖组、Swagger UI / OpenAPI JSON、源码 checkout 与 wheel 的边界均已写清。
+    科学文档纠正了 measurement model 层次、概率流中的 $\hbar$、复波函数等值面维数、Stark
+    实验映射适用范围及未实现的 benchmark / 点群门禁。MkDocs 现在对漏页与坏锚点 fail-closed，
+    MathJax 和 Mermaid 在 `navigation.instant` 后由真实 Chromium 验证，行内引用可跳到完整的类型化
+    参考文献记录；HTTP 参数页由 live OpenAPI 生成。M2–M6 保持暂停和待开发，不得从本页推断为已交付。
 
 ## 能力账本
 
@@ -19,7 +29,7 @@
 | 1D 网格契约 | 坐标、间距和边界测试通过 | 还没有 TISE/TDSE 求解器 |
 | HTTP API 与 QVPC/1 | API、二进制与 OpenAPI schema 测试通过；QVPC float32 边界、科学数值失败统一 422 与意外编程错误仍为 500 均有负控 | 点云 binary 与 metadata 使用同参数 sidecar 请求；极端正尺度仍受各 representation 的可表示域约束 |
 | React/Three.js 场景 | 生产构建通过；QVPC/1 parser（含 body 逐样本校验）、HTTP client、能力矩阵、zustand store、React/three 组件与测试套件自检的 vitest 单测（34 个 spec 文件、1010 项）带强制覆盖率门槛，运行结果经 `assert-no-skips` 核对为零 skip、经 `assert-coverage-scope` 核对本次运行**解析后**的覆盖率配置、本次运行写出的报告所列的文件集与 `coverage-scope.json` 完全一致、且各模块重算出的覆盖率均达标；`web/e2e/` 在本地锁定 Linux/SwiftShader 容器中实测 8/8，`web/fullstack-e2e/` 另以真实 `quviz serve`、FastAPI `web/dist` 挂载和未拦截 `/api` 走通点云→等值面→切片→3d complex 概率流→叠加态，完整 query、2xx、科学语义与浏览器零错误均受检；两个 Playwright 入口都有 JSON 运行后审计，两个 CI job 均由 `tests/test_check_script.py` 钉住 | CI job 接线受门禁，但本地结果不替代远端 runner 的实际执行；全栈 smoke 只证明源码 checkout 的生产挂载，不证明 wheel 静态资产打包；截图仍只覆盖切片与固定 Linux/Chromium/SwiftShader，不代表真实 GPU、多浏览器或移动视口；主 bundle 1,261.33 kB（gzip 347.25 kB）尚待拆分 |
-| 引用与 MkDocs | 引用键、orphan 条目、`source-audit` 条目的 commit/SHA/URL 一致性、生成索引、Markdown 字节级完整性与 strict build 受门禁保护；新增链接由 CI 在每次 pull request 与 push 上探测（首次推送 / force push 退回到与 `origin/master` 的合并基；`references.bib` 按解析后的条目比较，不靠行 diff） | 链接探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂只由每周扫描发现；引用内容漂移没有任何检查 |
+| 引用与 MkDocs | 引用键、orphan 条目、条目类型必填字段、`source-audit` 的 commit/SHA/URL 一致性、完整类型化索引、Markdown 字节完整性、全页面唯一入 nav、显式链接/锚点 validation 与 strict build 受门禁保护；HTTP 参数页与 live OpenAPI 逐字同步；真实全栈 Chromium 另检查直达/instant-nav MathJax、Mermaid SVG、Phase 0 Python API 和引用跳转；新增链接由 CI 在每次 pull request 与 push 上探测 | MathJax/Mermaid runtime 使用精确版本 CDN，浏览文档时仍需要可访问该 CDN；外链探测需要网络，本地 `check.ps1` / `make check` 不含；已存在外链的腐烂由每周扫描发现；引用内容是否真正支持具体科学声明仍需人工同行复核 |
 
 ## 审计输入基线：2026-08-22
 
@@ -298,11 +308,11 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 | 门禁 | 结果 |
 |---|---|
 | `pwsh -NoProfile -File scripts/check.ps1` | 全部通过 |
-| Python 全量 | 1302 passed，0 skipped；总覆盖率 92.14%（门槛 85%） |
+| Python 全量 | 1345 passed，0 skipped；总覆盖率 92.19%（门槛 85%） |
 | 前端全量 | 34 个 spec、1010 passed，0 skipped、0 todo；语句 99.58%、分支 98.37%、函数 99.57%、行 99.58%，30 个模块逐文件达标 |
-| 静态与文档 | ruff 118 文件、mypy strict 34 文件、MkDocs strict、OpenAPI/schema/视觉 fixture 门全部通过 |
+| 静态与文档 | ruff 123 文件、mypy strict 34 文件、MkDocs strict、OpenAPI/schema/视觉 fixture 门全部通过 |
 | 生产构建 | JS 1,261.33 kB（gzip 347.25 kB），CSS 42.50 kB（gzip 8.52 kB）；保留既有 chunk > 500 kB 警告 |
-| 真实浏览器 | 源码 checkout 的生产挂载旅程 1/1 通过：默认点云、2p_z 等值面与切片、3d complex 的 48 条概率流线、3d 等值面及默认叠加态均由真实 API 返回 2xx，完整 query 与语义受检，控制台 0 error；Linux/SwiftShader 像素门另为 8/8 |
+| 真实浏览器 | 源码 checkout 的联合旅程 1/1 通过：生产挂载下默认点云、2p_z 等值面与切片、3d complex 的 48 条概率流线、3d 等值面及默认叠加态均由真实 API 返回 2xx；同一 Chromium 还验证 MkDocs 直达与 instant navigation 后的 MathJax、Mermaid SVG、Python API 模块和引用锚点，完整 query 与语义受检，控制台 0 error；Linux/SwiftShader 像素门另为 8/8 |
 
 本机仍因 Windows 权限不能实际创建文件 symlink，相关 `check.ps1` 端到端路径只由 POSIX/CI 覆盖；截图门已另在锁定版 Linux/Chromium/SwiftShader 容器中以 committed baselines 真比较通过 8/8，并包含转置、2% 几何误差与半周期负控。测试输出中的 `THREE.Clock` 弃用提示、Three.js 多实例提示与 MkDocs Material 2.0 横幅是已知上游警告，不改变本轮门禁结论。
 

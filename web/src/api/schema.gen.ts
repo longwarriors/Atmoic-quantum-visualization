@@ -969,13 +969,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description QVPC/1 little-endian Float32 point-cloud payload */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/vnd.quviz.point-cloud": string;
                 };
             };
             /** @description Validation Error */

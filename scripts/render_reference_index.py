@@ -6,7 +6,14 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from quviz.docs.bibliography import BibEntry, Bibliography, Person, keywords, parse_bibtex_file
+from quviz.docs.bibliography import (
+    BibEntry,
+    Bibliography,
+    Person,
+    keywords,
+    parse_bibtex_file,
+    required_field_problems,
+)
 from quviz.docs.pins import validate_source_pins
 from quviz.docs.scan import cited_keys_in_tree, orphan_keys
 
@@ -26,19 +33,104 @@ def person_name(person: Person) -> str:
 
 def format_authors(entry: BibEntry) -> str:
     if entry.authors:
-        return "; ".join(person_name(person) for person in entry.authors)
-    return entry.fields.get("organization", "Unknown")
+        return _display_text("; ".join(person_name(person) for person in entry.authors))
+    return _display_text(entry.fields.get("organization", "Unknown"))
 
 
-def links(entry: BibEntry) -> str:
-    values: list[str] = []
-    doi = entry.fields.get("doi")
-    url = entry.fields.get("url")
-    if doi:
-        values.append(f"[DOI](https://doi.org/{doi})")
-    if url:
-        values.append(f"[source]({url})")
-    return " · ".join(values)
+def _display_text(value: str) -> str:
+    """Convert the tiny TeX/Markdown subset present in bibliography fields."""
+
+    return value.replace(r"\&", "&").replace("|", r"\|").replace("\n", " ")
+
+
+ENTRY_TYPE_LABELS = {
+    "article": "Journal article",
+    "book": "Book",
+    "incollection": "Book chapter",
+    "online": "Online resource",
+    "software": "Software",
+}
+
+FIELD_LABELS = {
+    "author": "Authors",
+    "booktitle": "Book title",
+    "commit": "Revision",
+    "doi": "DOI",
+    "edition": "Edition",
+    "editor": "Editors",
+    "isbn": "ISBN",
+    "journal": "Journal",
+    "keywords": "Keywords",
+    "note": "Notes",
+    "number": "Issue",
+    "organization": "Organization",
+    "pages": "Pages",
+    "publisher": "Publisher",
+    "url": "Source URL",
+    "urldate": "Accessed",
+    "version": "Version",
+    "volume": "Volume",
+    "year": "Year",
+}
+
+# Put publication identity first, locators next, and audit-only details last.
+# Any future supported field missing from this tuple is still emitted by
+# ``metadata_rows`` in sorted order, so adding metadata cannot silently make
+# the generated index less complete.
+FIELD_ORDER = (
+    "author",
+    "editor",
+    "organization",
+    "year",
+    "journal",
+    "booktitle",
+    "edition",
+    "volume",
+    "number",
+    "pages",
+    "publisher",
+    "isbn",
+    "version",
+    "commit",
+    "urldate",
+    "doi",
+    "url",
+    "note",
+    "keywords",
+)
+
+
+def format_field_value(entry: BibEntry, field: str, value: str) -> str:
+    """Format one value without dropping the underlying metadata."""
+
+    if field == "author":
+        return format_authors(entry)
+    if field == "doi":
+        return f"[{value}](https://doi.org/{value})"
+    if field == "url":
+        return f"[{value}]({value})"
+    if field == "commit":
+        return f"`{value}`"
+    if field == "keywords":
+        return ", ".join(f"`{tag.strip()}`" for tag in value.split(",") if tag.strip())
+    return _display_text(value)
+
+
+def metadata_rows(entry: BibEntry) -> list[tuple[str, str]]:
+    """Return a stable, complete metadata table for one bibliography entry."""
+
+    fields = set(entry.fields) - {"title"}
+    ordered = [field for field in FIELD_ORDER if field in fields]
+    ordered.extend(sorted(fields - set(ordered)))
+    rows = [("Type", ENTRY_TYPE_LABELS[entry.entry_type])]
+    rows.extend(
+        (
+            FIELD_LABELS.get(field, field.replace("_", " ").title()),
+            format_field_value(entry, field, entry.fields[field]),
+        )
+        for field in ordered
+    )
+    return rows
 
 
 def section_name(entry: BibEntry) -> str:
@@ -85,23 +177,14 @@ def render(bibliography: Bibliography) -> str:
         lines.extend([f"## {section}", ""])
         for key, entry in sorted(entries, key=lambda item: item[0]):
             title = entry.fields.get("title", key)
-            year = entry.fields.get("year", "n.d.")
-            venue = (
-                entry.fields.get("journal")
-                or entry.fields.get("booktitle")
-                or entry.fields.get("publisher", "")
-            )
-            link_text = links(entry)
-            author_text = format_authors(entry).rstrip(".")
-            year_text = year if year.endswith(".") else f"{year}."
             lines.extend(
                 [
                     f'<a id="{key}"></a>',
                     f"### `{key}` — {title}",
                     "",
-                    f"**{author_text}.** {year_text}" + (f" *{venue}*." if venue else ""),
-                    "",
-                    link_text,
+                    "| Metadata | Value |",
+                    "| --- | --- |",
+                    *(f"| **{label}** | {value} |" for label, value in metadata_rows(entry)),
                     "",
                 ]
             )
@@ -155,6 +238,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if pin_problems:
         details = "\n  ".join(pin_problems)
         raise SystemExit(f"source-audit pins are missing or incoherent:\n  {details}")
+    field_problems = required_field_problems(bibliography)
+    if field_problems:
+        details = "\n  ".join(field_problems)
+        raise SystemExit(f"bibliography entries have incomplete metadata:\n  {details}")
 
     rendered = render(bibliography)
     if args.check:

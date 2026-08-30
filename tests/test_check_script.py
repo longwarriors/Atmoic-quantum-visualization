@@ -243,7 +243,7 @@ def test_check_script_runs_every_gate_in_its_own_checkout(tmp_path: Path) -> Non
     ``uv`` and ``npm`` are shadowed by stubs that print their working
     directory, so the run is fast and the cwd of each step is observable.
     The foreign directory stands in for the older clone of the original
-    failure: before the fix the six ``uv`` steps printed it.
+    failure: before the fix the seven ``uv`` steps printed it.
     """
 
     pwsh = shutil.which("pwsh")
@@ -270,7 +270,7 @@ def test_check_script_runs_every_gate_in_its_own_checkout(tmp_path: Path) -> Non
 
     steps = re.findall(r"^\[stub (uv|npm)\] cwd=(.+?) args=(.*)$", run.stdout, re.MULTILINE)
     programs = [program for program, _, _ in steps]
-    assert programs == ["uv"] * 6 + ["npm"] * 2, run.stdout
+    assert programs == ["uv"] * 7 + ["npm"] * 2, run.stdout
     for program, cwd, args in steps:
         expected = ROOT if program == "uv" else ROOT / "web"
         assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
@@ -403,7 +403,7 @@ def test_check_script_dereferences_an_aliased_scripts_directory(tmp_path: Path) 
 
         steps = re.findall(r"^\[stub (uv|npm)\] cwd=(.+?) args=(.*)$", run.stdout, re.MULTILINE)
         programs = [program for program, _, _ in steps]
-        assert programs == ["uv"] * 6 + ["npm"] * 2, run.stdout
+        assert programs == ["uv"] * 7 + ["npm"] * 2, run.stdout
         for program, cwd, args in steps:
             expected = ROOT if program == "uv" else ROOT / "web"
             assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
@@ -457,7 +457,7 @@ def test_check_script_refuses_a_hard_link_even_with_both_repo_markers(tmp_path: 
     reparse point to dereference, and nothing in the file that says which entry
     came first. The identity check that was supposed to catch it was
     ``Test-Path`` on ``.git`` and ``pyproject.toml``, and two files created
-    empty satisfied both: the script announced the foreign root, ran all six
+    empty satisfied both: the script announced the foreign root, ran all seven
     ``uv`` gates and both ``npm`` gates there, and exited 0 (measured). So the
     markers are created here, empty, exactly as the bypass did -- a version of
     this test without them passes against a script that still has the hole.
@@ -622,7 +622,7 @@ def test_check_script_follows_a_file_symlink_to_its_real_repo(tmp_path: Path) ->
 
     steps = re.findall(r"^\[stub (uv|npm)\] cwd=(.+?) args=(.*)$", run.stdout, re.MULTILINE)
     programs = [program for program, _, _ in steps]
-    assert programs == ["uv"] * 6 + ["npm"] * 2, run.stdout
+    assert programs == ["uv"] * 7 + ["npm"] * 2, run.stdout
     for program, cwd, args in steps:
         expected = ROOT if program == "uv" else ROOT / "web"
         assert _same_dir(cwd, expected), f"{program} {args!r} ran in {cwd}, not {expected}"
@@ -1544,6 +1544,38 @@ def test_npm_fullstack_script_runs_the_pinned_config_then_audits_its_report() ->
         "config, then reject a skipped or empty report; found "
         f"{scripts.get('test:fullstack')!r}"
     )
+
+
+def test_fullstack_browser_gate_also_starts_and_exercises_mkdocs() -> None:
+    """A successful HTML build alone must not certify client-side docs rendering."""
+
+    config = (ROOT / "web" / "playwright.fullstack.config.ts").read_text(encoding="utf-8")
+    spec = (ROOT / "web" / "fullstack-e2e" / "app.spec.ts").read_text(encoding="utf-8")
+
+    assert "name: 'QuViz MkDocs'" in config
+    assert (
+        "uv run --locked --no-sync --group docs mkdocs serve --strict --no-livereload "
+        "-a 127.0.0.1:8766"
+    ) in " ".join(config.split())
+    for browser_contract in (
+        ".arithmatex:not(:has(mjx-container))",
+        ".mermaid svg",
+        "quviz.physics.superposition",
+        "quviz.physics.planes",
+        "quviz.scene.models",
+        "quviz.scene.slices",
+        "quviz.scene.streamlines",
+        "__quvizInstantNavigation",
+        ".quviz-citation__link",
+    ):
+        assert browser_contract in spec, (
+            f"the full-stack browser smoke no longer asserts {browser_contract!r}; "
+            "MkDocs may build green while that client-side feature is broken"
+        )
+    assert "page.goto(`${DOCS_ORIGIN}/concepts/architecture/`)" not in spec
+    assert 'a[href$="concepts/architecture/"]' in spec
+    assert "architectureLink.dispatchEvent('click')" in spec
+    assert spec.count("__quvizInstantNavigation") >= 4
 
 
 # --- web/package.json test chain -------------------------------------------

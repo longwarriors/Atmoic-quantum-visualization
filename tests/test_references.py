@@ -23,6 +23,7 @@ def test_citation_extension_renders_known_key() -> None:
     html = markdown.convert("See [@stodolna2013stark].")
     assert "Stodolna et al., 2013" in html
     assert 'data-cite-keys="stodolna2013stark"' in html
+    assert 'href="/references/index.md#stodolna2013stark"' in html
 
 
 def test_citation_extension_rejects_unknown_key() -> None:
@@ -45,6 +46,8 @@ def test_citation_extension_renders_locators_for_each_key_in_a_group() -> None:
     html = markdown.convert("See [@griffiths2018qm, ch. 4; @stodolna2013stark, fig. 2].")
     assert "2018, ch. 4" in html
     assert "Stodolna et al., 2013, fig. 2" in html
+    assert 'href="/references/index.md#griffiths2018qm"' in html
+    assert 'href="/references/index.md#stodolna2013stark"' in html
 
 
 def test_citation_extension_rejects_an_unknown_key_that_carries_a_locator() -> None:

@@ -19,6 +19,7 @@ host is SUSPECT and fails either mode.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import urllib.parse
 from collections.abc import Mapping, Sequence
@@ -144,9 +145,37 @@ def _hostname(url: str) -> str | None:
 
     try:
         host = urllib.parse.urlsplit(url).hostname
-    except ValueError:
+        if host:
+            host = urllib.parse.unquote(host, errors="strict")
+    except (UnicodeDecodeError, ValueError):
         return None
-    return host.rstrip(".").lower() if host else None
+    return host.rstrip(".").casefold() if host else None
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether ``url`` has an unambiguous loopback hostname.
+
+    Parsing the hostname is load-bearing: matching against the whole URL would
+    let ``https://localhost.example`` or an external URL whose query mentions
+    ``127.0.0.1`` bypass the external-link gate. IPv4-mapped IPv6 addresses are
+    checked through their mapped value because ``::ffff:127.0.0.1`` reaches the
+    same loopback endpoint.
+    """
+
+    host = _hostname(url)
+    if host is None:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped.is_loopback
+    return False
 
 
 def is_bot_host(url: str) -> bool:

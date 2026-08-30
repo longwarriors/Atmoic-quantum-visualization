@@ -21,6 +21,7 @@ typecheck:
 # side effect. Use `make refs` to regenerate.
 docs:
 	uv run --group docs python scripts/render_reference_index.py --check
+	uv run --group docs python scripts/render_openapi_reference.py --check
 	uv run --group docs mkdocs build --strict
 
 web:
@@ -37,6 +38,7 @@ api:
 
 refs:
 	uv run --group docs python scripts/render_reference_index.py
+	uv run --group docs python scripts/render_openapi_reference.py
 
 check: lint typecheck test docs web-test web-build
 

@@ -31,7 +31,14 @@ def serve(
 ) -> None:
     """Run the scientific API and, when built, the production frontend."""
 
-    uvicorn.run("quviz.api.app:app", host=host, port=port, reload=reload)
+    reload_dirs = [str(Path(__file__).resolve().parent)] if reload else None
+    uvicorn.run(
+        "quviz.api.app:app",
+        host=host,
+        port=port,
+        reload=reload,
+        reload_dirs=reload_dirs,
+    )
 
 
 @app.command()

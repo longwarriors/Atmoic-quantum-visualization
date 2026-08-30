@@ -10,268 +10,481 @@ renders them as author-year labels.
 <a id="crank1947"></a>
 ### `crank1947` — A Practical Method for Numerical Evaluation of Solutions of Partial Differential Equations of the Heat-Conduction Type
 
-**Crank, John; Nicolson, Phyllis.** 1947. *Mathematical Proceedings of the Cambridge Philosophical Society*.
-
-[DOI](https://doi.org/10.1017/S0305004100023197)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Crank, John; Nicolson, Phyllis |
+| **Year** | 1947 |
+| **Journal** | Mathematical Proceedings of the Cambridge Philosophical Society |
+| **Volume** | 43 |
+| **Issue** | 1 |
+| **Pages** | 50--67 |
+| **DOI** | [10.1017/S0305004100023197](https://doi.org/10.1017/S0305004100023197) |
+| **Keywords** | `physics`, `numerics` |
 
 <a id="dlmf-laguerre"></a>
 ### `dlmf-laguerre` — Section 18.5: Explicit Representations (Orthogonal Polynomials)
 
-**NIST Digital Library of Mathematical Functions.** n.d.
-
-[source](https://dlmf.nist.gov/18.5)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | NIST Digital Library of Mathematical Functions |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://dlmf.nist.gov/18.5](https://dlmf.nist.gov/18.5) |
+| **Notes** | Narrowed from the whole of Chapter 18. Equation 18.5.12 is the explicit sum for the generalized Laguerre polynomial L_n^(alpha)(x) that QuViz's radial function uses; Table 18.3.1 carries the orthogonality normalization. |
+| **Keywords** | `physics`, `mathematics` |
 
 <a id="dlmf-spherical-harmonics"></a>
 ### `dlmf-spherical-harmonics` — Section 14.30: Spherical and Spheroidal Harmonics
 
-**NIST Digital Library of Mathematical Functions.** n.d.
-
-[source](https://dlmf.nist.gov/14.30)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | NIST Digital Library of Mathematical Functions |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://dlmf.nist.gov/14.30](https://dlmf.nist.gov/14.30) |
+| **Keywords** | `physics`, `mathematics` |
 
 <a id="feit1982-spectral"></a>
 ### `feit1982-spectral` — Solution of the Schrödinger Equation by a Spectral Method
 
-**Feit, M. D.; Fleck, J. A., Jr.; Steiger, A.** 1982. *Journal of Computational Physics*.
-
-[DOI](https://doi.org/10.1016/0021-9991(82)90091-2)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Feit, M. D.; Fleck, J. A., Jr.; Steiger, A. |
+| **Year** | 1982 |
+| **Journal** | Journal of Computational Physics |
+| **Volume** | 47 |
+| **Issue** | 3 |
+| **Pages** | 412--433 |
+| **DOI** | [10.1016/0021-9991(82)90091-2](https://doi.org/10.1016/0021-9991(82)90091-2) |
+| **Keywords** | `physics`, `numerics` |
 
 <a id="griffiths2018qm"></a>
 ### `griffiths2018qm` — Introduction to Quantum Mechanics
 
-**Griffiths, David J.; Schroeter, Darrell F.** 2018. *Cambridge University Press*.
-
-[DOI](https://doi.org/10.1017/9781316995433)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Book |
+| **Authors** | Griffiths, David J.; Schroeter, Darrell F. |
+| **Year** | 2018 |
+| **Edition** | 3 |
+| **Publisher** | Cambridge University Press |
+| **DOI** | [10.1017/9781316995433](https://doi.org/10.1017/9781316995433) |
+| **Notes** | Chapter-level DOIs are registered and are used as citation locators: ch. 1 The Wave Function, pp. 3--24, 10.1017/9781316995433.002; ch. 4 Quantum Mechanics in Three Dimensions, pp. 131--197, 10.1017/9781316995433.005; ch. 11 Quantum Dynamics, pp. 402--445, 10.1017/9781316995433.012. QuViz cites the normalized hydrogenic wavefunction at eq. (4.89), p. 151; the virial applications at problem 3.37, p. 125 and problem 4.48, eq. (4.218), p. 187; and hydrogenic probability current at problem 4.49, eqs. (4.220)--(4.221), pp. 187--188. Page ranges and chapter metadata were checked against the Cambridge/Crossref record. |
+| **Keywords** | `physics`, `foundations` |
 
 <a id="probability-current-wikipedia"></a>
 ### `probability-current-wikipedia` — Probability Current
 
-**Wikipedia Contributors.** n.d.
-
-[source](https://en.wikipedia.org/wiki/Probability_current)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Wikipedia Contributors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://en.wikipedia.org/wiki/Probability_current](https://en.wikipedia.org/wiki/Probability_current) |
+| **Keywords** | `physics`, `overview` |
 
 ## Experiments and measurement
 
 <a id="stodolna2013stark"></a>
 ### `stodolna2013stark` — Hydrogen Atoms under Magnification: Direct Observation of the Nodal Structure of Stark States
 
-**Stodolna, A. S.; Rouzée, A.; Lépine, F.; Cohen, S.; Robicheaux, F.; Gijsbertsen, A.; Jungmann, J. H.; Bordas, C.; Vrakking, M. J. J.** 2013. *Physical Review Letters*.
-
-[DOI](https://doi.org/10.1103/PhysRevLett.110.213001)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Stodolna, A. S.; Rouzée, A.; Lépine, F.; Cohen, S.; Robicheaux, F.; Gijsbertsen, A.; Jungmann, J. H.; Bordas, C.; Vrakking, M. J. J. |
+| **Year** | 2013 |
+| **Journal** | Physical Review Letters |
+| **Volume** | 110 |
+| **Issue** | 21 |
+| **Pages** | 213001 |
+| **DOI** | [10.1103/PhysRevLett.110.213001](https://doi.org/10.1103/PhysRevLett.110.213001) |
+| **Notes** | Pages 213001-1--213001-4, especially Figs. 2--3, establish the specific mapping: for hydrogen Stark states separable in parabolic coordinates, the near-atom wavefunction along the bound coordinate and the far continuum projection share the observed nodal count. This is not a general node-preservation theorem for arbitrary measurement operators. |
+| **Keywords** | `experiment`, `physics`, `measurement` |
 
 ## Symmetry and chemical interpretation
 
 <a id="gelessus1995-character-tables"></a>
 ### `gelessus1995-character-tables` — Multipoles and Symmetry
 
-**Gelessus, Achim; Thiel, Walter; Weber, Wolfgang.** 1995. *Journal of Chemical Education*.
-
-[DOI](https://doi.org/10.1021/ed072p505)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Gelessus, Achim; Thiel, Walter; Weber, Wolfgang |
+| **Year** | 1995 |
+| **Journal** | Journal of Chemical Education |
+| **Volume** | 72 |
+| **Issue** | 6 |
+| **Pages** | 505 |
+| **DOI** | [10.1021/ed072p505](https://doi.org/10.1021/ed072p505) |
+| **Notes** | The peer-reviewed publication behind the Gelessus character-table site. Cited alongside the live URL because a web host can be renamed away, as this one was. |
+| **Keywords** | `chemistry`, `symmetry`, `reference-data` |
 
 <a id="jacobs-character-tables"></a>
 ### `jacobs-character-tables` — Character Tables for Chemically Important Point Groups
 
-**Gelessus, Achim.** 2007.
-
-[source](https://symmetry.constructor.university/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Gelessus, Achim |
+| **Year** | 2007 |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://symmetry.constructor.university/](https://symmetry.constructor.university/) |
+| **Notes** | Relocated. The original host symmetry.jacobs-university.de no longer resolves following the 2022/2023 Jacobs University Bremen to Constructor University rename; the successor preserves the /cgi-bin/group.cgi URL scheme. |
+| **Keywords** | `chemistry`, `symmetry`, `reference-data` |
 
 <a id="maksic1986hybridization"></a>
 ### `maksic1986hybridization` — Symmetry, Hybridization and Bonding in Molecules
 
-**Maksić, Zvonimir B.** 1986. *Symmetry: Unifying Human Understanding*.
-
-[DOI](https://doi.org/10.1016/B978-0-08-033986-3.50050-1)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Book chapter |
+| **Authors** | Maksić, Zvonimir B. |
+| **Editors** | Hargittai, Istvan |
+| **Year** | 1986 |
+| **Book title** | Symmetry: Unifying Human Understanding |
+| **Pages** | 697--723 |
+| **Publisher** | Pergamon |
+| **ISBN** | 9780080339863 |
+| **DOI** | [10.1016/B978-0-08-033986-3.50050-1](https://doi.org/10.1016/B978-0-08-033986-3.50050-1) |
+| **Notes** | The same text was published simultaneously as a journal article, DOI 10.1016/0898-1221(86)90419-0, in Computers & Mathematics with Applications 12(3-4), 697--723 --- the volume was issued both as a journal number and as this edited book. The book-chapter DOI is cited because QuViz refers to the edited book; the journal DOI is an alternative identifier for the same text. Crossref lists the publisher of the chapter record as Elsevier, which absorbed Pergamon. |
+| **Keywords** | `chemistry`, `symmetry`, `hybridization` |
 
 ## Visualization and teaching
 
 <a id="minutephysics2021atoms"></a>
 ### `minutephysics2021atoms` — A Better Way To Picture Atoms
 
-**minutephysics.** 2021.
-
-[source](https://www.youtube.com/watch?v=W2Xb2GFK2yc)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | minutephysics |
+| **Year** | 2021 |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://www.youtube.com/watch?v=W2Xb2GFK2yc](https://www.youtube.com/watch?v=W2Xb2GFK2yc) |
+| **Keywords** | `visualization`, `video`, `teaching` |
 
 <a id="orbitron"></a>
 ### `orbitron` — The Orbitron: A Gallery of Atomic Orbitals and Molecular Orbitals
 
-**Winter, Mark J.** 2023.
-
-[source](https://winter.group.shef.ac.uk/orbitron/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Winter, Mark J. |
+| **Organization** | University of Sheffield |
+| **Year** | 2023 |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://winter.group.shef.ac.uk/orbitron/](https://winter.group.shef.ac.uk/orbitron/) |
+| **Keywords** | `visualization`, `reference-gallery` |
 
 <a id="science-asylum2020-orbitals"></a>
 ### `science-asylum2020-orbitals` — Atomic Orbitals, Visualized Dynamically
 
-**The Science Asylum.** 2020.
-
-[source](https://www.youtube.com/watch?v=BPkcDWLBsrI)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | The Science Asylum |
+| **Year** | 2020 |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://www.youtube.com/watch?v=BPkcDWLBsrI](https://www.youtube.com/watch?v=BPkcDWLBsrI) |
+| **Keywords** | `visualization`, `video`, `teaching` |
 
 <a id="tully2013pointillist"></a>
 ### `tully2013pointillist` — Interactive Web-Based Pointillist Visualization of Hydrogenic Orbitals Using Jmol
 
-**Tully, Shane P.; Stitt, Thomas M.; Caldwell, Robert D.; Hardock, Brian J.; Hanson, Robert M.; Maslak, Przemyslaw.** 2013. *Journal of Chemical Education*.
-
-[DOI](https://doi.org/10.1021/ed300393s)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Tully, Shane P.; Stitt, Thomas M.; Caldwell, Robert D.; Hardock, Brian J.; Hanson, Robert M.; Maslak, Przemyslaw |
+| **Year** | 2013 |
+| **Journal** | Journal of Chemical Education |
+| **Volume** | 90 |
+| **Issue** | 1 |
+| **Pages** | 129--131 |
+| **DOI** | [10.1021/ed300393s](https://doi.org/10.1021/ed300393s) |
+| **Keywords** | `visualization`, `sampling`, `education` |
 
 ## Audited source material
 
 <a id="claude-fable-audit"></a>
 ### `claude-fable-audit` — QuViz Project Audit Artifact
 
-**Anthropic Claude Fable.** 2026.
-
-[source](https://claude.ai/code/artifact/e9c58805-458b-446a-9913-b80e9c108bc4)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Anthropic Claude Fable |
+| **Year** | 2026 |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://claude.ai/code/artifact/e9c58805-458b-446a-9913-b80e9c108bc4](https://claude.ai/code/artifact/e9c58805-458b-446a-9913-b80e9c108bc4) |
+| **Keywords** | `source-audit`, `software`, `project-audit` |
 
 <a id="comenius2025-quantum-theory-ps03"></a>
 ### `comenius2025-quantum-theory-ps03` — Príklady na domácu úlohu z kvantovej teórie: Sada č. 3 (Quantum Theory Homework Problems: Set No. 3)
 
-**Comenius University Bratislava.** 2025.
-
-[source](https://davinci.fmph.uniba.sk/~blazek1/QM/QM_2526/PS03.pdf)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Comenius University Bratislava |
+| **Organization** | Faculty of Mathematics, Physics and Informatics |
+| **Year** | 2025 |
+| **Accessed** | 2026-08-25 |
+| **Source URL** | [https://davinci.fmph.uniba.sk/~blazek1/QM/QM_2526/PS03.pdf](https://davinci.fmph.uniba.sk/~blazek1/QM/QM_2526/PS03.pdf) |
+| **Notes** | Problem 5 on PDF p. 4 asks students to explain why the FloatHeadPhysics video's 08:46--10:00 account is incorrect. It is cited only as independent audit corroboration, not as the source of the corrected probability measure. |
+| **Keywords** | `source-audit`, `physics`, `teaching` |
 
 <a id="evanescence"></a>
 ### `evanescence` — Evanescence: An Exploration in the Visualization of Hydrogenic Orbitals
 
-**Meng, Alvin Q.** 2022.
-
-[source](https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Software |
+| **Authors** | Meng, Alvin Q. |
+| **Year** | 2022 |
+| **Revision** | `ed6684735f63f3678a1538790de9bc342ac8d799` |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799](https://github.com/al2me6/evanescence/tree/ed6684735f63f3678a1538790de9bc342ac8d799) |
+| **Notes** | Pinned. The default branch is `dev`, not `master` or `main`: `master` is stale and its README lacks the non-goals paragraph, and `main` does not exist. Commit authored 2023-01-15; the 2022 year follows the README copyright line. |
+| **Keywords** | `source-audit`, `software`, `visualization`, `sampling` |
 
 <a id="floatheadphysics2025-orbitals"></a>
 ### `floatheadphysics2025-orbitals` — We finally understood orbital shapes intuitively! (My mind is blown)
 
-**FloatHeadPhysics.** 2025.
-
-[source](https://www.youtube.com/watch?v=M--6_0F62pQ)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | FloatHeadPhysics |
+| **Year** | 2025 |
+| **Accessed** | 2026-08-25 |
+| **Source URL** | [https://www.youtube.com/watch?v=M--6_0F62pQ](https://www.youtube.com/watch?v=M--6_0F62pQ) |
+| **Notes** | YouTube video, 32:49. The node-based narrative is cited only for teaching; the claims at 05:05--10:00 and 21:58--30:18 require the corrections recorded in docs/references/corrections.md. |
+| **Keywords** | `source-audit`, `visualization`, `video`, `teaching` |
 
 <a id="mocquin2022-fdm"></a>
 ### `mocquin2022-fdm` — 300-times Faster Resolution of Finite-Difference Method Using NumPy
 
-**Mocquin, Yoann.** 2022.
-
-[source](https://towardsdatascience.com/300-times-faster-resolution-of-finite-difference-method-using-numpy-de28cdade4e1/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Mocquin, Yoann |
+| **Year** | 2022 |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://towardsdatascience.com/300-times-faster-resolution-of-finite-difference-method-using-numpy-de28cdade4e1/](https://towardsdatascience.com/300-times-faster-resolution-of-finite-difference-method-using-numpy-de28cdade4e1/) |
+| **Keywords** | `source-audit`, `numerics`, `teaching` |
 
 <a id="qmsolve"></a>
 ### `qmsolve` — QMsolve: Visualizing the Schrödinger Equation
 
-**quantum-visualizations Contributors.** n.d.
-
-[source](https://github.com/quantum-visualizations/qmsolve/releases/tag/2.0.0)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Software |
+| **Authors** | quantum-visualizations Contributors |
+| **Version** | 2.0.0 |
+| **Revision** | `95d75719f665712f32a29a4e6b676b11c0ba26ac` |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://github.com/quantum-visualizations/qmsolve/releases/tag/2.0.0](https://github.com/quantum-visualizations/qmsolve/releases/tag/2.0.0) |
+| **Notes** | Release 2.0.0 (2024-05-12) is the repository's only tag and the version audited in ADR-0004. The default branch is `main` and has moved since the tag. |
+| **Keywords** | `source-audit`, `software`, `numerics`, `visualization` |
 
 <a id="shirts2007-character-tables"></a>
 ### `shirts2007-character-tables` — Correcting Two Long-Standing Errors in Point Group Symmetry Character Tables
 
-**Shirts, Randall B.** 2007. *Journal of Chemical Education*.
-
-[DOI](https://doi.org/10.1021/ed084p1882)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Journal article |
+| **Authors** | Shirts, Randall B. |
+| **Year** | 2007 |
+| **Journal** | Journal of Chemical Education |
+| **Volume** | 84 |
+| **Issue** | 11 |
+| **Pages** | 1882 |
+| **DOI** | [10.1021/ed084p1882](https://doi.org/10.1021/ed084p1882) |
+| **Keywords** | `chemistry`, `symmetry`, `source-audit` |
 
 <a id="solara-atomic-orbitals"></a>
 ### `solara-atomic-orbitals` — atomic_orbitals.py: Manim Scenes for Atomic-Orbital Explanation
 
-**Solara570.** 2023.
-
-[source](https://github.com/Solara570/demo-solara/blob/a351de1adbcdd14bb4d12dd50dff534fd0cb595f/atomic_orbitals.py)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Software |
+| **Authors** | Solara570 |
+| **Year** | 2023 |
+| **Revision** | `a351de1adbcdd14bb4d12dd50dff534fd0cb595f` |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://github.com/Solara570/demo-solara/blob/a351de1adbcdd14bb4d12dd50dff534fd0cb595f/atomic_orbitals.py](https://github.com/Solara570/demo-solara/blob/a351de1adbcdd14bb4d12dd50dff534fd0cb595f/atomic_orbitals.py) |
+| **Notes** | Pinned: this is the revision whose hard-coded 3p and 4d radial polynomials are corrected in docs/references/corrections.md. |
+| **Keywords** | `source-audit`, `visualization`, `teaching` |
 
 <a id="solara-hydrogen-derivation"></a>
 ### `solara-hydrogen-derivation` — Hydrogen Atom and Hydrogen-like Ion Orbital Wavefunction Derivation
 
-**Solara570.** 2023.
-
-[source](https://github.com/Solara570/temp/blob/86b572da81a6655b835e66561fa491a1f3d5bbe6/hydrogen_ao_derivation.pdf)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Solara570 |
+| **Year** | 2023 |
+| **Revision** | `86b572da81a6655b835e66561fa491a1f3d5bbe6` |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://github.com/Solara570/temp/blob/86b572da81a6655b835e66561fa491a1f3d5bbe6/hydrogen_ao_derivation.pdf](https://github.com/Solara570/temp/blob/86b572da81a6655b835e66561fa491a1f3d5bbe6/hydrogen_ao_derivation.pdf) |
+| **Notes** | Pinned: the file has a single commit and the `main` branch is unprotected. Document dated 2023-08-10. |
+| **Keywords** | `source-audit`, `physics`, `teaching` |
 
 <a id="solara-orbital-plot"></a>
 ### `solara-orbital-plot` — Hydrogen Atomic-Orbital and Hybrid-Orbital Plotting Tutorial
 
-**Solara570.** 2023.
-
-[source](https://github.com/Solara570/temp/tree/86b572da81a6655b835e66561fa491a1f3d5bbe6/orbital_plot)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Solara570 |
+| **Year** | 2023 |
+| **Revision** | `86b572da81a6655b835e66561fa491a1f3d5bbe6` |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://github.com/Solara570/temp/tree/86b572da81a6655b835e66561fa491a1f3d5bbe6/orbital_plot](https://github.com/Solara570/temp/tree/86b572da81a6655b835e66561fa491a1f3d5bbe6/orbital_plot) |
+| **Notes** | Pinned. The directory contains only an nbconvert HTML export and a PDF, no .py or .ipynb, so the citable unit is a notebook cell inside orbital-plot.html. |
+| **Keywords** | `source-audit`, `software`, `visualization`, `teaching` |
 
 <a id="zhihu-molecular-orbital"></a>
 ### `zhihu-molecular-orbital` — How Can Molecular-Orbital Theory Be Understood Visually? (怎样形象的理解分子轨道理论？)
 
-**Zhihu User.** 2023.
-
-[source](https://www.zhihu.com/question/41148274/answer/3329299461)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Zhihu User |
+| **Accessed** | 2026-08-23 |
+| **Source URL** | [https://www.zhihu.com/question/41148274/answer/3329299461](https://www.zhihu.com/question/41148274/answer/3329299461) |
+| **Notes** | Publication date unknown. The question was created 2016-03-08, but the page does not display this answer's own publication or edit date, so no year is inferred from its answer id. The author is anonymised to a generic Zhihu user. Verified in a real browser session: an unauthenticated curl request returns HTTP 403. |
+| **Keywords** | `source-audit`, `community`, `teaching` |
 
 ## Software and numerical infrastructure
 
 <a id="fastapi"></a>
 ### `fastapi` — FastAPI Documentation
 
-**Ramírez, Sebastián; Contributors.** n.d.
-
-[source](https://fastapi.tiangolo.com/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Ramírez, Sebastián; Contributors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/) |
+| **Keywords** | `software`, `backend` |
 
 <a id="mkdocs-material"></a>
 ### `mkdocs-material` — Material for MkDocs
 
-**Donath, Martin; Contributors.** n.d.
-
-[source](https://squidfunk.github.io/mkdocs-material/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Donath, Martin; Contributors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://squidfunk.github.io/mkdocs-material/](https://squidfunk.github.io/mkdocs-material/) |
+| **Keywords** | `software`, `documentation`, `tooling` |
 
 <a id="mkdocstrings"></a>
 ### `mkdocstrings` — mkdocstrings: Automatic Documentation from Sources
 
-**mkdocstrings Contributors.** n.d.
-
-[source](https://mkdocstrings.github.io/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | mkdocstrings Contributors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://mkdocstrings.github.io/](https://mkdocstrings.github.io/) |
+| **Keywords** | `software`, `documentation`, `tooling` |
 
 <a id="numpy-meshgrid"></a>
 ### `numpy-meshgrid` — numpy.meshgrid
 
-**NumPy Developers.** n.d.
-
-[source](https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | NumPy Developers |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html](https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html) |
+| **Keywords** | `software`, `numerics` |
 
 <a id="numpy-rng"></a>
 ### `numpy-rng` — Random Sampling
 
-**NumPy Developers.** n.d.
-
-[source](https://numpy.org/doc/stable/reference/random/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | NumPy Developers |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://numpy.org/doc/stable/reference/random/](https://numpy.org/doc/stable/reference/random/) |
+| **Keywords** | `software`, `sampling` |
 
 <a id="numpy-sliding-window"></a>
 ### `numpy-sliding-window` — numpy.lib.stride_tricks.sliding_window_view
 
-**NumPy Developers.** n.d.
-
-[source](https://numpy.org/doc/stable/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | NumPy Developers |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://numpy.org/doc/stable/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html](https://numpy.org/doc/stable/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html) |
+| **Keywords** | `software`, `numerics` |
 
 <a id="react-three-fiber"></a>
 ### `react-three-fiber` — React Three Fiber Documentation
 
-**pmndrs Contributors.** n.d.
-
-[source](https://r3f.docs.pmnd.rs/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | pmndrs Contributors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://r3f.docs.pmnd.rs/](https://r3f.docs.pmnd.rs/) |
+| **Keywords** | `software`, `frontend`, `visualization` |
 
 <a id="scipy-eval-genlaguerre"></a>
 ### `scipy-eval-genlaguerre` — scipy.special.eval_genlaguerre
 
-**SciPy Community.** n.d.
-
-[source](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_genlaguerre.html)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | SciPy Community |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_genlaguerre.html](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_genlaguerre.html) |
+| **Keywords** | `software`, `numerics` |
 
 <a id="scipy-sph-harm-y"></a>
 ### `scipy-sph-harm-y` — scipy.special.sph_harm_y
 
-**SciPy Community.** n.d.
-
-[source](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.sph_harm_y.html)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | SciPy Community |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.sph_harm_y.html](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.sph_harm_y.html) |
+| **Keywords** | `software`, `numerics` |
 
 <a id="skimage-marching-cubes"></a>
 ### `skimage-marching-cubes` — Marching Cubes Isosurface Extraction
 
-**scikit-image Developers.** n.d.
-
-[source](https://scikit-image.org/docs/stable/api/skimage.measure.html)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | scikit-image Developers |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://scikit-image.org/docs/stable/api/skimage.measure.html](https://scikit-image.org/docs/stable/api/skimage.measure.html) |
+| **Keywords** | `software`, `visualization` |
 
 <a id="threejs"></a>
 ### `threejs` — Three.js Documentation
 
-**Three.js Authors.** n.d.
-
-[source](https://threejs.org/docs/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Three.js Authors |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://threejs.org/docs/](https://threejs.org/docs/) |
+| **Keywords** | `software`, `frontend`, `visualization` |
 
 <a id="uv-docs"></a>
 ### `uv-docs` — uv Documentation
 
-**Astral Software.** n.d.
-
-[source](https://docs.astral.sh/uv/)
+| Metadata | Value |
+| --- | --- |
+| **Type** | Online resource |
+| **Authors** | Astral Software |
+| **Accessed** | 2026-08-22 |
+| **Source URL** | [https://docs.astral.sh/uv/](https://docs.astral.sh/uv/) |
+| **Keywords** | `software`, `tooling` |

@@ -45,6 +45,7 @@ jobs:
       - name: Build documentation
         run: |
           uv run --group docs python scripts/render_reference_index.py --check
+          uv run --group docs python scripts/render_openapi_reference.py --check
           uv run --group docs mkdocs build --strict
 
   changed-links:
@@ -136,7 +137,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.22.2"
       # `npm ci`, never `npm install`: the lockfile is the dependency tree
       # under test, and the fallback this step used to carry made a missing
       # package-lock.json a fresh resolution instead of a failure.
@@ -149,8 +150,10 @@ jobs:
     # Unlike the fixture-backed visual suite below, this job crosses the real
     # production boundary: build the SPA, start the documented `quviz serve`
     # command, let FastAPI mount web/dist, and drive the scientific routes from
-    # Chromium without intercepting /api. Keep it separate so a failure names
-    # the broken layer instead of looking like a unit-test or pixel regression.
+    # Chromium without intercepting /api. The same Playwright run starts strict
+    # MkDocs on an isolated port and checks MathJax after instant navigation,
+    # Mermaid SVG output, Python API inventory, and citation anchors. Keep it
+    # separate so a failure names the integration layer rather than a unit test.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -164,7 +167,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.22.2"
       # Match the repository-wide locked-environment contract. Playwright then
       # starts the already-synchronised environment with --no-sync so the web
       # server cannot mutate the lock or environment behind the job's back.
@@ -209,7 +212,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.22.2"
       # `npm ci`, never `npm install`, for the reason given in the `web` job --
       # and one more here: a pixel diff must be an argument about rendering, so
       # the tree that draws it has to be the tree package-lock.json describes.

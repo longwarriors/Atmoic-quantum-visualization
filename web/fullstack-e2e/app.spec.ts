@@ -22,6 +22,7 @@ type Representation = 'point_cloud' | 'isosurface' | 'slice' | 'streamlines'
 const STATUS = 'span[data-status]'
 const API_TIMEOUT = 90_000
 const QUIET_WINDOW_MS = 500
+const DOCS_ORIGIN = 'http://127.0.0.1:8766'
 const DEFAULT_ORBITAL = {
   n: '2',
   l: '1',
@@ -111,6 +112,7 @@ test('serves the built product and completes every core scene path against FastA
   const pageErrors: string[] = []
   const failedApiRequests: string[] = []
   const failedApiResponses: string[] = []
+  const failedLocalRequests: string[] = []
   const pendingApiRequests = new Set<Request>()
   let lastObservedActivityAt = Date.now()
 
@@ -142,6 +144,11 @@ test('serves the built product and completes every core scene path against FastA
     const url = new URL(failed.url())
     if (url.pathname.startsWith('/api/')) {
       failedApiRequests.push(`${failed.method()} ${url.pathname}: ${failed.failure()?.errorText ?? 'failed'}`)
+    }
+    if (url.hostname === '127.0.0.1') {
+      failedLocalRequests.push(
+        `${failed.method()} ${url.origin}${url.pathname}: ${failed.failure()?.errorText ?? 'failed'}`,
+      )
     }
   })
   page.on('response', (response) => {
@@ -249,8 +256,68 @@ test('serves the built product and completes every core scene path against FastA
       { intervals: [100], timeout: API_TIMEOUT },
     )
     .toBe(true)
+
+  const docsHome = await page.goto(DOCS_ORIGIN)
+  expect(docsHome, 'MkDocs returned no main-document response').not.toBeNull()
+  await expectSuccessful(docsHome as Response)
+  expect(await page.locator('.arithmatex').count()).toBeGreaterThan(0)
+  await expect(page.locator('.arithmatex:not(:has(mjx-container))')).toHaveCount(0)
+
+  await page.evaluate(() => {
+    ;(window as Window & { __quvizInstantNavigation?: string }).__quvizInstantNavigation =
+      'same-document-runtime'
+  })
+  const modelMapLink = page.locator('article a[href*="concepts/model-map/"]').first()
+  await expect(modelMapLink).toBeVisible()
+  await modelMapLink.click()
+  await expect(page).toHaveURL(/\/concepts\/model-map\/$/)
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __quvizInstantNavigation?: string }).__quvizInstantNavigation,
+    ),
+    'navigation.instant did a full reload, so this did not exercise Material document swapping',
+  ).toBe('same-document-runtime')
+  expect(await page.locator('.arithmatex').count()).toBeGreaterThan(0)
+  await expect(page.locator('.arithmatex:not(:has(mjx-container))')).toHaveCount(0)
+
+  // The architecture entry lives in Material's responsive nav and may be in
+  // the hidden drawer at the CI viewport. Dispatch its real bubbling click so
+  // navigation.instant handles the link without forcing a full page load.
+  const architectureLink = page.locator('a[href$="concepts/architecture/"]').first()
+  await expect(architectureLink).toHaveCount(1)
+  await architectureLink.dispatchEvent('click')
+  await expect(page).toHaveURL(/\/concepts\/architecture\/$/)
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __quvizInstantNavigation?: string }).__quvizInstantNavigation,
+    ),
+    'navigation.instant reloaded the page before Mermaid rendering',
+  ).toBe('same-document-runtime')
+  await expect(page.locator('.mermaid svg')).toHaveCount(1)
+
+  await page.goto(`${DOCS_ORIGIN}/reference/physics-api/`)
+  for (const moduleId of [
+    'quviz.physics.superposition',
+    'quviz.physics.planes',
+    'quviz.scene.models',
+    'quviz.scene.slices',
+    'quviz.scene.streamlines',
+  ]) {
+    await expect(page.locator(`[id="${moduleId}"]`), `missing Python API module ${moduleId}`).toHaveCount(1)
+  }
+
+  await page.goto(DOCS_ORIGIN)
+  const citation = page.locator('.quviz-citation__link').first()
+  await expect(citation).toBeVisible()
+  await citation.click()
+  await expect(page).toHaveURL(/\/references\/#[-a-z0-9]+$/)
+  const citationTarget = new URL(page.url()).hash.slice(1)
+  expect(citationTarget).not.toBe('')
+  await expect(page.locator(`[id="${citationTarget}"]`)).toHaveCount(1)
+
   expect(failedApiRequests, 'an API fetch failed before receiving an HTTP response').toEqual([])
   expect(failedApiResponses, 'an API endpoint returned a non-2xx response').toEqual([])
+  expect(failedLocalRequests, 'a product or documentation request failed').toEqual([])
   expect(pageErrors, 'the page raised an uncaught browser exception').toEqual([])
-  expect(consoleErrors, 'the production page wrote an error to the browser console').toEqual([])
+  expect(consoleErrors, 'the product or documentation page wrote an error to the console').toEqual([])
 })

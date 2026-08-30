@@ -292,7 +292,7 @@ def test_live_installation_instructions_consume_committed_lockfiles() -> None:
 
     for live_guide in (installation, readme, contributing):
         assert "uv sync --locked --all-groups" in live_guide
-        assert "npm ci --no-audit --no-fund" in live_guide
+        assert "npm --prefix web ci --no-audit --no-fund" in live_guide
     assert "\tuv sync --locked --all-groups" in makefile
     assert "\tcd web && npm ci --no-audit --no-fund" in makefile
     assert "仓库已经提交 `uv.lock` 与 `web/package-lock.json`" in installation

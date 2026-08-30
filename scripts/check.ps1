@@ -173,6 +173,7 @@ try {
     # gate can never be dropped silently.
     Invoke-Checked uv run --group docs pytest --cov=quviz --cov-report=term-missing
     Invoke-Checked uv run --group docs python scripts/render_reference_index.py --check
+    Invoke-Checked uv run --group docs python scripts/render_openapi_reference.py --check
     Invoke-Checked uv run --group docs mkdocs build --strict
 
     Push-Location (Join-Path $repoRoot 'web')
