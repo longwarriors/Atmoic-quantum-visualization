@@ -155,56 +155,56 @@ function mutateSource(source: string, needle: string, replacement: string): stri
 const SLICE_SOURCE_MUTATIONS = [
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![0]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'the 2p_z positive screenshot',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![1]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'the 2p(+1) phase positive screenshot',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![2]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'both stationary-density positive screenshots',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![3]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'the t=0 positive screenshot',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'the t=8.4 positive screenshot',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![4]!,
-    'halfPeriodRejectionOptions(page)',
-    'notAuditedOptions(page) /* halfPeriodRejectionOptions(page) */',
+    'halfPeriodRejectionOptions()',
+    'notAuditedOptions() /* halfPeriodRejectionOptions() */',
     'the half-period negated screenshot control',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![5]!,
-    'transposeRejectionOptions(page)',
-    'notAuditedOptions(page)',
+    'transposeRejectionOptions()',
+    'notAuditedOptions()',
     'the transposition negated screenshot control',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!,
-    'screenshotOptions(page)',
-    'notAuditedOptions(page)',
+    'screenshotOptions()',
+    'notAuditedOptions()',
     'the geometry-control positive screenshot',
   ],
   [
     REQUIRED_VISUAL_TESTS[SLICE_SPEC]![6]!,
-    'geometryRejectionOptions(page)',
-    'notAuditedOptions(page)',
+    'geometryRejectionOptions()',
+    'notAuditedOptions()',
     'the geometry negated screenshot control',
   ],
 ] as const
@@ -217,7 +217,7 @@ const WEBGL_SOURCE_MUTATIONS = [
 
 const GEOMETRY_NEGATED_ASSERTION = `await expect(canvasOf(page)).not.toHaveScreenshot(
     'degenerate-stationary-xz.png',
-    geometryRejectionOptions(page),
+    geometryRejectionOptions(),
   )`
 
 const REQUIRED_TEST_CONTROL_FLOW_MUTATIONS = [
@@ -293,27 +293,27 @@ const SLICE_CONFIGURATION_RELATION_MUTATIONS = [
   ],
   [
     'the positive options spread',
-    '({ ...COMPARISON, mask: overlays(page) })',
-    '({ ...HALF_PERIOD_REJECTION, mask: overlays(page) /* ...COMPARISON */ })',
-    'screenshotOptions must return { ...COMPARISON, mask: overlays(page) } exactly',
+    '({ ...COMPARISON })',
+    '({ ...HALF_PERIOD_REJECTION /* ...COMPARISON */ })',
+    'screenshotOptions must return { ...COMPARISON } exactly',
   ],
   [
     'the half-period options spread',
-    '...HALF_PERIOD_REJECTION,\n  mask: overlays(page),',
-    '...COMPARISON,\n  mask: overlays(page), /* ...HALF_PERIOD_REJECTION */',
-    'halfPeriodRejectionOptions must return { ...HALF_PERIOD_REJECTION, mask: overlays(page) }',
+    '({ ...HALF_PERIOD_REJECTION })',
+    '({ ...COMPARISON /* ...HALF_PERIOD_REJECTION */ })',
+    'halfPeriodRejectionOptions must return { ...HALF_PERIOD_REJECTION }',
   ],
   [
     'the transpose options spread',
-    '...TRANSPOSE_REJECTION,\n  mask: overlays(page),',
-    '...COMPARISON,\n  mask: overlays(page), /* ...TRANSPOSE_REJECTION */',
-    'transposeRejectionOptions must return { ...TRANSPOSE_REJECTION, mask: overlays(page) }',
+    '({ ...TRANSPOSE_REJECTION })',
+    '({ ...COMPARISON /* ...TRANSPOSE_REJECTION */ })',
+    'transposeRejectionOptions must return { ...TRANSPOSE_REJECTION }',
   ],
   [
     'the geometry options spread',
-    '...GEOMETRY_REJECTION,\n  mask: overlays(page),',
-    '...COMPARISON,\n  mask: overlays(page), /* ...GEOMETRY_REJECTION */',
-    'geometryRejectionOptions must return { ...GEOMETRY_REJECTION, mask: overlays(page) }',
+    '({ ...GEOMETRY_REJECTION })',
+    '({ ...COMPARISON /* ...GEOMETRY_REJECTION */ })',
+    'geometryRejectionOptions must return { ...GEOMETRY_REJECTION }',
   ],
 ] as const
 
@@ -481,8 +481,8 @@ describe('assert-visual-run: assertions omitted from Playwright JSON', () => {
     const mutated = mutateInsideTest(
       visualSpecSource(SLICE_SPEC),
       title,
-      'halfPeriodRejectionOptions(page)',
-      'notAuditedOptions(page) /* halfPeriodRejectionOptions(page) */',
+      'halfPeriodRejectionOptions()',
+      'notAuditedOptions() /* halfPeriodRejectionOptions() */',
     )
     expect(auditVisualSpecSource(SLICE_SPEC, mutated).join('\n')).toContain(
       'half-period negated screenshot control',

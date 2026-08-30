@@ -145,11 +145,13 @@
  * Three rules the tests below follow, each because the alternative silently
  * weakens the evidence:
  *
- * **Only the canvas is compared, and only its non-text pixels.** The scene is
- * WebGL; the headline and the legend are DOM drawn on top of it, and text is
- * where font rasterisation and locale creep into a baseline. They are masked
- * out of the comparison and asserted through the DOM instead, where a changed
- * number is a readable diff rather than a grey smudge.
+ * **Only the canvas is compared.** The scene is WebGL; the headline, legend and
+ * command deck are DOM siblings drawn on top of it. They are hidden after the
+ * controls have been driven, while their text remains in the DOM for the
+ * semantic assertions below. Playwright masks are deliberately not used: a
+ * mask paints its locator's live bounding box into the PNG, so font-metric
+ * differences make the mask itself a cross-platform pixel diff and also erase
+ * the canvas underneath it.
  *
  * **Nothing waits on a timer.** The scene says when it has stopped moving
  * (`data-scene-ready`, see src/scene/SceneReady.tsx) and the status bar says
@@ -296,47 +298,25 @@ const GEOMETRY_SCALE = 1.02
  */
 const SETTLE = { timeout: 30_000 } as const
 
-/**
- * Test-only chrome isolation for the scientific pixel oracle.
- *
- * The Observatory's command deck intentionally floats above the viewport. A
- * locator screenshot captures overlapping siblings too, so leaving the deck
- * visible would bake DOM text into the WebGL baseline. `visibility:hidden`
- * keeps the accepted layout and reveals every underlying canvas pixel; masking
- * the deck would instead discard more than eight percent of the science frame.
- */
 /** The WebGL surface, which is the only thing any baseline here is of. */
 const canvasOf = (page: Page): Locator => page.locator('canvas')
 
 /**
- * The DOM drawn over the canvas: the headline block and the legend card.
- *
- * Masked out of every comparison because both are text. They are not thereby
- * exempt from checking -- each test asserts the legend's own statement about
- * which field is on screen through the DOM, where the assertion says what it
- * means.
+ * The option helpers stay separate because the source gate pins which strength
+ * every positive and negative comparison uses. DOM chrome is hidden by
+ * `showPlaneSection`; the screenshot therefore needs no font-shaped mask and
+ * retains every underlying canvas pixel.
  */
-const overlays = (page: Page): Locator[] => [page.locator('.viewport-copy'), page.locator('.legend')]
+const screenshotOptions = () => ({ ...COMPARISON })
 
-const screenshotOptions = (page: Page) => ({ ...COMPARISON, mask: overlays(page) })
-
-/** The half-period `.not` options: same mask/ratio, and a harder per-pixel bar. */
-const halfPeriodRejectionOptions = (page: Page) => ({
-  ...HALF_PERIOD_REJECTION,
-  mask: overlays(page),
-})
+/** The half-period `.not` options: the same ratio, and a harder per-pixel bar. */
+const halfPeriodRejectionOptions = () => ({ ...HALF_PERIOD_REJECTION })
 
 /** The transposition `.not` options retain the original, still harder bar. */
-const transposeRejectionOptions = (page: Page) => ({
-  ...TRANSPOSE_REJECTION,
-  mask: overlays(page),
-})
+const transposeRejectionOptions = () => ({ ...TRANSPOSE_REJECTION })
 
 /** The geometry `.not` options use the same tolerant bar and unchanged ratio budget. */
-const geometryRejectionOptions = (page: Page) => ({
-  ...GEOMETRY_REJECTION,
-  mask: overlays(page),
-})
+const geometryRejectionOptions = () => ({ ...GEOMETRY_REJECTION })
 
 interface SliceGeometryFields {
   extent_bohr: number
@@ -476,13 +456,17 @@ async function showPlaneSection(page: Page): Promise<void> {
   await page.keyboard.press('Home')
   await expect(bloom).toHaveValue('0')
 
-  // The Observatory command deck is a DOM sibling floating over the canvas.
-  // A locator screenshot includes overlapping siblings, so hide just that
-  // deck while leaving its layout box (and every underlying science pixel)
-  // intact. Masking it would discard more than eight percent of the oracle.
-  await page.locator('.representation-command-switch').evaluate((element) => {
-    ;(element as HTMLElement).style.visibility = 'hidden'
-  })
+  // Locator screenshots include overlapping siblings. Hide all three pieces of
+  // DOM chrome while leaving their layout boxes and text nodes intact, so the
+  // assertions below can still read them and the oracle keeps every canvas
+  // pixel. A Playwright mask is not equivalent: its magenta rectangle is part
+  // of the PNG, and its font-dependent bounds caused the visual job to fail on
+  // the same underlying SwiftShader frame.
+  for (const selector of ['.representation-command-switch', '.viewport-copy', '.legend']) {
+    await page.locator(selector).evaluate((element) => {
+      ;(element as HTMLElement).style.visibility = 'hidden'
+    })
+  }
 }
 
 async function chooseObservable(page: Page, observable: string): Promise<void> {
@@ -631,7 +615,7 @@ test('2p_z on xz: the nodal line lies across the plane, not down it', async ({ p
   // 2p_z changes sign across z = 0. Reading the grid transposed puts that line
   // down the middle of the frame instead, which is the single most likely
   // renderer bug and the one nothing else in this repo can see.
-  await expect(canvasOf(page)).toHaveScreenshot('2pz-real-xz.png', screenshotOptions(page))
+  await expect(canvasOf(page)).toHaveScreenshot('2pz-real-xz.png', screenshotOptions())
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
 
@@ -690,7 +674,7 @@ test('2p(+1) on xy: one winding around a masked disc', async ({ page, baseURL })
   // right-handedness (u x v = +z here), which the pi offset shifts but cannot
   // reverse. A mirrored normal winds it the other way and passes every numeric
   // check in the repo; the masked origin must be a hole, not a coloured pixel.
-  await expect(canvasOf(page)).toHaveScreenshot('2p+1-phase-xy.png', screenshotOptions(page))
+  await expect(canvasOf(page)).toHaveScreenshot('2p+1-phase-xy.png', screenshotOptions())
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
 
@@ -727,7 +711,7 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
 
   await expect(canvasOf(page)).toHaveScreenshot(
     'degenerate-stationary-xz.png',
-    screenshotOptions(page),
+    screenshotOptions(),
   )
 
   await advanceToHalfPeriod(page, ledger)
@@ -756,7 +740,7 @@ test('2s + 2p_z are degenerate: the same picture at t=0 and at t=8.4', async ({ 
 
   await expect(canvasOf(page)).toHaveScreenshot(
     'degenerate-stationary-xz.png',
-    screenshotOptions(page),
+    screenshotOptions(),
   )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
@@ -789,7 +773,7 @@ test('the comparison rejects a two-percent plane-extent error beyond the AA frin
   })
   await expect(canvasOf(page)).toHaveScreenshot(
     'degenerate-stationary-xz.png',
-    screenshotOptions(page),
+    screenshotOptions(),
   )
 
   await advanceToHalfPeriod(page, ledger)
@@ -816,7 +800,7 @@ test('the comparison rejects a two-percent plane-extent error beyond the AA frin
   // therefore harder under `.not`; the ratio budget remains exactly 0.001.
   await expect(canvasOf(page)).not.toHaveScreenshot(
     'degenerate-stationary-xz.png',
-    geometryRejectionOptions(page),
+    geometryRejectionOptions(),
   )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
@@ -842,7 +826,7 @@ test('1s + 2p_z at t=0: the dipole in its first lobe', async ({ page, baseURL })
     declared: [EIGENSTATE_DENSITY_XZ],
   })
 
-  await expect(canvasOf(page)).toHaveScreenshot('1s2pz-t0-xz.png', screenshotOptions(page))
+  await expect(canvasOf(page)).toHaveScreenshot('1s2pz-t0-xz.png', screenshotOptions())
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
 
@@ -869,7 +853,7 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
     declared: [EIGENSTATE_DENSITY_XZ],
   })
 
-  await expect(canvasOf(page)).toHaveScreenshot('1s2pz-t8.4-xz.png', screenshotOptions(page))
+  await expect(canvasOf(page)).toHaveScreenshot('1s2pz-t8.4-xz.png', screenshotOptions())
 
   // ... and it is a DIFFERENT picture from the one half a period earlier. Both
   // baselines exist, and an animation that quietly stopped evolving would match
@@ -883,7 +867,7 @@ test('1s + 2p_z at t=8.4: half a Bohr period later, the lobe has swung over', as
   // deliberately higher (harder under `.not`) than the positive tests' 0.02.
   await expect(canvasOf(page)).not.toHaveScreenshot(
     '1s2pz-t0-xz.png',
-    halfPeriodRejectionOptions(page),
+    halfPeriodRejectionOptions(),
   )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
@@ -935,7 +919,7 @@ test('the comparison can see a transposed slice: the apparatus is not vacuous', 
   // claim, and this assertion can afford it.
   await expect(canvasOf(page)).not.toHaveScreenshot(
     '2pz-real-xz.png',
-    transposeRejectionOptions(page),
+    transposeRejectionOptions(),
   )
   expect(ledger.offOrigin, 'a request escaped while the frame was being compared').toEqual([])
 })
