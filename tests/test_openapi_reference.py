@@ -8,7 +8,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from quviz.api.app import app
+from quviz.api.app import app, create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "render_openapi_reference.py"
@@ -32,9 +32,29 @@ def test_generated_http_reference_is_current() -> None:
 
 def test_every_live_api_get_operation_has_one_generated_section() -> None:
     rendered = renderer.render()
-    paths = [path for path, item in app.openapi()["paths"].items() if "get" in item]
+    paths = [
+        path
+        for path, item in app.openapi()["paths"].items()
+        if path.startswith("/api/") and "get" in item
+    ]
     for path in paths:
         assert rendered.count(f"## `GET {path}`") == 1
+
+
+def test_frontend_fallback_route_is_not_part_of_the_generated_api_reference() -> None:
+    # In a clean CI checkout ``web/dist`` does not exist, so the application
+    # factory exposes a GET / JSON fallback. A developer who has built the web
+    # app instead gets a StaticFiles mount that is absent from OpenAPI. The
+    # generated page deliberately documents only /api/* and must be identical
+    # in both environments.
+    document: dict[str, Any] = create_app(mount_frontend=False).openapi()
+    assert "get" in document["paths"]["/"]
+
+    rendered = renderer.render(document)
+    assert "## `GET /`" not in rendered
+    for path, item in document["paths"].items():
+        if path.startswith("/api/") and "get" in item:
+            assert rendered.count(f"## `GET {path}`") == 1
 
 
 def test_query_default_mutation_changes_the_generated_reference() -> None:

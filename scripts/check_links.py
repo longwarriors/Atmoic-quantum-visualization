@@ -19,6 +19,14 @@ Two modes:
   host in ``BOT_HOSTS`` (cite such sources by DOI instead) or a 429 rate
   limit from any host; neither says anything about the link.
 
+Loopback URLs in ``docs/`` prose are local development instructions, not
+externally reachable citations. Changed-doc collection skips links whose
+*parsed hostname* is ``localhost``, an address in ``127.0.0.0/8``, or IPv6
+``::1``. The decision is made after URL hostname normalisation; a path, query,
+user-info field, or longer hostname that merely contains one of those strings
+is still probed. Bibliography targets receive no such exemption: a reference
+whose source URL is loopback is invalid and must fail the network check.
+
 The gap the sweep closes is real. Between 2026-08-22 and 2026-08-23 the
 point-group table host ``symmetry.jacobs-university.de`` was already dead --
 the university had been renamed and the whole domain retired -- while every
@@ -63,6 +71,7 @@ from quviz.docs.links import (
     classify,
     fails_run,
     format_row,
+    is_loopback_url,
     probe_target,
     step_summary,
 )
@@ -149,6 +158,8 @@ def _changed_targets(git_ref: str) -> dict[str, str]:
     known = bibliography_targets(head_bib)
     docs_diff = _git("diff", base, "HEAD", "--", DOCS_DIR).stdout
     for url in added_urls(docs_diff):
+        if is_loopback_url(url):
+            continue
         targets.setdefault(url, known.get(url, "docs"))
     return dict(sorted(targets.items()))
 

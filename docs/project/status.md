@@ -308,7 +308,7 @@ payload 体积实测（`n=2, l=1, m=0`，`plane=xz`，`TestClient` 响应字节�
 | 门禁 | 结果 |
 |---|---|
 | `pwsh -NoProfile -File scripts/check.ps1` | 全部通过 |
-| Python 全量 | 1322 passed，0 skipped；总覆盖率 92.19%（门槛 85%） |
+| Python 全量 | 1345 passed，0 skipped；总覆盖率 92.19%（门槛 85%） |
 | 前端全量 | 34 个 spec、1010 passed，0 skipped、0 todo；语句 99.58%、分支 98.37%、函数 99.57%、行 99.58%，30 个模块逐文件达标 |
 | 静态与文档 | ruff 123 文件、mypy strict 34 文件、MkDocs strict、OpenAPI/schema/视觉 fixture 门全部通过 |
 | 生产构建 | JS 1,261.33 kB（gzip 347.25 kB），CSS 42.50 kB（gzip 8.52 kB）；保留既有 chunk > 500 kB 警告 |

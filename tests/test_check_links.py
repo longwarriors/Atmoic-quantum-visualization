@@ -24,6 +24,7 @@ from quviz.docs.links import (
     fails_run,
     format_row,
     is_bot_host,
+    is_loopback_url,
     probe_target,
     step_summary,
 )
@@ -146,7 +147,10 @@ def test_changed_targets_reads_the_bibliography_with_the_parser(tmp_path: Path) 
         encoding="utf-8",
     )
     (repo / "docs" / "a.md").write_text(
-        "见 https://example.org/old。\n新 https://example.org/new。\n", encoding="utf-8"
+        "见 https://example.org/old。\n"
+        "新 https://example.org/new。\n"
+        "本地 http://127.0.0.1:5173/、http://localhost:8000/ 与 http://[::1]:8001/。\n",
+        encoding="utf-8",
     )
     _commit_all(repo, "head")
     check_links.ROOT = repo
@@ -159,6 +163,70 @@ def test_changed_targets_reads_the_bibliography_with_the_parser(tmp_path: Path) 
     }
     # Nothing changed since HEAD itself.
     assert check_links._changed_targets("HEAD") == {}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:5173/",
+        "https://127.42.7.9/path",
+        "http://127.255.255.255/",
+        "http://[::1]:8001/",
+        "http://[0:0:0:0:0:0:0:1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://localhost/",
+        "HTTP://LOCALHOST.:8000/",
+        "http://%6cocalhost:8000/",
+    ],
+)
+def test_loopback_urls_are_identified_from_the_parsed_normalized_hostname(url: str) -> None:
+    assert is_loopback_url(url), url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1.example.org/",
+        "https://localhost.example.org/",
+        "https://notlocalhost/",
+        "https://localhost@evil.example/",
+        "https://127.0.0.1@evil.example/",
+        "https://evil.example/?next=http://127.0.0.1:8000/",
+        "https://evil.example/#localhost",
+        "https://localhost%2eevil.example/",
+        "https://128.0.0.1/",
+        "https://[::2]/",
+        "not a url mentioning localhost and 127.0.0.1",
+        "",
+    ],
+)
+def test_loopback_strings_outside_the_actual_hostname_cannot_bypass_probing(url: str) -> None:
+    assert not is_loopback_url(url), url
+
+
+def test_changed_targets_does_not_exempt_a_loopback_bibliography_source(tmp_path: Path) -> None:
+    """Only tutorial addresses are local; a citation still needs a real source."""
+
+    check_links = _load_script(SCRIPT)
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    (repo / "docs" / "a.md").write_text("base\n", encoding="utf-8")
+    base = _commit_all(repo, "base")
+    (repo / "references.bib").write_text(
+        "@online{invalid, url={http://127.0.0.2/source}}\n", encoding="utf-8"
+    )
+    (repo / "docs" / "a.md").write_text(
+        "base\nlocal http://127.0.0.1:5173/\nexternal https://example.org/new\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "head")
+    check_links.ROOT = repo
+
+    assert check_links._changed_targets(base) == {
+        "http://127.0.0.2/source": "invalid",
+        "https://example.org/new": "docs",
+    }
 
 
 def _localised_git(
