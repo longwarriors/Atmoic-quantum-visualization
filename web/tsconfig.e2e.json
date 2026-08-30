@@ -1,5 +1,5 @@
 {
-  "$comment": "The visual suite. A third project rather than a widening of tsconfig.app.json / tsconfig.test.json, because e2e code is the one place in this tree where DOM globals and node globals are both in scope but belong to DIFFERENT processes: `process` is the runner's, `document` is the browser's, and the two only meet inside a page.evaluate callback. Folding these files into the app project would put `process` in scope for application code that must never read it; folding them into the test project would hand vitest specs the Playwright globals and let a spec be written against the wrong runner. The build reference in tsconfig.json is what makes `npm run typecheck` cover them at all -- without it playwright.config.ts and e2e/*.ts are checked by nothing, which is how a config option silently stops being passed.",
+  "$comment": "The browser suites. A third project rather than a widening of tsconfig.app.json / tsconfig.test.json, because browser-test code is the one place in this tree where DOM globals and node globals are both in scope but belong to DIFFERENT processes: `process` is the runner's, `document` is the browser's, and the two only meet inside a page.evaluate callback. Folding these files into the app project would put `process` in scope for application code that must never read it; folding them into the test project would hand vitest specs the Playwright globals and let a spec be written against the wrong runner. The build reference in tsconfig.json is what makes `npm run typecheck` cover both configs and both spec trees -- without it a config option can silently stop being passed.",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
     "target": "ES2023",
@@ -20,5 +20,10 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["playwright.config.ts", "e2e/**/*.ts"]
+  "include": [
+    "playwright.config.ts",
+    "playwright.fullstack.config.ts",
+    "e2e/**/*.ts",
+    "fullstack-e2e/**/*.ts"
+  ]
 }

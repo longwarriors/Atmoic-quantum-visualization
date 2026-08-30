@@ -82,6 +82,7 @@ import {
 // config does NOT hard-fail them (see that test), which is why their absence
 // is asserted explicitly there.
 import vitestConfig from '../vitest.config'
+import viteConfig from '../vite.config'
 
 const SRC_ROOT = fileURLToPath(new URL('.', import.meta.url))
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -762,9 +763,9 @@ const coverageGatedSources = allFiles.filter(isCoverageGatedSource)
 const pragmaScannedSources = allFiles.filter(isPragmaScannedSource)
 
 /**
- * The Playwright suite -- the OTHER tree of specs in this repository.
+ * The Playwright suites -- the OTHER trees of specs in this repository.
  *
- * web/e2e is outside `test.include`, so vitest never collects it, which means
+ * Both trees are outside `test.include`, so vitest never collects them, which means
  * every guard above is blind to it: `allowOnly: false` does not apply, and
  * scripts/assert-no-skips.mjs derives its expected spec list from src/ and
  * would not miss a file it never expected. Its own authoritative gate is
@@ -773,11 +774,28 @@ const pragmaScannedSources = allFiles.filter(isPragmaScannedSource)
  * exactly as the src scan is assert-no-skips.mjs's: it cannot see every
  * spelling, but when it hits it names the line.
  *
- * A missing e2e directory throws here, at module load, rather than yielding an
- * empty list -- deleting the visual suite must be a red run, not a quiet one.
+ * A missing directory throws here, at module load, rather than yielding an
+ * empty list -- deleting either browser suite must be a red run, not a quiet one.
  */
-const E2E_ROOT = fileURLToPath(new URL('../e2e/', import.meta.url))
-const e2eSpecFiles = walk(E2E_ROOT).filter(isTestFile)
+const VISUAL_E2E_ROOT = fileURLToPath(new URL('../e2e/', import.meta.url))
+const FULLSTACK_E2E_ROOT = fileURLToPath(new URL('../fullstack-e2e/', import.meta.url))
+const visualE2eSpecFiles = walk(VISUAL_E2E_ROOT).filter(isTestFile)
+const fullstackE2eSpecFiles = walk(FULLSTACK_E2E_ROOT).filter(isTestFile)
+
+describe('development server contract', () => {
+  it('keeps every same-origin FastAPI documentation route behind the Vite proxy', () => {
+    const server = viteConfig.server as
+      | { proxy?: Record<string, string>; strictPort?: boolean }
+      | undefined
+    expect(server?.strictPort).toBe(true)
+    expect(server?.proxy).toEqual({
+      '/api': 'http://127.0.0.1:8000',
+      '/docs': 'http://127.0.0.1:8000',
+      '/openapi.json': 'http://127.0.0.1:8000',
+      '/redoc': 'http://127.0.0.1:8000',
+    })
+  })
+})
 
 describe('guard patterns (positive controls)', () => {
   // If a fragment join ever produced a regex that matches nothing, the scans
@@ -962,18 +980,19 @@ describe('scan scope', () => {
     expect(testFiles).toContain('scene/color.test.ts')
   })
 
-  it('reaches the Playwright suite, which no other guard in this file sees', () => {
+  it('reaches both Playwright suites, which no other guard in this file sees', () => {
     // Named one at a time as well as counted, because this scan passes
     // VACUOUSLY over an empty list: a wrong E2E_ROOT, a renamed directory or a
     // suite deleted wholesale would otherwise leave the skip scan below green
     // while covering nothing at all. These are the two specs playwright
     // .config.ts's testDir collects today.
-    expect(e2eSpecFiles).toContain('slice.spec.ts')
-    expect(e2eSpecFiles).toContain('webgl.spec.ts')
-    expect(e2eSpecFiles.length).toBeGreaterThanOrEqual(2)
+    expect(visualE2eSpecFiles).toContain('slice.spec.ts')
+    expect(visualE2eSpecFiles).toContain('webgl.spec.ts')
+    expect(visualE2eSpecFiles.length).toBeGreaterThanOrEqual(2)
     // e2e/fixtures.ts is a helper, not a spec: Playwright's default testMatch
     // collects `*.spec.ts` / `*.test.ts` only, and so does isTestFile.
-    expect(e2eSpecFiles).not.toContain('fixtures.ts')
+    expect(visualE2eSpecFiles).not.toContain('fixtures.ts')
+    expect(fullstackE2eSpecFiles).toEqual(['app.spec.ts'])
   })
 
   it('coverage-gates exactly the modules coverage-scope.json lists, and nothing excluded on purpose', () => {
@@ -1328,8 +1347,23 @@ describe('committed suite integrity', () => {
   })
 
   it('has no skipped, todo, focused or conditionally-run tests in the visual suite either', () => {
-    const hits = scan(e2eSpecFiles, matchesForbiddenTestForm, E2E_ROOT, withoutComments)
+    const hits = scan(
+      visualE2eSpecFiles,
+      matchesForbiddenTestForm,
+      VISUAL_E2E_ROOT,
+      withoutComments,
+    )
     expect(hits, `forbidden test modifiers under e2e/:\n${describeHits(hits)}`).toEqual([])
+  })
+
+  it('has no skipped, todo, focused or conditionally-run tests in the full-stack suite', () => {
+    const hits = scan(
+      fullstackE2eSpecFiles,
+      matchesForbiddenTestForm,
+      FULLSTACK_E2E_ROOT,
+      withoutComments,
+    )
+    expect(hits, `forbidden test modifiers under fullstack-e2e/:\n${describeHits(hits)}`).toEqual([])
   })
 
   it('reads code and not prose when it scans the visual suite', () => {

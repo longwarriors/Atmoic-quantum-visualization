@@ -101,8 +101,15 @@ uv run mypy
 uv run pytest --cov=quviz --cov-report=term-missing
 uv run --group docs python scripts/render_reference_index.py --check
 uv run --group docs mkdocs build --strict
-cd web && npm run build
+npm --prefix web run test
+npm --prefix web run build
 ```
+
+真实 FastAPI + 生产前端挂载的浏览器 smoke 由 `cd web && npm run test:fullstack` 单独运行；
+首次运行前安装锁定 Playwright 对应的 Chromium：`cd web && npx --no-install playwright install chromium`。
+运行该 smoke 前还须已在仓库根执行 `uv sync --locked --all-groups`，测试服务器使用 `--no-sync`
+以确保执行期间不会静默改动环境。
+该命令在 Playwright 后审计 JSON 报告，0 tests、skip、重复/额外测试或错误测试目录都不会按绿色处理。
 
 ## 关键科学约定
 

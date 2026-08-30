@@ -96,7 +96,7 @@ describe('Header capture', () => {
     const tree = await header()
     try {
       const link = tree.container.querySelector<HTMLAnchorElement>('a.icon-button')
-      expect(link?.getAttribute('href')).toBe('http://127.0.0.1:8000/docs')
+      expect(link?.getAttribute('href')).toBe('/docs')
       expect(link?.rel).toBe('noreferrer')
       expect(tree.container.textContent).toContain('QuViz')
       expect(tree.container.textContent).toContain('量子态 · 可观测量 · 表示法')

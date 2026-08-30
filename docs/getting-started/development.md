@@ -24,6 +24,25 @@ make check
 cd web && npm run test
 ```
 
+真实后端与生产前端挂载的浏览器 smoke 另行运行：
+
+```bash
+uv sync --locked --all-groups
+cd web
+npm ci --no-audit --no-fund
+npx --no-install playwright install chromium
+npm run test:fullstack
+```
+
+该命令生产构建 `web/dist`，从仓库根启动 `quviz serve` 于专用端口 8765，再以 Chromium
+依次访问真实点云、等值面、切片、概率流和叠加态 API；它不使用视觉测试的 fixture。
+服务器以 `--no-sync` 启动，所以前两步是新 checkout 与陈旧环境的显式前置条件，不会在测试中
+临时解析或改写依赖。
+Playwright 成功退出后，`assert-fullstack-run.mjs` 还会审计 JSON 报告，要求固定 spec 与标题
+恰好运行一次且通过；0 tests、全 skip、重复/额外执行、重试掩盖或错误 testDir 都会失败。
+这条门禁由 CI 的 `web-fullstack` job 执行，不在 `make check` / `check.ps1` 内。它验证源码
+checkout 的生产挂载路径；当前 wheel 是否携带静态前端仍是独立的发布验证项。
+
 `npm run test` 不只是 vitest，而是一条以 `&&` 串起、逐段被 `tests/test_check_script.py`
 按精确元组钉住的链（少一段、多一段、换顺序都会变红）：
 

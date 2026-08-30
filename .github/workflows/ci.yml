@@ -145,6 +145,45 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  web-fullstack:
+    # Unlike the fixture-backed visual suite below, this job crosses the real
+    # production boundary: build the SPA, start the documented `quviz serve`
+    # command, let FastAPI mount web/dist, and drive the scientific routes from
+    # Chromium without intercepting /api. Keep it separate so a failure names
+    # the broken layer instead of looking like a unit-test or pixel regression.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      # Match the repository-wide locked-environment contract. Playwright then
+      # starts the already-synchronised environment with --no-sync so the web
+      # server cannot mutate the lock or environment behind the job's back.
+      - name: Sync backend runtime
+        run: uv sync --locked --all-groups
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install the pinned browser
+        run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:fullstack
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fullstack-playwright-report
+          path: |
+            web/playwright-report/fullstack
+            web/test-results/fullstack
+          retention-days: 7
+
   web-visual:
     # The screenshot suite, and the ONLY place it can run. web/playwright
     # .config.ts throws at module load off Linux, on purpose: the baselines in
